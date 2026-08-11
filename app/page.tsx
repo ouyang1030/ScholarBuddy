@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 type ModuleKey =
   | "dashboard"
@@ -17,6 +17,27 @@ type Action = {
   meta: string;
   tone: string;
   command: string;
+};
+
+const BRIDGE_URL = "http://127.0.0.1:32145";
+
+type BridgeStatus = {
+  bridge: boolean;
+  deepseek: { connected: boolean; model: string };
+  kimi: { connected: boolean; model: string };
+  zotero: { connected: boolean; version: string | null };
+  obsidian: { connected: boolean; vault: string | null };
+};
+
+type WorkflowResult = {
+  output: string;
+  provider: "deepseek" | "kimi";
+  model: string;
+  usage?: { total_tokens?: number } | null;
+  sources: {
+    zotero: { key: string; title: string; creators: string[]; year: string; doi: string }[];
+    obsidian: { title: string; path: string; snippet: string }[];
+  };
 };
 
 const navItems: { key: ModuleKey; label: string; icon: string; badge?: string }[] = [
@@ -168,11 +189,14 @@ function Dashboard({ runAction, openContext }: { runAction: (a: Action) => void;
   const [queuedPapers, setQueuedPapers] = useState<string[]>([]);
 
   useEffect(() => {
-    const savedTasks = window.localStorage.getItem("workbuddy-daily-tasks-en-v2");
-    const savedTimeBlocks = window.localStorage.getItem("workbuddy-time-blocks-en-v1");
-    if (savedTasks) try { setTasks(JSON.parse(savedTasks) as DailyTask[]); } catch { /* keep starter state */ }
-    if (savedTimeBlocks) try { setTimeBlocks(JSON.parse(savedTimeBlocks) as TimeBlock[]); } catch { /* keep starter state */ }
-    setStorageReady(true);
+    const timer = window.setTimeout(() => {
+      const savedTasks = window.localStorage.getItem("workbuddy-daily-tasks-en-v2");
+      const savedTimeBlocks = window.localStorage.getItem("workbuddy-time-blocks-en-v1");
+      if (savedTasks) try { setTasks(JSON.parse(savedTasks) as DailyTask[]); } catch { /* keep starter state */ }
+      if (savedTimeBlocks) try { setTimeBlocks(JSON.parse(savedTimeBlocks) as TimeBlock[]); } catch { /* keep starter state */ }
+      setStorageReady(true);
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, []);
 
   useEffect(() => {
@@ -574,21 +598,132 @@ function Operations({ runAction }: { runAction: (a: Action) => void }) {
   );
 }
 
-function ActionDrawer({ action, onClose }: { action: Action; onClose: () => void }) {
+function ActionDrawer({ action, onClose, openConnections }: { action: Action; onClose: () => void; openConnections: () => void }) {
   const [running, setRunning] = useState(false);
+  const [provider, setProvider] = useState<"deepseek" | "kimi">(() => {
+    if (typeof window === "undefined") return "deepseek";
+    return window.localStorage.getItem("workbuddy-ai-provider") === "kimi" ? "kimi" : "deepseek";
+  });
+  const [input, setInput] = useState(action.command.includes("evidence") ? "Team formations become less stable during defensive transitions." : action.command.includes("result") ? "Interpret the selected three-cluster solution from EXP-024." : "Focus on the active research question and current analysis.");
+  const [sources, setSources] = useState({ zotero: true, obsidian: true });
+  const [result, setResult] = useState<WorkflowResult | null>(null);
+  const [error, setError] = useState("");
+  const [savedPath, setSavedPath] = useState("");
+  const controllerRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    return () => controllerRef.current?.abort();
+  }, []);
+
+  const chooseProvider = (value: "deepseek" | "kimi") => {
+    setProvider(value);
+    window.localStorage.setItem("workbuddy-ai-provider", value);
+  };
+
+  const runWorkflow = async () => {
+    if (!input.trim()) return;
+    controllerRef.current?.abort();
+    const controller = new AbortController();
+    controllerRef.current = controller;
+    setRunning(true);
+    setError("");
+    setResult(null);
+    setSavedPath("");
+    try {
+      const response = await fetch(`${BRIDGE_URL}/ai/run`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider, input, command: action.command, sources, projectContext: "Study 02 · Formation Recognition · active research question RQ-02 · experiment EXP-024" }),
+        signal: controller.signal,
+      });
+      const body = await response.json() as WorkflowResult & { error?: string };
+      if (!response.ok) throw new Error(body.error || "The research workflow failed.");
+      setResult(body);
+    } catch (workflowError) {
+      if (controller.signal.aborted) return;
+      setError(workflowError instanceof TypeError ? "The local research bridge is offline. Open Connections to finish setup." : workflowError instanceof Error ? workflowError.message : "The workflow could not be completed.");
+    } finally {
+      if (!controller.signal.aborted) setRunning(false);
+    }
+  };
+
+  const cancelWorkflow = () => {
+    controllerRef.current?.abort();
+    setRunning(false);
+  };
+
+  const saveResult = async () => {
+    if (!result) return;
+    setError("");
+    try {
+      const response = await fetch(`${BRIDGE_URL}/obsidian/note`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: `${action.label} — ${new Date().toISOString().slice(0, 10)}`, content: `---\nsource: WorkBuddy\nworkflow: ${action.command}\nprovider: ${result.provider}\nmodel: ${result.model}\ncreated: ${new Date().toISOString()}\n---\n\n# ${action.label}\n\n${result.output}` }),
+      });
+      const body = await response.json() as { path?: string; error?: string };
+      if (!response.ok) throw new Error(body.error || "The note could not be saved.");
+      setSavedPath(body.path || "WorkBuddy");
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "The note could not be saved.");
+    }
+  };
+
   return (
     <div className="drawer-backdrop" onMouseDown={onClose}>
       <aside className="action-drawer" onMouseDown={(event) => event.stopPropagation()} aria-label={`${action.label} workflow`}>
         <div className="drawer-head"><button onClick={onClose}>×</button><span className="label">Structured AI workflow</span><span className={`action-mark ${action.tone}`}>✦</span></div>
-        <div className="drawer-title"><span>{action.command}</span><h2>{action.label}</h2><p>The task will run with verified, project-specific context and a structured output.</p></div>
-        <div className="drawer-section"><div className="drawer-section-title"><span>01</span><strong>Task input</strong><b>Required</b></div><textarea defaultValue={action.command.includes("evidence") ? "Team formations become less stable during defensive transitions." : action.command.includes("result") ? "Interpret the selected three-cluster solution from EXP-024." : "Focus on the active research question and current analysis."} /></div>
-        <div className="drawer-section"><div className="drawer-section-title"><span>02</span><strong>Assembled context</strong><b className="ready">Ready</b></div><div className="drawer-sources"><label><input type="checkbox" defaultChecked /><span>Project + RQ</span><b>2 objects</b></label><label><input type="checkbox" defaultChecked /><span>Research decisions</span><b>3 notes</b></label><label><input type="checkbox" defaultChecked /><span>Zotero literature</span><b>5 papers</b></label><label><input type="checkbox" defaultChecked /><span>Experiment + results</span><b>EXP-024</b></label></div></div>
-        <div className="drawer-section output-contract"><div className="drawer-section-title"><span>03</span><strong>Output contract</strong></div><p><i /> Separate evidence from inference</p><p><i /> Flag missing information as [AUTHOR CHECK]</p><p><i /> Preserve source links and object IDs</p></div>
-        <div className="drawer-footer"><div><SourceDot /><span><strong>Context ready</strong><small>3,840 tokens · 6 sources</small></span></div><button className="primary-button" disabled={running} onClick={() => setRunning(true)}>{running ? "Agent is working…" : "Run workflow"} <b>{running ? "···" : "↑"}</b></button></div>
-        {running && <div className="running-state"><span className="running-orb">✦</span><div><strong>Specialist agent is working</strong><p>Checking sources and applying the output contract…</p></div><button onClick={() => setRunning(false)}>Cancel</button></div>}
+        <div className="drawer-title"><span>{action.command}</span><h2>{action.label}</h2><p>This workflow retrieves live Zotero and Obsidian context before asking the selected model.</p></div>
+        <div className="provider-switch" aria-label="AI provider"><button className={provider === "deepseek" ? "active" : ""} onClick={() => chooseProvider("deepseek")}><span>DS</span><b>DeepSeek</b><small>V4 Flash</small></button><button className={provider === "kimi" ? "active" : ""} onClick={() => chooseProvider("kimi")}><span>KM</span><b>Kimi</b><small>K3</small></button></div>
+        <div className="drawer-section"><div className="drawer-section-title"><span>01</span><strong>Task input</strong><b>Required</b></div><textarea value={input} onChange={(event) => setInput(event.target.value)} /></div>
+        <div className="drawer-section"><div className="drawer-section-title"><span>02</span><strong>Live research context</strong><b className="ready">On demand</b></div><div className="drawer-sources"><label><input type="checkbox" checked disabled /><span>Project + active research question</span><b>Attached</b></label><label><input type="checkbox" checked={sources.obsidian} onChange={(event) => setSources((value) => ({ ...value, obsidian: event.target.checked }))} /><span>Obsidian · Kbase</span><b>Local search</b></label><label><input type="checkbox" checked={sources.zotero} onChange={(event) => setSources((value) => ({ ...value, zotero: event.target.checked }))} /><span>Zotero literature</span><b>Local API</b></label><label><input type="checkbox" checked disabled /><span>Experiment + results</span><b>EXP-024</b></label></div></div>
+        <div className="drawer-section output-contract"><div className="drawer-section-title"><span>03</span><strong>Output contract</strong></div><p><i /> Separate evidence from inference</p><p><i /> Cite retrieved records as [Z1] and [O1]</p><p><i /> Flag missing information as [AUTHOR CHECK]</p></div>
+        {error && <div className="workflow-error"><span>!</span><p>{error}</p><button onClick={() => { onClose(); openConnections(); }}>Open Connections</button></div>}
+        {result && <section className="workflow-result"><div className="workflow-result-head"><span><b>{result.provider === "kimi" ? "Kimi" : "DeepSeek"}</b><small>{result.model} · {result.sources.zotero.length} papers · {result.sources.obsidian.length} notes</small></span><button onClick={saveResult}>{savedPath ? "Saved ✓" : "Save to Obsidian"}</button></div><pre>{result.output}</pre>{savedPath && <p>Saved to Kbase/{savedPath}</p>}</section>}
+        <div className="drawer-footer"><div><SourceDot tone={result ? "green" : "blue"} /><span><strong>{result ? "Evidence-linked output ready" : "Local-first research workflow"}</strong><small>{provider === "kimi" ? "Kimi K3" : "DeepSeek V4 Flash"} · keys stay on this Mac</small></span></div><button className="primary-button" disabled={running || !input.trim()} onClick={runWorkflow}>{running ? "Agent is working…" : result ? "Run again" : "Run workflow"} <b>{running ? "···" : "↑"}</b></button></div>
+        {running && <div className="running-state"><span className="running-orb">✦</span><div><strong>{provider === "kimi" ? "Kimi" : "DeepSeek"} is working</strong><p>Retrieving Zotero papers and Kbase notes first…</p></div><button onClick={cancelWorkflow}>Cancel</button></div>}
       </aside>
     </div>
   );
+}
+
+function ConnectionsDrawer({ onClose, onStatus }: { onClose: () => void; onStatus: (online: boolean) => void }) {
+  const [status, setStatus] = useState<BridgeStatus | null>(null);
+  const [checking, setChecking] = useState(true);
+  const [message, setMessage] = useState("");
+
+  const refresh = async () => {
+    setChecking(true);
+    setMessage("");
+    try {
+      const response = await fetch(`${BRIDGE_URL}/health`, { signal: AbortSignal.timeout(5000) });
+      if (!response.ok) throw new Error("Bridge unavailable");
+      const body = await response.json() as BridgeStatus;
+      setStatus(body);
+      onStatus(true);
+    } catch {
+      setStatus(null);
+      onStatus(false);
+    } finally {
+      setChecking(false);
+    }
+  };
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => void refresh(), 0);
+    return () => window.clearTimeout(timer);
+    // The drawer performs one connection check on mount; manual checks use the button.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const copyPath = async () => {
+    await navigator.clipboard.writeText("/Users/biomech/Documents/workbench/.env.local");
+    setMessage("Key file path copied");
+  };
+
+  const connection = (connected?: boolean) => connected ? <b className="connection-state connected">Connected</b> : <b className="connection-state missing">Setup needed</b>;
+
+  return <div className="drawer-backdrop" onMouseDown={onClose}><aside className="action-drawer connections-drawer" onMouseDown={(event) => event.stopPropagation()} aria-label="Research system connections"><div className="drawer-head"><button onClick={onClose}>×</button><span className="label">Connections</span><span className="action-mark mint">⌁</span></div><div className="drawer-title"><span>LOCAL RESEARCH BRIDGE</span><h2>Real tools, private context.</h2><p>Keys, Zotero records, and Kbase notes remain on this Mac. The deployed workbench receives only the output needed for your current session.</p></div><div className={`bridge-banner ${status ? "online" : "offline"}`}><span>{checking ? "···" : status ? "✓" : "!"}</span><div><strong>{checking ? "Checking local bridge" : status ? "Research bridge is online" : "Research bridge is offline"}</strong><small>{status ? "Listening securely on this Mac" : "The background connector needs to be started"}</small></div><button onClick={refresh}>{checking ? "Checking…" : "Test again"}</button></div><div className="connection-list"><article><span className="connection-logo deepseek">DS</span><div><strong>DeepSeek API</strong><small>{status?.deepseek.model || "deepseek-v4-flash"}</small></div>{connection(status?.deepseek.connected)}</article><article><span className="connection-logo kimi">KM</span><div><strong>Kimi API</strong><small>{status?.kimi.model || "kimi-k3"}</small></div>{connection(status?.kimi.connected)}</article><article><span className="connection-logo zotero">Z</span><div><strong>Zotero Desktop</strong><small>{status?.zotero.connected ? `Local API · Zotero ${status.zotero.version || "ready"}` : "Open Zotero to connect"}</small></div>{connection(status?.zotero.connected)}</article><article><span className="connection-logo obsidian">O</span><div><strong>Obsidian · Kbase</strong><small>{status?.obsidian.connected ? "Read + write access" : "iCloud Vault unavailable"}</small></div>{connection(status?.obsidian.connected)}</article></div><section className="key-setup"><span className="label">ADD YOUR API KEYS</span><p>Open the private local file below and paste each key after the equals sign. Leave the key you do not use blank.</p><code>/Users/biomech/Documents/workbench/.env.local</code><div><span><b>DEEPSEEK_API_KEY=</b><small>Paste your DeepSeek key here</small></span><span><b>KIMI_API_KEY=</b><small>Paste your Kimi key here</small></span></div><button onClick={copyPath}>{message || "Copy key file path"}</button></section><div className="privacy-note"><span>⌾</span><p><strong>Local privacy boundary</strong>Secrets are ignored by Git and never included in the deployed site. The bridge reloads this file for every request, so saving the file is enough.</p></div></aside></div>;
 }
 
 function ContextDrawer({ onClose }: { onClose: () => void }) {
@@ -603,6 +738,8 @@ export default function Home() {
   const [commandQuery, setCommandQuery] = useState("");
   const [mobileNav, setMobileNav] = useState(false);
   const [toast, setToast] = useState("");
+  const [connectionsOpen, setConnectionsOpen] = useState(false);
+  const [bridgeOnline, setBridgeOnline] = useState<boolean | null>(null);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -614,10 +751,18 @@ export default function Home() {
         setCommandOpen(false);
         setAction(null);
         setContextOpen(false);
+        setConnectionsOpen(false);
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
+  useEffect(() => {
+    const check = () => fetch(`${BRIDGE_URL}/health`, { signal: AbortSignal.timeout(3500) }).then((response) => setBridgeOnline(response.ok)).catch(() => setBridgeOnline(false));
+    void check();
+    const timer = window.setInterval(check, 30000);
+    return () => window.clearInterval(timer);
   }, []);
 
   useEffect(() => {
@@ -641,7 +786,7 @@ export default function Home() {
       <aside className={`sidebar ${mobileNav ? "mobile-open" : ""}`}>
         <div className="brand"><span className="brand-mark"><i /><b /></span><span><strong>WORKBUDDY</strong><small>SPORTS RESEARCH OS</small></span><button className="mobile-close" onClick={() => setMobileNav(false)}>×</button></div>
         <nav aria-label="Main navigation"><span className="nav-label">RESEARCH WORKBENCH</span>{navItems.map((item) => <button key={item.key} aria-current={activeModule === item.key ? "page" : undefined} className={activeModule === item.key ? "active" : ""} onClick={() => selectModule(item.key)}><span className="nav-icon">{item.icon}</span><span>{item.label}</span>{item.badge && <b>{item.badge}</b>}</button>)}</nav>
-        <div className="sidebar-bottom"><button onClick={() => setCommandOpen(true)}><span className="nav-icon">⌘</span><span>Command library</span></button><button onClick={() => setToast("Data sources and preferences are ready") }><span className="nav-icon">⚙</span><span>Settings</span></button><div className="sync-status"><span className="sync-orbit"><i /><b /></span><span><strong>Research systems</strong><small><SourceDot /> 3 sources connected</small></span></div></div>
+        <div className="sidebar-bottom"><button onClick={() => setCommandOpen(true)}><span className="nav-icon">⌘</span><span>Command library</span></button><button onClick={() => setConnectionsOpen(true)}><span className="nav-icon">⚙</span><span>Connections</span></button><div className={`sync-status ${bridgeOnline === false ? "offline" : ""}`}><span className="sync-orbit"><i /><b /></span><span><strong>Research systems</strong><small><SourceDot tone={bridgeOnline === false ? "orange" : "green"} /> {bridgeOnline === null ? "Checking local bridge" : bridgeOnline ? "Local bridge connected" : "Setup required"}</small></span></div></div>
       </aside>
 
       <div className="main-shell">
@@ -658,8 +803,9 @@ export default function Home() {
         </main>
       </div>
 
-      {action && <ActionDrawer action={action} onClose={() => setAction(null)} />}
+      {action && <ActionDrawer action={action} onClose={() => setAction(null)} openConnections={() => setConnectionsOpen(true)} />}
       {contextOpen && <ContextDrawer onClose={() => setContextOpen(false)} />}
+      {connectionsOpen && <ConnectionsDrawer onClose={() => setConnectionsOpen(false)} onStatus={setBridgeOnline} />}
       {commandOpen && <div className="command-backdrop" onMouseDown={() => setCommandOpen(false)}><div className="command-palette" onMouseDown={(e) => e.stopPropagation()}><div className="command-search"><span>⌕</span><input autoFocus value={commandQuery} onChange={(event) => setCommandQuery(event.target.value)} placeholder="Search research actions…" /><kbd>ESC</kbd></div><div className="command-results"><span className="label">Suggested workflows</span>{filteredCommands.length ? filteredCommands.map((item) => <button key={item.command} onClick={() => { setCommandOpen(false); setAction(item); setCommandQuery(""); }}><span className={`action-mark ${item.tone}`}>✦</span><span><strong>{item.label}</strong><small>{item.command}</small></span><b>{item.meta}</b></button>) : <p className="empty-command">No workflow matches “{commandQuery}”.</p>}</div><div className="command-footer"><span><kbd>↑</kbd><kbd>↓</kbd> Navigate</span><span><kbd>↵</kbd> Open</span><span>Context-aware search</span></div></div></div>}
       {toast && <div className="toast"><span>✓</span>{toast}</div>}
     </div>
