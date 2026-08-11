@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 async function render() {
@@ -22,5 +23,19 @@ test("server-renders the Sports Research OS", async () => {
   assert.match(html, /Verify the stability of the three-cluster solution/i);
   assert.match(html, /Today’s recommendations/i);
   assert.match(html, /Research debt/i);
+  assert.match(html, /Edit Verify the stability of the three-cluster solution/i);
+  assert.match(html, /Delete EXP-024 stability diagnostics/i);
   assert.doesNotMatch(html, /codex-preview|Your site is taking shape/i);
+});
+
+test("every rendered button declares an interaction handler", async () => {
+  const source = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const buttons = source.match(/<button\b(?:(?!>).)*>/gs) ?? [];
+  assert.ok(buttons.length > 60, "expected the workbench interaction surface");
+  const inertButtons = buttons.filter((button) => !button.includes("onClick="));
+  assert.deepEqual(inertButtons, []);
+  assert.match(source, /saveTaskEdit/);
+  assert.match(source, /deleteTask/);
+  assert.match(source, /saveTimeBlock/);
+  assert.match(source, /deleteTimeBlock/);
 });

@@ -127,29 +127,63 @@ type DailyTask = {
   done: boolean;
 };
 
+type TimeBlock = {
+  id: number;
+  time: string;
+  title: string;
+  category: string;
+  duration: string;
+  tone: "mint" | "blue" | "violet" | "neutral";
+  now?: boolean;
+};
+
 const starterTasks: DailyTask[] = [
   { id: 1, title: "Verify the stability of the three-cluster solution", object: "EXP-024", category: "Statistical analysis", time: "09:30–11:00", priority: "Must", done: false },
   { id: 2, title: "Find direct evidence for Introduction §1.6", object: "RQ-02", category: "Literature", time: "11:30–12:00", priority: "Must", done: false },
   { id: 3, title: "Document the phase-segmentation threshold decision", object: "DEC-041", category: "Writing", time: "14:00–15:00", priority: "Should", done: false },
 ];
 
+const starterTimeBlocks: TimeBlock[] = [
+  { id: 1, time: "09:30", title: "EXP-024 stability diagnostics", category: "Analysis", duration: "90 min", tone: "mint" },
+  { id: 2, time: "11:30", title: "Introduction evidence search", category: "Reading", duration: "30 min", tone: "blue" },
+  { id: 3, time: "14:00", title: "Methods decision rationale", category: "Writing", duration: "60 min", tone: "violet", now: true },
+  { id: 4, time: "16:30", title: "Prepare supervision meeting brief", category: "Meeting", duration: "30 min", tone: "neutral" },
+];
+
+const emptyTimeBlock = { time: "09:00", title: "", category: "Analysis", duration: "60 min" };
+
 function Dashboard({ runAction, openContext }: { runAction: (a: Action) => void; openContext: () => void }) {
   const [tasks, setTasks] = useState<DailyTask[]>(starterTasks);
+  const [timeBlocks, setTimeBlocks] = useState<TimeBlock[]>(starterTimeBlocks);
   const [newTask, setNewTask] = useState("");
+  const [editingTaskId, setEditingTaskId] = useState<number | null>(null);
+  const [taskDraft, setTaskDraft] = useState("");
+  const [deletingTaskId, setDeletingTaskId] = useState<number | null>(null);
+  const [timeEditorId, setTimeEditorId] = useState<number | "new" | null>(null);
+  const [timeDraft, setTimeDraft] = useState(emptyTimeBlock);
+  const [deletingTimeId, setDeletingTimeId] = useState<number | null>(null);
+  const [storageReady, setStorageReady] = useState(false);
   const [focusSeconds, setFocusSeconds] = useState(47 * 60 + 18);
   const [focusRunning, setFocusRunning] = useState(false);
   const [queuedPapers, setQueuedPapers] = useState<string[]>([]);
 
   useEffect(() => {
-    const saved = window.localStorage.getItem("workbuddy-daily-tasks-en-v2");
-    if (saved) {
-      try { setTasks(JSON.parse(saved) as DailyTask[]); } catch { /* keep starter state */ }
-    }
+    const savedTasks = window.localStorage.getItem("workbuddy-daily-tasks-en-v2");
+    const savedTimeBlocks = window.localStorage.getItem("workbuddy-time-blocks-en-v1");
+    if (savedTasks) try { setTasks(JSON.parse(savedTasks) as DailyTask[]); } catch { /* keep starter state */ }
+    if (savedTimeBlocks) try { setTimeBlocks(JSON.parse(savedTimeBlocks) as TimeBlock[]); } catch { /* keep starter state */ }
+    setStorageReady(true);
   }, []);
 
   useEffect(() => {
+    if (!storageReady) return;
     window.localStorage.setItem("workbuddy-daily-tasks-en-v2", JSON.stringify(tasks));
-  }, [tasks]);
+  }, [storageReady, tasks]);
+
+  useEffect(() => {
+    if (!storageReady) return;
+    window.localStorage.setItem("workbuddy-time-blocks-en-v1", JSON.stringify(timeBlocks));
+  }, [storageReady, timeBlocks]);
 
   useEffect(() => {
     if (!focusRunning) return;
@@ -164,6 +198,41 @@ function Dashboard({ runAction, openContext }: { runAction: (a: Action) => void;
     if (!newTask.trim()) return;
     setTasks((items) => [...items, { id: Date.now(), title: newTask.trim(), object: "INBOX", category: "Ad hoc", time: "Unscheduled", priority: "Should", done: false }]);
     setNewTask("");
+  };
+  const startTaskEdit = (task: DailyTask) => {
+    setEditingTaskId(task.id);
+    setTaskDraft(task.title);
+    setDeletingTaskId(null);
+  };
+  const saveTaskEdit = () => {
+    if (!taskDraft.trim() || editingTaskId === null) return;
+    setTasks((items) => items.map((item) => item.id === editingTaskId ? { ...item, title: taskDraft.trim() } : item));
+    setEditingTaskId(null);
+    setTaskDraft("");
+  };
+  const deleteTask = (id: number) => {
+    setTasks((items) => items.filter((item) => item.id !== id));
+    setDeletingTaskId(null);
+  };
+  const startTimeEdit = (block?: TimeBlock) => {
+    setTimeEditorId(block ? block.id : "new");
+    setTimeDraft(block ? { time: block.time, title: block.title, category: block.category, duration: block.duration } : emptyTimeBlock);
+    setDeletingTimeId(null);
+  };
+  const saveTimeBlock = () => {
+    if (!timeDraft.title.trim() || timeEditorId === null) return;
+    const toneByCategory: Record<string, TimeBlock["tone"]> = { Analysis: "mint", Reading: "blue", Writing: "violet", Meeting: "neutral" };
+    if (timeEditorId === "new") {
+      setTimeBlocks((items) => [...items, { id: Date.now(), ...timeDraft, title: timeDraft.title.trim(), tone: toneByCategory[timeDraft.category] ?? "neutral" }].sort((a, b) => a.time.localeCompare(b.time)));
+    } else {
+      setTimeBlocks((items) => items.map((item) => item.id === timeEditorId ? { ...item, ...timeDraft, title: timeDraft.title.trim(), tone: toneByCategory[timeDraft.category] ?? "neutral" } : item).sort((a, b) => a.time.localeCompare(b.time)));
+    }
+    setTimeEditorId(null);
+    setTimeDraft(emptyTimeBlock);
+  };
+  const deleteTimeBlock = (id: number) => {
+    setTimeBlocks((items) => items.filter((item) => item.id !== id));
+    setDeletingTimeId(null);
   };
 
   return (
@@ -192,26 +261,42 @@ function Dashboard({ runAction, openContext }: { runAction: (a: Action) => void;
           </div>
           <div className="daily-task-list">
             {tasks.map((task) => (
-              <div className={task.done ? "done" : ""} key={task.id}>
+              <div className={`${task.done ? "done" : ""} ${editingTaskId === task.id ? "editing" : ""}`} key={task.id}>
                 <button className="task-check" onClick={() => toggleTask(task.id)} aria-label={`${task.done ? "Reopen " : "Complete "}${task.title}`}>{task.done ? "✓" : ""}</button>
-                <span className="task-copy"><strong>{task.title}</strong><small><b>{task.object}</b> · {task.category}</small></span>
-                <span className="task-plan"><strong>{task.time}</strong><small className={task.priority === "Must" ? "must" : "should"}>{task.priority}</small></span>
-                <button className="task-open" aria-label={`Open ${task.title}`} onClick={() => runAction({ label: task.title, meta: task.object, tone: task.category === "Literature" ? "blue" : "mint", command: task.category === "Literature" ? "@evidence-for-claim" : "@continue-task" })}>↗</button>
+                {editingTaskId === task.id ? (
+                  <div className="task-editor">
+                    <input autoFocus value={taskDraft} onChange={(event) => setTaskDraft(event.target.value)} onKeyDown={(event) => event.key === "Enter" && saveTaskEdit()} aria-label={`Edit ${task.title}`} />
+                    <button className="save-edit" onClick={saveTaskEdit}>Save</button>
+                    <button onClick={() => setEditingTaskId(null)}>Cancel</button>
+                  </div>
+                ) : <>
+                  <span className="task-copy"><strong>{task.title}</strong><small><b>{task.object}</b> · {task.category}</small></span>
+                  <span className="task-plan"><strong>{task.time}</strong><small className={task.priority === "Must" ? "must" : "should"}>{task.priority}</small></span>
+                  {deletingTaskId === task.id ? (
+                    <span className="inline-confirm"><button className="danger" onClick={() => deleteTask(task.id)}>Delete</button><button onClick={() => setDeletingTaskId(null)}>Keep</button></span>
+                  ) : (
+                    <span className="task-actions"><button aria-label={`Edit ${task.title}`} title="Edit" onClick={() => startTaskEdit(task)}>✎</button><button aria-label={`Delete ${task.title}`} title="Delete" onClick={() => setDeletingTaskId(task.id)}>×</button><button aria-label={`Open ${task.title}`} title="Open" onClick={() => runAction({ label: task.title, meta: task.object, tone: task.category === "Literature" ? "blue" : "mint", command: task.category === "Literature" ? "@evidence-for-claim" : "@continue-task" })}>↗</button></span>
+                  )}
+                </>}
               </div>
             ))}
           </div>
-          <div className="task-footer"><span>Completed tasks feed the daily review and research log</span><button>Open project task table →</button></div>
+          <div className="task-footer"><span>Completed tasks feed the daily review and research log</span><button onClick={() => runAction({ label: "Open project task table", meta: "Projects", tone: "mint", command: "@project-tasks" })}>Open project task table →</button></div>
         </article>
 
         <article className="today-schedule card">
-          <div className="section-heading"><div><span className="label">TIME BLOCKS</span><p>Today’s schedule</p></div><button className="mini-add">＋ Time block</button></div>
+          <div className="section-heading"><div><span className="label">TIME BLOCKS</span><p>Today’s schedule</p></div><button className="mini-add" onClick={() => startTimeEdit()}>＋ Time block</button></div>
+          {timeEditorId !== null && <div className="time-editor">
+            <label><span>Time</span><input type="time" value={timeDraft.time} onChange={(event) => setTimeDraft((value) => ({ ...value, time: event.target.value }))} /></label>
+            <label className="time-title"><span>Focus</span><input autoFocus value={timeDraft.title} onChange={(event) => setTimeDraft((value) => ({ ...value, title: event.target.value }))} onKeyDown={(event) => event.key === "Enter" && saveTimeBlock()} placeholder="Describe this research block" /></label>
+            <label><span>Type</span><select value={timeDraft.category} onChange={(event) => setTimeDraft((value) => ({ ...value, category: event.target.value }))}><option>Analysis</option><option>Reading</option><option>Writing</option><option>Meeting</option></select></label>
+            <label><span>Duration</span><input value={timeDraft.duration} onChange={(event) => setTimeDraft((value) => ({ ...value, duration: event.target.value }))} placeholder="60 min" /></label>
+            <div><button className="save-edit" onClick={saveTimeBlock}>{timeEditorId === "new" ? "Add block" : "Save"}</button><button onClick={() => setTimeEditorId(null)}>Cancel</button></div>
+          </div>}
           <div className="schedule-list">
-            <div><time>09:30</time><i className="mint" /><span><strong>EXP-024 stability diagnostics</strong><small>Analysis · 90 min</small></span></div>
-            <div><time>11:30</time><i className="blue" /><span><strong>Introduction evidence search</strong><small>Reading · 30 min</small></span></div>
-            <div className="now"><time>14:00</time><i className="violet" /><span><strong>Methods decision rationale</strong><small>Writing · 60 min</small></span><b>NOW</b></div>
-            <div><time>16:30</time><i className="neutral" /><span><strong>Prepare supervision meeting brief</strong><small>Meeting · 30 min</small></span></div>
+            {timeBlocks.map((block) => <div className={block.now ? "now" : ""} key={block.id}><time>{block.time}</time><i className={block.tone} /><span><strong>{block.title}</strong><small>{block.category} · {block.duration}</small></span>{deletingTimeId === block.id ? <span className="inline-confirm schedule-confirm"><button className="danger" onClick={() => deleteTimeBlock(block.id)}>Delete</button><button onClick={() => setDeletingTimeId(null)}>Keep</button></span> : <span className="schedule-actions">{block.now && <b>NOW</b>}<button aria-label={`Edit ${block.title}`} title="Edit" onClick={() => startTimeEdit(block)}>✎</button><button aria-label={`Delete ${block.title}`} title="Delete" onClick={() => setDeletingTimeId(block.id)}>×</button></span>}</div>)}
           </div>
-          <button className="wide-button">Open research calendar <span>→</span></button>
+          <button className="wide-button" onClick={() => runAction({ label: "Open research calendar", meta: "Planning", tone: "blue", command: "@research-calendar" })}>Open research calendar <span>→</span></button>
         </article>
 
         <article className="focus-session card">
@@ -266,7 +351,7 @@ function Dashboard({ runAction, openContext }: { runAction: (a: Action) => void;
             <button onClick={() => runAction(quickActions[1])}><span className="debt-rank high">02</span><span><strong>Claim lacks direct evidence</strong><small>Introduction · paragraph 6</small></span><b>Evidence</b></button>
             <button onClick={() => runAction(quickActions[3])}><span className="debt-rank medium">03</span><span><strong>Method decision not documented</strong><small>Phase segmentation threshold</small></span><b>Decision</b></button>
           </div>
-          <div className="debt-foot"><span>Today’s tasks can clear <b>3 items</b></span><button>View all →</button></div>
+          <div className="debt-foot"><span>Today’s tasks can clear <b>3 items</b></span><button onClick={() => runAction({ label: "Review all research debt", meta: "Quality control", tone: "orange", command: "@research-debt" })}>View all →</button></div>
         </article>
       </section>
     </>
@@ -347,7 +432,7 @@ function DataExperiments({ runAction }: { runAction: (a: Action) => void }) {
         </article>
       </section>
       <section className="experiment-card card">
-        <div className="section-heading"><div><span className="label">Experiment registry</span><p>Study 02 · 3 experiments</p></div><button className="quiet-button">View archive</button></div>
+        <div className="section-heading"><div><span className="label">Experiment registry</span><p>Study 02 · 3 experiments</p></div><button className="quiet-button" onClick={() => runAction({ label: "Browse experiment archive", meta: "Experiments", tone: "blue", command: "@experiment-archive" })}>View archive</button></div>
         <div className="experiment-table">
           <div className="experiment-head"><span>ID / objective</span><span>Method</span><span>Traceability</span><span>Status</span><span /></div>
           <div className="experiment-row active"><span><b>EXP-024</b><strong>Pace of play — model selection</strong><small>Updated 18 min ago</small></span><span>Gaussian mixture</span><span><i className="trace-dots"><b /><b /><b /></i> Complete</span><span className="status-pill lime"><i /> Running</span><button onClick={() => runAction({ label: "Continue EXP-024", meta: "Analysis", tone: "mint", command: "@continue-experiment" })}>Open ↗</button></div>
@@ -375,7 +460,7 @@ function Manuscript({ runAction }: { runAction: (a: Action) => void }) {
       </section>
       <section className="manuscript-lower">
         <article className="argument-map card">
-          <div className="section-heading"><div><span className="label">Introduction argument map</span><p>7 logical moves · 1 weak connection</p></div><button className="quiet-button">Edit map</button></div>
+          <div className="section-heading"><div><span className="label">Introduction argument map</span><p>7 logical moves · 1 weak connection</p></div><button className="quiet-button" onClick={() => runAction({ label: "Edit argument map", meta: "Manuscript", tone: "violet", command: "@edit-argument-map" })}>Edit map</button></div>
           <div className="argument-flow">
             {["Problem", "Existing knowledge", "Current approaches", "Limitation", "Research gap", "Why it matters", "Present study"].map((item, index) => <div key={item} className={item === "Research gap" ? "warning" : ""}><span>{String(index + 1).padStart(2, "0")}</span><strong>{item}</strong>{index < 6 && <b>→</b>}</div>)}
           </div>
@@ -407,7 +492,7 @@ function Workspace({ runAction }: { runAction: (a: Action) => void }) {
           <p className="context-note"><span>◇</span> Irrelevant project history and unverified outputs will be excluded.</p>
         </article>
       </section>
-      <section className="skills-strip card"><div><span className="label">Skills library</span><p>Stable, reusable research workflows</p></div><div className="skill-chips">{commands.slice(4, 10).map((command) => <button key={command.command} onClick={() => runAction(command)}>{command.command}</button>)}</div><button className="text-button">View all 18 →</button></section>
+      <section className="skills-strip card"><div><span className="label">Skills library</span><p>Stable, reusable research workflows</p></div><div className="skill-chips">{commands.slice(4, 10).map((command) => <button key={command.command} onClick={() => runAction(command)}>{command.command}</button>)}</div><button className="text-button" onClick={() => runAction({ label: "Browse skills library", meta: "AI workspace", tone: "mint", command: "@skills-library" })}>View all 18 →</button></section>
     </>
   );
 }
@@ -429,15 +514,15 @@ function Review({ runAction }: { runAction: (a: Action) => void }) {
   );
 }
 
-function Projects({ changeProject }: { changeProject: (name: string) => void }) {
+function Projects({ changeProject, runAction }: { changeProject: (name: string) => void; runAction: (a: Action) => void }) {
   return (
     <>
-      <section className="page-intro compact"><div><p className="eyebrow">Isolated research contexts</p><h1>PhD <em>projects.</em></h1><p>Switch studies without mixing research questions, decisions, datasets, or evidence.</p></div><button className="primary-button">New project <b>+</b></button></section>
+      <section className="page-intro compact"><div><p className="eyebrow">Isolated research contexts</p><h1>PhD <em>projects.</em></h1><p>Switch studies without mixing research questions, decisions, datasets, or evidence.</p></div><button className="primary-button" onClick={() => runAction({ label: "Create research project", meta: "Projects", tone: "mint", command: "@new-project" })}>New project <b>+</b></button></section>
       <section className="project-grid">
         {projects.map((project, index) => <article className={`project-card card ${index === 0 ? "selected" : ""}`} key={project.name} style={{ "--project-color": project.color } as React.CSSProperties}><div className="project-top"><span>{project.code}</span>{index === 0 && <b>ACTIVE</b>}</div><div className="project-orbit"><span /><i /><b /></div><h2>{project.name}</h2><p>{project.detail}</p><div className="project-phase"><span>Current phase</span><strong>{project.phase}</strong></div><div className="project-progress"><i><b style={{ width: `${project.progress}%` }} /></i><span>{project.progress}%</span></div><div className="project-links"><span><b>{index === 0 ? 3 : 2}</b> RQs</span><span><b>{index === 1 ? 11 : index === 0 ? 7 : 2}</b> Results</span><span><b>{index === 2 ? 9 : 23}</b> Papers</span></div><button onClick={() => changeProject(project.name)}>{index === 0 ? "Open project" : "Switch context"} <span>→</span></button></article>)}
-        <button className="new-project-card"><span>+</span><strong>Create research project</strong><small>Start with a clean, isolated context</small></button>
+        <button className="new-project-card" onClick={() => runAction({ label: "Create research project", meta: "Projects", tone: "mint", command: "@new-project" })}><span>+</span><strong>Create research project</strong><small>Start with a clean, isolated context</small></button>
       </section>
-      <section className="portfolio-note card"><span>◇</span><div><strong>Cross-project insight</strong><p>The operational definition of “possession phase” differs between Study 01 and Study 02. Consider documenting why.</p></div><button>Review definitions →</button></section>
+      <section className="portfolio-note card"><span>◇</span><div><strong>Cross-project insight</strong><p>The operational definition of “possession phase” differs between Study 01 and Study 02. Consider documenting why.</p></div><button onClick={() => runAction({ label: "Review project definitions", meta: "Cross-project", tone: "violet", command: "@compare-definitions" })}>Review definitions →</button></section>
     </>
   );
 }
@@ -464,11 +549,11 @@ function Operations({ runAction }: { runAction: (a: Action) => void }) {
       <div className="operations-tabs">{tabs.map(([key, label]) => <button key={key} aria-pressed={activeTab === key} className={activeTab === key ? "active" : ""} onClick={() => setActiveTab(key)}>{label}{key === "mentor" && <span>2</span>}</button>)}</div>
 
       {activeTab === "pipeline" && <>
-        <section className="ops-overview card"><div><span className="label">SUBMISSION OVERVIEW</span><h2>A traceable path from manuscript to publication.</h2></div><div className="ops-stats"><span><strong>3</strong><small>Active</small></span><span><strong>1</strong><small>Awaiting feedback</small></span><span><strong>24d</strong><small>Next deadline</small></span></div><button className="primary-button">Add submission <b>＋</b></button></section>
+        <section className="ops-overview card"><div><span className="label">SUBMISSION OVERVIEW</span><h2>A traceable path from manuscript to publication.</h2></div><div className="ops-stats"><span><strong>3</strong><small>Active</small></span><span><strong>1</strong><small>Awaiting feedback</small></span><span><strong>24d</strong><small>Next deadline</small></span></div><button className="primary-button" onClick={() => runAction({ label: "Add submission", meta: "Submission pipeline", tone: "mint", command: "@new-submission" })}>Add submission <b>＋</b></button></section>
         <section className="submission-board">
-          <article className="pipeline-column card"><div><span>DRAFTING</span><b>1</b></div><button className="submission-ticket"><small>MANUSCRIPT-02</small><strong>Formation recognition in elite women’s football</strong><span>Journal of Sports Sciences</span><i><b style={{ width: "54%" }} /></i><em>Methods · internal review</em></button></article>
-          <article className="pipeline-column card"><div><span>INTERNAL REVIEW</span><b>1</b></div><button className="submission-ticket warning"><small>MANUSCRIPT-01</small><strong>Pace of play across match contexts</strong><span>Sports Biomechanics</span><p><b>2</b> major concerns remain</p><em>Review due · 18 Aug</em></button></article>
-          <article className="pipeline-column card"><div><span>SUBMITTED</span><b>1</b></div><button className="submission-ticket blue"><small>CONF-004</small><strong>Tracking-derived tactical compactness</strong><span>World Congress of Performance Analysis</span><p>Waiting for decision</p><em>Submitted · 29 Jul</em></button></article>
+          <article className="pipeline-column card"><div><span>DRAFTING</span><b>1</b></div><button className="submission-ticket" onClick={() => runAction({ label: "Open MANUSCRIPT-02 submission", meta: "Drafting", tone: "violet", command: "@submission-detail" })}><small>MANUSCRIPT-02</small><strong>Formation recognition in elite women’s football</strong><span>Journal of Sports Sciences</span><i><b style={{ width: "54%" }} /></i><em>Methods · internal review</em></button></article>
+          <article className="pipeline-column card"><div><span>INTERNAL REVIEW</span><b>1</b></div><button className="submission-ticket warning" onClick={() => runAction({ label: "Open MANUSCRIPT-01 review", meta: "Internal review", tone: "orange", command: "@submission-detail" })}><small>MANUSCRIPT-01</small><strong>Pace of play across match contexts</strong><span>Sports Biomechanics</span><p><b>2</b> major concerns remain</p><em>Review due · 18 Aug</em></button></article>
+          <article className="pipeline-column card"><div><span>SUBMITTED</span><b>1</b></div><button className="submission-ticket blue" onClick={() => runAction({ label: "Open CONF-004 submission", meta: "Submitted", tone: "blue", command: "@submission-detail" })}><small>CONF-004</small><strong>Tracking-derived tactical compactness</strong><span>World Congress of Performance Analysis</span><p>Waiting for decision</p><em>Submitted · 29 Jul</em></button></article>
           <article className="pipeline-column card"><div><span>REVISION</span><b>0</b></div><div className="empty-pipeline"><span>◇</span><p>No active revisions</p></div></article>
         </section>
         <section className="submission-deadline card"><span className="deadline-date"><strong>04</strong><small>SEP</small></span><div><span className="label">NEXT DEADLINE</span><strong>MANUSCRIPT-01 · Internal circulation</strong><small>24 days · argument check, statistical review and figure audit required</small></div><div className="deadline-gates"><span className="done">✓ Argument</span><span>○ Statistics</span><span>○ Figures</span></div><button onClick={() => runAction(quickActions[3])}>Prepare review →</button></section>
@@ -476,8 +561,8 @@ function Operations({ runAction }: { runAction: (a: Action) => void }) {
 
       {activeTab === "mentor" && <section className="mentor-grid">
         <article className="mentor-brief card"><div className="section-heading"><div><span className="label">NEXT SUPERVISION · 14 AUG</span><p>Supervision brief</p></div><span className="status-pill lime"><i /> 80% ready</span></div><h2>Ask for decisions with evidence—not a full progress dump.</h2><div className="brief-sections"><div><span>01</span><p><strong>Core progress</strong>EXP-024 model selection is complete; agree the minimum reporting standard for stability.</p></div><div><span>02</span><p><strong>Decision required</strong>Should cross-match validation be a primary analysis or supplementary material?</p></div><div><span>03</span><p><strong>Evidence prepared</strong>Figure 3, stability diagnostics, and five directly relevant papers.</p></div></div><button className="primary-button" onClick={() => runAction({ label: "Prepare supervisor briefing", meta: "Meeting", tone: "violet", command: "@supervisor-brief" })}>Generate one-page brief <b>✦</b></button></article>
-        <article className="mentor-commitments card"><div className="section-heading"><div><span className="label">COMMITMENT TRACKER</span><p>Commitments & feedback</p></div><span className="count-badge">2</span></div><div className="commitment-list"><div><span className="commit-status overdue">!</span><span><strong>Review the Methods draft</strong><small>Supervisor · due 8 Aug</small><em>3 days overdue</em></span><button>Follow up</button></div><div><span className="commit-status waiting">…</span><span><strong>Confirm the target journal</strong><small>Joint decision · review 14 Aug</small><em>Awaiting discussion</em></span><button>Prepare</button></div><div><span className="commit-status done">✓</span><span><strong>Approved exclusion of phases under 8s</strong><small>Meeting · 31 Jul</small><em>Saved as DEC-041</em></span><button>View</button></div></div></article>
-        <article className="decision-recall card"><span className="label">DECISION MEMORY</span><blockquote>“Run the cross-match validation first; then decide whether it belongs in the main results or supplementary material.”</blockquote><p>Recorded at the 31 Jul meeting · linked to EXP-026 · review on 14 Aug</p><button>Convert to research decision →</button></article>
+        <article className="mentor-commitments card"><div className="section-heading"><div><span className="label">COMMITMENT TRACKER</span><p>Commitments & feedback</p></div><span className="count-badge">2</span></div><div className="commitment-list"><div><span className="commit-status overdue">!</span><span><strong>Review the Methods draft</strong><small>Supervisor · due 8 Aug</small><em>3 days overdue</em></span><button onClick={() => runAction({ label: "Follow up on Methods feedback", meta: "Supervision", tone: "orange", command: "@supervisor-follow-up" })}>Follow up</button></div><div><span className="commit-status waiting">…</span><span><strong>Confirm the target journal</strong><small>Joint decision · review 14 Aug</small><em>Awaiting discussion</em></span><button onClick={() => runAction({ label: "Prepare target journal decision", meta: "Supervision", tone: "blue", command: "@journal-decision" })}>Prepare</button></div><div><span className="commit-status done">✓</span><span><strong>Approved exclusion of phases under 8s</strong><small>Meeting · 31 Jul</small><em>Saved as DEC-041</em></span><button onClick={() => runAction({ label: "View DEC-041", meta: "Decision memory", tone: "mint", command: "@open-decision" })}>View</button></div></div></article>
+        <article className="decision-recall card"><span className="label">DECISION MEMORY</span><blockquote>“Run the cross-match validation first; then decide whether it belongs in the main results or supplementary material.”</blockquote><p>Recorded at the 31 Jul meeting · linked to EXP-026 · review on 14 Aug</p><button onClick={() => runAction({ label: "Convert meeting note to research decision", meta: "Decision memory", tone: "mint", command: "@save-decision" })}>Convert to research decision →</button></article>
       </section>}
 
       {activeTab === "review" && <section className="reflection-grid">
@@ -560,7 +645,7 @@ export default function Home() {
       </aside>
 
       <div className="main-shell">
-        <header className="topbar"><div className="breadcrumb"><button className="mobile-menu" onClick={() => setMobileNav(true)}>☰</button><span>Research Workbench</span><b>/</b><strong>{activeLabel}</strong></div><button className="command-trigger" onClick={() => setCommandOpen(true)}><span>⌕</span><span>Search or run a research workflow…</span><kbd>⌘ K</kbd></button><div className="top-actions"><button className="icon-button" aria-label="Notifications"><span>°</span>♢</button><button className="context-button" onClick={() => setContextOpen(true)}><span className="context-diamond">◇</span><span><small>CONTEXT</small><strong>Ready · 94%</strong></span></button><button className="profile-button" aria-label="Profile">DR</button></div></header>
+        <header className="topbar"><div className="breadcrumb"><button className="mobile-menu" onClick={() => setMobileNav(true)}>☰</button><span>Research Workbench</span><b>/</b><strong>{activeLabel}</strong></div><button className="command-trigger" onClick={() => setCommandOpen(true)}><span>⌕</span><span>Search or run a research workflow…</span><kbd>⌘ K</kbd></button><div className="top-actions"><button className="icon-button" aria-label="Notifications" onClick={() => setToast("No new research alerts") }><span>°</span>♢</button><button className="context-button" onClick={() => setContextOpen(true)}><span className="context-diamond">◇</span><span><small>CONTEXT</small><strong>Ready · 94%</strong></span></button><button className="profile-button" aria-label="Profile" onClick={() => setToast("Researcher profile is ready")}>DR</button></div></header>
         <main className="content">
           {activeModule === "dashboard" && <Dashboard runAction={setAction} openContext={() => setContextOpen(true)} />}
           {activeModule === "research" && <Research runAction={setAction} />}
@@ -568,7 +653,7 @@ export default function Home() {
           {activeModule === "manuscript" && <Manuscript runAction={setAction} />}
           {activeModule === "workspace" && <Workspace runAction={setAction} />}
           {activeModule === "review" && <Review runAction={setAction} />}
-          {activeModule === "projects" && <Projects changeProject={changeProject} />}
+          {activeModule === "projects" && <Projects changeProject={changeProject} runAction={setAction} />}
           {activeModule === "operations" && <Operations runAction={setAction} />}
         </main>
       </div>
