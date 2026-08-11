@@ -196,7 +196,7 @@ function Dashboard({ runAction, openContext }: { runAction: (a: Action) => void;
                 <button className="task-check" onClick={() => toggleTask(task.id)} aria-label={`${task.done ? "Reopen " : "Complete "}${task.title}`}>{task.done ? "✓" : ""}</button>
                 <span className="task-copy"><strong>{task.title}</strong><small><b>{task.object}</b> · {task.category}</small></span>
                 <span className="task-plan"><strong>{task.time}</strong><small className={task.priority === "Must" ? "must" : "should"}>{task.priority}</small></span>
-                <button className="task-open" onClick={() => runAction({ label: task.title, meta: task.object, tone: task.category === "Literature" ? "blue" : "mint", command: task.category === "Literature" ? "@evidence-for-claim" : "@continue-task" })}>↗</button>
+                <button className="task-open" aria-label={`Open ${task.title}`} onClick={() => runAction({ label: task.title, meta: task.object, tone: task.category === "Literature" ? "blue" : "mint", command: task.category === "Literature" ? "@evidence-for-claim" : "@continue-task" })}>↗</button>
               </div>
             ))}
           </div>
@@ -220,7 +220,7 @@ function Dashboard({ runAction, openContext }: { runAction: (a: Action) => void;
           <h2>{focusTime}</h2>
           <p>Verify the stability of the three-cluster solution</p>
           <div className="focus-wave">{[4,8,13,21,12,17,25,10,18,8,5].map((height, index) => <i key={index} style={{ height }} />)}</div>
-          <button onClick={() => setFocusRunning((value) => !value)}>{focusRunning ? "Pause session" : "Resume session"}<span>{focusRunning ? "Ⅱ" : "▶"}</span></button>
+          <button aria-pressed={focusRunning} onClick={() => setFocusRunning((value) => !value)}>{focusRunning ? "Pause session" : "Resume session"}<span>{focusRunning ? "Ⅱ" : "▶"}</span></button>
         </article>
       </section>
 
@@ -250,10 +250,10 @@ function Dashboard({ runAction, openContext }: { runAction: (a: Action) => void;
           <div className="radar-list">
             {papers.map((paper, index) => (
               <div key={paper.title}>
-                <span className="paper-score"><strong>{index === 0 ? 94 : index === 1 ? 87 : 82}</strong><small>relevance</small></span>
+                <span className="paper-score"><strong>{index === 0 ? 94 : index === 1 ? 87 : 82}</strong><small>match</small></span>
                 <span className="radar-copy"><small>{paper.year} · {paper.authors}</small><strong>{paper.title}</strong><em>{paper.tag} · linked to RQ-02</em></span>
-                <button className={queuedPapers.includes(paper.title) ? "queued" : ""} onClick={() => setQueuedPapers((items) => items.includes(paper.title) ? items.filter((item) => item !== paper.title) : [...items, paper.title])}>{queuedPapers.includes(paper.title) ? "Queued" : "+ Queue"}</button>
-                <button className="paper-open" onClick={() => runAction(commands[4])}>↗</button>
+                <button aria-pressed={queuedPapers.includes(paper.title)} className={queuedPapers.includes(paper.title) ? "queued" : ""} onClick={() => setQueuedPapers((items) => items.includes(paper.title) ? items.filter((item) => item !== paper.title) : [...items, paper.title])}>{queuedPapers.includes(paper.title) ? "Queued" : "+ Queue"}</button>
+                <button className="paper-open" aria-label={`Read ${paper.title}`} onClick={() => runAction(commands[4])}>↗</button>
               </div>
             ))}
           </div>
@@ -458,10 +458,10 @@ function Operations({ runAction }: { runAction: (a: Action) => void }) {
     <>
       <section className="page-intro compact operations-intro">
         <div><p className="eyebrow">PHD OPERATIONS</p><h1>PhD <em>operations.</em></h1><p>Manage submissions, supervisory decisions, and reflection without letting administration interrupt the research.</p></div>
-        <div className="energy-check"><span>Energy</span>{[1,2,3,4,5].map((value) => <button key={value} className={energy === value ? "active" : ""} onClick={() => setEnergy(value)}>{value}</button>)}<strong>{energy >= 4 ? "Ready for deep work" : energy >= 3 ? "Steady pace" : "Reduce the load"}</strong></div>
+        <div className="energy-check"><span>Energy</span>{[1,2,3,4,5].map((value) => <button key={value} aria-pressed={energy === value} className={energy === value ? "active" : ""} onClick={() => setEnergy(value)}>{value}</button>)}<strong>{energy >= 4 ? "Ready for deep work" : energy >= 3 ? "Steady pace" : "Reduce the load"}</strong></div>
       </section>
 
-      <div className="operations-tabs">{tabs.map(([key, label]) => <button key={key} className={activeTab === key ? "active" : ""} onClick={() => setActiveTab(key)}>{label}{key === "mentor" && <span>2</span>}</button>)}</div>
+      <div className="operations-tabs">{tabs.map(([key, label]) => <button key={key} aria-pressed={activeTab === key} className={activeTab === key ? "active" : ""} onClick={() => setActiveTab(key)}>{label}{key === "mentor" && <span>2</span>}</button>)}</div>
 
       {activeTab === "pipeline" && <>
         <section className="ops-overview card"><div><span className="label">SUBMISSION OVERVIEW</span><h2>A traceable path from manuscript to publication.</h2></div><div className="ops-stats"><span><strong>3</strong><small>Active</small></span><span><strong>1</strong><small>Awaiting feedback</small></span><span><strong>24d</strong><small>Next deadline</small></span></div><button className="primary-button">Add submission <b>＋</b></button></section>
@@ -555,7 +555,7 @@ export default function Home() {
     <div className="app-shell">
       <aside className={`sidebar ${mobileNav ? "mobile-open" : ""}`}>
         <div className="brand"><span className="brand-mark"><i /><b /></span><span><strong>WORKBUDDY</strong><small>SPORTS RESEARCH OS</small></span><button className="mobile-close" onClick={() => setMobileNav(false)}>×</button></div>
-        <nav aria-label="Main navigation"><span className="nav-label">RESEARCH WORKBENCH</span>{navItems.map((item) => <button key={item.key} className={activeModule === item.key ? "active" : ""} onClick={() => selectModule(item.key)}><span className="nav-icon">{item.icon}</span><span>{item.label}</span>{item.badge && <b>{item.badge}</b>}</button>)}</nav>
+        <nav aria-label="Main navigation"><span className="nav-label">RESEARCH WORKBENCH</span>{navItems.map((item) => <button key={item.key} aria-current={activeModule === item.key ? "page" : undefined} className={activeModule === item.key ? "active" : ""} onClick={() => selectModule(item.key)}><span className="nav-icon">{item.icon}</span><span>{item.label}</span>{item.badge && <b>{item.badge}</b>}</button>)}</nav>
         <div className="sidebar-bottom"><button onClick={() => setCommandOpen(true)}><span className="nav-icon">⌘</span><span>Command library</span></button><button onClick={() => setToast("Data sources and preferences are ready") }><span className="nav-icon">⚙</span><span>Settings</span></button><div className="sync-status"><span className="sync-orbit"><i /><b /></span><span><strong>Research systems</strong><small><SourceDot /> 3 sources connected</small></span></div></div>
       </aside>
 
