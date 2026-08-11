@@ -20,7 +20,7 @@ export async function generateMetadata(): Promise<Metadata> {
     title,
     description,
     icons: { icon: "/favicon.svg", shortcut: "/favicon.svg" },
-    openGraph: { title, description, type: "website", images: [{ url: socialImage, width: 1672, height: 941, alt: "WorkBuddy 今日科研 Sports Research OS" }] },
+    openGraph: { title, description, type: "website", images: [{ url: socialImage, width: 1672, height: 941, alt: "WorkBuddy Today’s Research — Sports Research OS" }] },
     twitter: { card: "summary_large_image", title, description, images: [socialImage] },
   };
 }
