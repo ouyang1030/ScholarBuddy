@@ -18,8 +18,9 @@ test("server-renders the Sports Research OS", async () => {
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
   const html = await response.text();
   assert.match(html, /WorkBuddy — Sports Research OS/i);
-  assert.match(html, /Your research,/i);
-  assert.match(html, /Formation recognition from tracking data/i);
-  assert.match(html, /Research progress/i);
+  assert.match(html, /今日科研/i);
+  assert.match(html, /验证三聚类方案的稳定性/i);
+  assert.match(html, /今日文献推荐/i);
+  assert.match(html, /Research debt/i);
   assert.doesNotMatch(html, /codex-preview|Your site is taking shape/i);
 });

@@ -9,7 +9,8 @@ type ModuleKey =
   | "manuscript"
   | "workspace"
   | "review"
-  | "projects";
+  | "projects"
+  | "operations";
 
 type Action = {
   label: string;
@@ -19,13 +20,14 @@ type Action = {
 };
 
 const navItems: { key: ModuleKey; label: string; icon: string; badge?: string }[] = [
-  { key: "dashboard", label: "Dashboard", icon: "⌂" },
-  { key: "research", label: "Research", icon: "⌁", badge: "8" },
-  { key: "data", label: "Data & Experiments", icon: "∿", badge: "3" },
-  { key: "manuscript", label: "Manuscript", icon: "¶" },
-  { key: "workspace", label: "AI Workspace", icon: "✦" },
-  { key: "review", label: "Review", icon: "✓", badge: "4" },
-  { key: "projects", label: "Projects", icon: "▦" },
+  { key: "dashboard", label: "今日科研", icon: "⌂", badge: "3" },
+  { key: "research", label: "研究地图", icon: "⌁", badge: "8" },
+  { key: "data", label: "数据与实验", icon: "∿", badge: "3" },
+  { key: "manuscript", label: "论文工作台", icon: "¶" },
+  { key: "workspace", label: "AI 工作区", icon: "✦" },
+  { key: "review", label: "独立审稿", icon: "✓", badge: "4" },
+  { key: "projects", label: "项目与任务", icon: "▦" },
+  { key: "operations", label: "博士运营", icon: "◫", badge: "2" },
 ];
 
 const quickActions: Action[] = [
@@ -115,103 +117,156 @@ function PitchMap() {
   );
 }
 
+type DailyTask = {
+  id: number;
+  title: string;
+  object: string;
+  category: string;
+  time: string;
+  priority: "Must" | "Should";
+  done: boolean;
+};
+
+const starterTasks: DailyTask[] = [
+  { id: 1, title: "验证三聚类方案的稳定性", object: "EXP-024", category: "统计分析", time: "09:30–11:00", priority: "Must", done: false },
+  { id: 2, title: "为 Introduction §1.6 补充直接证据", object: "RQ-02", category: "文献", time: "11:30–12:00", priority: "Must", done: false },
+  { id: 3, title: "澄清阶段分割阈值的研究决策", object: "DEC-041", category: "写作", time: "14:00–15:00", priority: "Should", done: false },
+];
+
 function Dashboard({ runAction, openContext }: { runAction: (a: Action) => void; openContext: () => void }) {
+  const [tasks, setTasks] = useState<DailyTask[]>(starterTasks);
+  const [newTask, setNewTask] = useState("");
+  const [focusSeconds, setFocusSeconds] = useState(47 * 60 + 18);
+  const [focusRunning, setFocusRunning] = useState(false);
+  const [queuedPapers, setQueuedPapers] = useState<string[]>([]);
+
+  useEffect(() => {
+    const saved = window.localStorage.getItem("workbuddy-daily-tasks");
+    if (saved) {
+      try { setTasks(JSON.parse(saved) as DailyTask[]); } catch { /* keep starter state */ }
+    }
+  }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem("workbuddy-daily-tasks", JSON.stringify(tasks));
+  }, [tasks]);
+
+  useEffect(() => {
+    if (!focusRunning) return;
+    const timer = window.setInterval(() => setFocusSeconds((value) => value + 1), 1000);
+    return () => window.clearInterval(timer);
+  }, [focusRunning]);
+
+  const completed = tasks.filter((task) => task.done).length;
+  const focusTime = `${String(Math.floor(focusSeconds / 3600)).padStart(2, "0")}:${String(Math.floor((focusSeconds % 3600) / 60)).padStart(2, "0")}:${String(focusSeconds % 60).padStart(2, "0")}`;
+  const toggleTask = (id: number) => setTasks((items) => items.map((item) => item.id === id ? { ...item, done: !item.done } : item));
+  const addTask = () => {
+    if (!newTask.trim()) return;
+    setTasks((items) => [...items, { id: Date.now(), title: newTask.trim(), object: "INBOX", category: "临时任务", time: "待安排", priority: "Should", done: false }]);
+    setNewTask("");
+  };
+
   return (
     <>
-      <section className="page-intro">
+      <section className="daily-intro">
         <div>
-          <p className="eyebrow">Tuesday · Research cycle 08</p>
-          <h1>Your research, <em>in focus.</em></h1>
-          <p>One study is active. Two outputs need verification before they can move into the manuscript.</p>
+          <p className="eyebrow">2026年8月11日 · 星期二 · Research cycle 08</p>
+          <h1>今日科研</h1>
+          <p>把任务、时间、研究问题与证据放在同一屏，只推进真正影响论文的工作。</p>
         </div>
-        <div className="intro-stat">
-          <span className="live-pulse" />
-          <div><strong>All systems ready</strong><small>Obsidian · Zotero · GitHub</small></div>
+        <div className="daily-intro-actions">
+          <button className="quiet-button" onClick={openContext}><span className="context-diamond small">◇</span> 当前上下文 94%</button>
+          <button className="primary-button" onClick={() => runAction({ label: "Plan today’s research", meta: "Research planning", tone: "mint", command: "@plan-today" })}>AI 规划今日 <b>✦</b></button>
         </div>
       </section>
 
-      <section className="hero-grid">
-        <article className="current-study card">
-          <div className="study-copy">
-            <div className="card-topline">
-              <span className="label">Current study</span>
-              <span className="status-pill lime"><i /> Analysis</span>
-            </div>
-            <span className="object-id">STUDY-02 / WOMEN’S FOOTBALL</span>
-            <h2>Formation recognition from tracking data</h2>
-            <p className="study-description">Validating a representation-learning approach for identifying dynamic team formations during open play.</p>
-            <div className="rq-callout">
-              <span>ACTIVE RESEARCH QUESTION</span>
-              <p>How reliably can team formations be recognized across possession phases and match contexts?</p>
-            </div>
-            <div className="study-actions">
-              <button className="primary-button" onClick={() => runAction({ label: "Continue EXP-024", meta: "Analysis", tone: "mint", command: "@continue-experiment" })}>Continue EXP-024 <b>→</b></button>
-              <button className="quiet-button" onClick={openContext}>View assembled context</button>
-            </div>
+      <section className="daily-command-grid">
+        <article className="today-tasks card">
+          <div className="section-heading">
+            <div><span className="label">TODAY / EXECUTION</span><p>今日全部任务</p></div>
+            <span className="completion-count"><b>{completed}</b> / {tasks.length} 完成</span>
           </div>
-          <PitchMap />
+          <div className="task-capture">
+            <input value={newTask} onChange={(event) => setNewTask(event.target.value)} onKeyDown={(event) => event.key === "Enter" && addTask()} placeholder="添加临时科研任务…" aria-label="添加今日科研任务" />
+            <button onClick={addTask}>+</button>
+          </div>
+          <div className="daily-task-list">
+            {tasks.map((task) => (
+              <div className={task.done ? "done" : ""} key={task.id}>
+                <button className="task-check" onClick={() => toggleTask(task.id)} aria-label={`${task.done ? "恢复" : "完成"}${task.title}`}>{task.done ? "✓" : ""}</button>
+                <span className="task-copy"><strong>{task.title}</strong><small><b>{task.object}</b> · {task.category}</small></span>
+                <span className="task-plan"><strong>{task.time}</strong><small className={task.priority === "Must" ? "must" : "should"}>{task.priority}</small></span>
+                <button className="task-open" onClick={() => runAction({ label: task.title, meta: task.object, tone: task.category === "文献" ? "blue" : "mint", command: task.category === "文献" ? "@evidence-for-claim" : "@continue-task" })}>↗</button>
+              </div>
+            ))}
+          </div>
+          <div className="task-footer"><span>任务完成后自动写入今日复盘与研究日志</span><button>打开项目任务表 →</button></div>
         </article>
 
-        <article className="attention-card card">
-          <div className="card-topline">
-            <span className="label">Requires attention</span>
-            <span className="count-badge">4</span>
+        <article className="today-schedule card">
+          <div className="section-heading"><div><span className="label">TIME BLOCKS</span><p>今日时间安排</p></div><button className="mini-add">＋ 时间块</button></div>
+          <div className="schedule-list">
+            <div><time>09:30</time><i className="mint" /><span><strong>EXP-024 稳定性诊断</strong><small>分析 · 90 min</small></span></div>
+            <div><time>11:30</time><i className="blue" /><span><strong>Introduction 证据检索</strong><small>阅读 · 30 min</small></span></div>
+            <div className="now"><time>14:00</time><i className="violet" /><span><strong>Methods 决策说明</strong><small>写作 · 60 min</small></span><b>NOW</b></div>
+            <div><time>16:30</time><i className="neutral" /><span><strong>整理导师会议摘要</strong><small>沟通 · 30 min</small></span></div>
           </div>
-          <div className="attention-list">
-            <button onClick={() => runAction({ label: "Verify GMM result", meta: "Statistics", tone: "orange", command: "@stat-check" })}>
-              <span className="attention-icon amber">!</span>
-              <span><strong>Result awaiting verification</strong><small>EXP-024 · GMM model selection</small></span><b>↗</b>
-            </button>
-            <button onClick={() => runAction({ label: "Resolve evidence gap", meta: "Zotero", tone: "blue", command: "@evidence-for-claim" })}>
-              <span className="attention-icon blue">⌕</span>
-              <span><strong>Claim needs direct evidence</strong><small>Introduction · paragraph 6</small></span><b>↗</b>
-            </button>
-            <button onClick={() => runAction({ label: "Review methodological note", meta: "Methods", tone: "violet", command: "@reviewer-critique" })}>
-              <span className="attention-icon violet">?</span>
-              <span><strong>Method concern unresolved</strong><small>Phase segmentation threshold</small></span><b>↗</b>
-            </button>
-          </div>
-          <button className="text-button">View review queue <span>→</span></button>
+          <button className="wide-button">查看科研日历 <span>→</span></button>
+        </article>
+
+        <article className="focus-session card">
+          <div className="focus-top"><span className="label">FOCUS SESSION</span><span className={focusRunning ? "live" : "paused"}><i /> {focusRunning ? "记录中" : "已暂停"}</span></div>
+          <span className="focus-object">EXP-024 · STATISTICAL CHECK</span>
+          <h2>{focusTime}</h2>
+          <p>验证三聚类方案的稳定性</p>
+          <div className="focus-wave">{[4,8,13,21,12,17,25,10,18,8,5].map((height, index) => <i key={index} style={{ height }} />)}</div>
+          <button onClick={() => setFocusRunning((value) => !value)}>{focusRunning ? "暂停专注" : "继续专注"}<span>{focusRunning ? "Ⅱ" : "▶"}</span></button>
         </article>
       </section>
 
-      <section className="progress-card card">
-        <div className="section-heading">
-          <div><span className="label">Research progress</span><p>Study 02 · Formation Recognition</p></div>
-          <span className="updated">Updated 18 min ago</span>
-        </div>
-        <div className="progress-grid">
-          {progress.map((item) => (
-            <div className="progress-item" key={item.label}>
-              <div><span>{item.label}</span><strong>{item.value}%</strong></div>
-              <div className="progress-track"><i style={{ width: `${Math.max(item.value, 2)}%` }} /></div>
-              <small>{item.note}</small>
-            </div>
-          ))}
-        </div>
+      <section className="daily-progress-row">
+        <article className="writing-today card">
+          <div className="section-heading"><div><span className="label">WRITING / MANUSCRIPT-02</span><p>当前写作进度</p></div><button className="quiet-button" onClick={() => runAction(commands[9])}>继续写作 →</button></div>
+          <div className="writing-main">
+            <div><span className="writing-section-tag">METHODS · §2.4</span><h2>Phase segmentation and formation representation</h2><p>下一步：解释 8 秒阈值的理论依据，并关联 DEC-041。</p></div>
+            <div className="writing-numbers"><span><strong>4,286</strong><small>当前字数</small></span><span><strong>8,000</strong><small>章节目标</small></span><span><strong>54%</strong><small>论证完整度</small></span><span><strong>82%</strong><small>引用覆盖率</small></span></div>
+          </div>
+          <div className="writing-track"><i style={{ width: "54%" }} /><span style={{ left: "54%" }}>4,286</span></div>
+          <div className="writing-log"><span>本周写作 <b>312 分钟</b></span><span>新增 <b>1,240 字</b></span><span>待解决 <b className="warning-text">2 个 AUTHOR CHECK</b></span></div>
+        </article>
+
+        <article className="research-anchor card">
+          <div className="card-topline"><span className="label">RESEARCH ANCHOR</span><button onClick={openContext}>查看上下文 ↗</button></div>
+          <span className="object-id">RQ-02 · ACTIVE</span>
+          <h3>How reliably can team formations be recognized across possession phases and match contexts?</h3>
+          <div className="anchor-chain"><span><b>23</b> papers</span><i>→</i><span><b>3</b> experiments</span><i>→</i><span><b>5/7</b> verified</span></div>
+          <div className="anchor-health"><span><i /> Context coverage</span><strong>94%</strong></div>
+        </article>
       </section>
 
-      <section className="dashboard-lower">
-        <article className="quick-actions card">
-          <div className="section-heading"><div><span className="label">Research actions</span><p>Start with a structured workflow</p></div><span className="key-hint">⌘ K</span></div>
-          <div className="action-grid">
-            {quickActions.map((action) => (
-              <button key={action.command} onClick={() => runAction(action)}>
-                <span className={`action-mark ${action.tone}`}>{action.command.includes("knowledge") ? "⌁" : action.command.includes("evidence") ? "⌕" : action.command.includes("result") ? "∿" : "✓"}</span>
-                <span><strong>{action.label}</strong><small>{action.meta}</small></span>
-                <b>↗</b>
-              </button>
+      <section className="daily-lower-grid">
+        <article className="literature-radar card">
+          <div className="section-heading"><div><span className="label">ZOTERO / LITERATURE RADAR</span><p>今日文献推荐</p></div><button className="text-button" onClick={() => runAction(commands[1])}>打开 Literature Lab →</button></div>
+          <div className="radar-list">
+            {papers.map((paper, index) => (
+              <div key={paper.title}>
+                <span className="paper-score"><strong>{index === 0 ? 94 : index === 1 ? 87 : 82}</strong><small>相关度</small></span>
+                <span className="radar-copy"><small>{paper.year} · {paper.authors}</small><strong>{paper.title}</strong><em>{paper.tag} · linked to RQ-02</em></span>
+                <button className={queuedPapers.includes(paper.title) ? "queued" : ""} onClick={() => setQueuedPapers((items) => items.includes(paper.title) ? items.filter((item) => item !== paper.title) : [...items, paper.title])}>{queuedPapers.includes(paper.title) ? "已加入" : "+ 待读"}</button>
+                <button className="paper-open" onClick={() => runAction(commands[4])}>↗</button>
+              </div>
             ))}
           </div>
         </article>
 
-        <article className="activity-card card">
-          <div className="section-heading"><div><span className="label">Recent research outputs</span><p>Traceable work from the last 7 days</p></div></div>
-          <div className="timeline">
-            <div><i className="violet" /><span><small>STATISTICAL RESULT · EXP-023</small><strong>Three-cluster solution retained after stability analysis</strong><em>Verified · 2h</em></span></div>
-            <div><i className="mint" /><span><small>RESEARCH DECISION · DEC-041</small><strong>Possession phases shorter than 8s excluded</strong><em>Saved to Obsidian · Yesterday</em></span></div>
-            <div><i className="blue" /><span><small>LITERATURE GAP · RQ-02</small><strong>Cross-competition validation remains limited</strong><em>5 papers linked · Monday</em></span></div>
+        <article className="research-debt card">
+          <div className="section-heading"><div><span className="label">RESEARCH DEBT</span><p>待清理的科研欠账</p></div><span className="count-badge">4</span></div>
+          <div className="debt-list">
+            <button onClick={() => runAction(commands[8])}><span className="debt-rank critical">01</span><span><strong>结果尚未验证</strong><small>EXP-024 · GMM model selection</small></span><b>统计</b></button>
+            <button onClick={() => runAction(quickActions[1])}><span className="debt-rank high">02</span><span><strong>Claim 缺少直接证据</strong><small>Introduction · paragraph 6</small></span><b>证据</b></button>
+            <button onClick={() => runAction(quickActions[3])}><span className="debt-rank medium">03</span><span><strong>方法决策尚未留痕</strong><small>Phase segmentation threshold</small></span><b>决策</b></button>
           </div>
+          <div className="debt-foot"><span>完成今日任务预计减少 <b>3 项</b></span><button>查看全部 →</button></div>
         </article>
       </section>
     </>
@@ -387,6 +442,53 @@ function Projects({ changeProject }: { changeProject: (name: string) => void }) 
   );
 }
 
+function Operations({ runAction }: { runAction: (a: Action) => void }) {
+  const [activeTab, setActiveTab] = useState<"pipeline" | "mentor" | "review">("pipeline");
+  const [energy, setEnergy] = useState(4);
+  const [reviewSaved, setReviewSaved] = useState(false);
+  const [reflection, setReflection] = useState("完成了 EXP-024 的稳定性检查框架；仍需确认 bootstrap 次数与报告标准。\n明天优先：验证结果后更新 Results §3.2。 ");
+
+  const tabs = [
+    ["pipeline", "投稿管线"],
+    ["mentor", "导师沟通"],
+    ["review", "科研复盘"],
+  ] as const;
+
+  return (
+    <>
+      <section className="page-intro compact operations-intro">
+        <div><p className="eyebrow">PHD OPERATIONS</p><h1>博士 <em>运营台.</em></h1><p>管理投稿、导师决策与科研复盘；让行政和沟通服务于研究，而不是打断研究。</p></div>
+        <div className="energy-check"><span>今日精力</span>{[1,2,3,4,5].map((value) => <button key={value} className={energy === value ? "active" : ""} onClick={() => setEnergy(value)}>{value}</button>)}<strong>{energy >= 4 ? "适合深度工作" : energy >= 3 ? "保持节奏" : "减少负荷"}</strong></div>
+      </section>
+
+      <div className="operations-tabs">{tabs.map(([key, label]) => <button key={key} className={activeTab === key ? "active" : ""} onClick={() => setActiveTab(key)}>{label}{key === "mentor" && <span>2</span>}</button>)}</div>
+
+      {activeTab === "pipeline" && <>
+        <section className="ops-overview card"><div><span className="label">SUBMISSION OVERVIEW</span><h2>从稿件到发表，一条可追踪的管线。</h2></div><div className="ops-stats"><span><strong>3</strong><small>进行中</small></span><span><strong>1</strong><small>等待反馈</small></span><span><strong>24d</strong><small>最近截止</small></span></div><button className="primary-button">添加投稿项目 <b>＋</b></button></section>
+        <section className="submission-board">
+          <article className="pipeline-column card"><div><span>DRAFTING</span><b>1</b></div><button className="submission-ticket"><small>MANUSCRIPT-02</small><strong>Formation recognition in elite women’s football</strong><span>Journal of Sports Sciences</span><i><b style={{ width: "54%" }} /></i><em>Methods · internal review</em></button></article>
+          <article className="pipeline-column card"><div><span>INTERNAL REVIEW</span><b>1</b></div><button className="submission-ticket warning"><small>MANUSCRIPT-01</small><strong>Pace of play across match contexts</strong><span>Sports Biomechanics</span><p><b>2</b> major concerns remain</p><em>Review due · 18 Aug</em></button></article>
+          <article className="pipeline-column card"><div><span>SUBMITTED</span><b>1</b></div><button className="submission-ticket blue"><small>CONF-004</small><strong>Tracking-derived tactical compactness</strong><span>World Congress of Performance Analysis</span><p>Waiting for decision</p><em>Submitted · 29 Jul</em></button></article>
+          <article className="pipeline-column card"><div><span>REVISION</span><b>0</b></div><div className="empty-pipeline"><span>◇</span><p>No active revisions</p></div></article>
+        </section>
+        <section className="submission-deadline card"><span className="deadline-date"><strong>04</strong><small>SEP</small></span><div><span className="label">NEXT DEADLINE</span><strong>MANUSCRIPT-01 · Internal circulation</strong><small>24 days · argument check, statistical review and figure audit required</small></div><div className="deadline-gates"><span className="done">✓ Argument</span><span>○ Statistics</span><span>○ Figures</span></div><button onClick={() => runAction(quickActions[3])}>Prepare review →</button></section>
+      </>}
+
+      {activeTab === "mentor" && <section className="mentor-grid">
+        <article className="mentor-brief card"><div className="section-heading"><div><span className="label">NEXT SUPERVISION · 14 AUG</span><p>导师会议简报</p></div><span className="status-pill lime"><i /> 80% ready</span></div><h2>用证据请求决策，而不是汇报所有进展。</h2><div className="brief-sections"><div><span>01</span><p><strong>本周核心进展</strong>EXP-024 已完成模型选择，需要确认报告稳定性结果的最低标准。</p></div><div><span>02</span><p><strong>需要导师决策</strong>跨比赛验证是否作为主分析，还是放入 supplementary material。</p></div><div><span>03</span><p><strong>已准备证据</strong>Figure 3、稳定性诊断、5 篇直接相关文献。</p></div></div><button className="primary-button" onClick={() => runAction({ label: "Prepare supervisor briefing", meta: "Meeting", tone: "violet", command: "@supervisor-brief" })}>AI 生成一页简报 <b>✦</b></button></article>
+        <article className="mentor-commitments card"><div className="section-heading"><div><span className="label">COMMITMENT TRACKER</span><p>导师承诺与待反馈</p></div><span className="count-badge">2</span></div><div className="commitment-list"><div><span className="commit-status overdue">!</span><span><strong>反馈 Methods 初稿</strong><small>导师 · 原计划 8 Aug</small><em>已逾期 3 天</em></span><button>跟进</button></div><div><span className="commit-status waiting">…</span><span><strong>确认目标期刊</strong><small>共同决定 · 核对 14 Aug</small><em>等待讨论</em></span><button>准备</button></div><div><span className="commit-status done">✓</span><span><strong>同意排除短于 8s 的阶段</strong><small>Meeting · 31 Jul</small><em>已保存为 DEC-041</em></span><button>查看</button></div></div></article>
+        <article className="decision-recall card"><span className="label">DECISION MEMORY</span><blockquote>“先把跨比赛验证做出来，再决定是主结果还是补充材料。”</blockquote><p>记录于 31 Jul 组会 · 关联 EXP-026 · 下次核对 14 Aug</p><button>转换为研究决策 →</button></article>
+      </section>}
+
+      {activeTab === "review" && <section className="reflection-grid">
+        <article className="daily-reflection card"><div className="section-heading"><div><span className="label">STRUCTURED DAILY REVIEW</span><p>PhD 学术复盘</p></div><span className="updated">自动汇总 7 个来源</span></div><div className="reflection-summary"><span><strong>2</strong><small>完成任务</small></span><span><strong>47m</strong><small>深度工作</small></span><span><strong>1</strong><small>新研究决策</small></span><span><strong>3↓</strong><small>Research debt</small></span></div><label><span>今日核心成果、未竟分析与明日优先</span><textarea value={reflection} onChange={(event) => { setReflection(event.target.value); setReviewSaved(false); }} /></label><div className="reflection-actions"><button className="quiet-button" onClick={() => runAction({ label: "Synthesize daily research log", meta: "Reflection", tone: "mint", command: "@daily-review" })}>AI 整理复盘</button><button className="primary-button" onClick={() => setReviewSaved(true)}>{reviewSaved ? "已保存到 Obsidian ✓" : "保存科研复盘"}</button></div></article>
+        <article className="research-week card"><div className="section-heading"><div><span className="label">THIS WEEK</span><p>科研投入分布</p></div></div><div className="week-bars"><div><span>分析</span><i><b style={{ width: "82%" }} /></i><strong>6.4h</strong></div><div><span>写作</span><i><b style={{ width: "61%" }} /></i><strong>4.8h</strong></div><div><span>阅读</span><i><b style={{ width: "39%" }} /></i><strong>3.1h</strong></div><div><span>沟通</span><i><b style={{ width: "17%" }} /></i><strong>1.3h</strong></div></div><div className="week-insight"><span>◇</span><p><strong>节奏提醒</strong>本周分析投入高于计划，但 Results 写作尚未同步跟进。</p></div></article>
+        <article className="tomorrow-plan card"><span className="label">TOMORROW / RECOMMENDED</span><h3>验证结果后，立即把科学事实写入 Results。</h3><p>这一步可以避免解释与统计事实逐渐分离。</p><button onClick={() => runAction({ label: "Plan tomorrow", meta: "Planning", tone: "blue", command: "@plan-tomorrow" })}>加入明日 Must →</button></article>
+      </section>}
+    </>
+  );
+}
+
 function ActionDrawer({ action, onClose }: { action: Action; onClose: () => void }) {
   const [running, setRunning] = useState(false);
   return (
@@ -442,7 +544,7 @@ export default function Home() {
   }, [toast]);
 
   const filteredCommands = useMemo(() => commands.filter((item) => `${item.label} ${item.meta} ${item.command}`.toLowerCase().includes(commandQuery.toLowerCase())), [commandQuery]);
-  const activeLabel = navItems.find((item) => item.key === activeModule)?.label ?? "Dashboard";
+  const activeLabel = navItems.find((item) => item.key === activeModule)?.label ?? "今日科研";
 
   const selectModule = (key: ModuleKey) => {
     setActiveModule(key);
@@ -456,15 +558,15 @@ export default function Home() {
       <aside className={`sidebar ${mobileNav ? "mobile-open" : ""}`}>
         <div className="brand"><span className="brand-mark"><i /><b /></span><span><strong>WORKBUDDY</strong><small>SPORTS RESEARCH OS</small></span><button className="mobile-close" onClick={() => setMobileNav(false)}>×</button></div>
         <div className="project-switcher-wrap">
-          <button className="project-switcher" onClick={() => setProjectMenu((value) => !value)}><span className="project-avatar">S2</span><span><small>ACTIVE PROJECT</small><strong>{activeProject}</strong></span><b>⌄</b></button>
+          <button className="project-switcher" onClick={() => setProjectMenu((value) => !value)}><span className="project-avatar">S2</span><span><small>当前项目</small><strong>{activeProject}</strong></span><b>⌄</b></button>
           {projectMenu && <div className="project-menu">{projects.map((project) => <button key={project.name} onClick={() => changeProject(project.name)}><i style={{ background: project.color }} /><span><strong>{project.name}</strong><small>{project.code}</small></span>{project.name === activeProject && <b>✓</b>}</button>)}</div>}
         </div>
-        <nav aria-label="Main navigation"><span className="nav-label">WORKBENCH</span>{navItems.map((item) => <button key={item.key} className={activeModule === item.key ? "active" : ""} onClick={() => selectModule(item.key)}><span className="nav-icon">{item.icon}</span><span>{item.label}</span>{item.badge && <b>{item.badge}</b>}</button>)}</nav>
-        <div className="sidebar-bottom"><button onClick={() => setCommandOpen(true)}><span className="nav-icon">⌘</span><span>Command library</span></button><button onClick={() => setToast("Settings are ready for connection setup") }><span className="nav-icon">⚙</span><span>Settings</span></button><div className="sync-status"><span className="sync-orbit"><i /><b /></span><span><strong>Research systems</strong><small><SourceDot /> 3 sources connected</small></span></div></div>
+        <nav aria-label="Main navigation"><span className="nav-label">RESEARCH WORKBENCH</span>{navItems.map((item) => <button key={item.key} className={activeModule === item.key ? "active" : ""} onClick={() => selectModule(item.key)}><span className="nav-icon">{item.icon}</span><span>{item.label}</span>{item.badge && <b>{item.badge}</b>}</button>)}</nav>
+        <div className="sidebar-bottom"><button onClick={() => setCommandOpen(true)}><span className="nav-icon">⌘</span><span>科研命令库</span></button><button onClick={() => setToast("数据源与偏好设置已就绪") }><span className="nav-icon">⚙</span><span>系统设置</span></button><div className="sync-status"><span className="sync-orbit"><i /><b /></span><span><strong>研究系统</strong><small><SourceDot /> 已连接 3 个来源</small></span></div></div>
       </aside>
 
       <div className="main-shell">
-        <header className="topbar"><div className="breadcrumb"><button className="mobile-menu" onClick={() => setMobileNav(true)}>☰</button><span>Workbench</span><b>/</b><strong>{activeLabel}</strong></div><button className="command-trigger" onClick={() => setCommandOpen(true)}><span>⌕</span><span>Search or run a research action…</span><kbd>⌘ K</kbd></button><div className="top-actions"><button className="icon-button" aria-label="Notifications"><span>°</span>♢</button><button className="context-button" onClick={() => setContextOpen(true)}><span className="context-diamond">◇</span><span><small>CONTEXT</small><strong>Ready · 94%</strong></span></button><button className="profile-button" aria-label="Profile">DR</button></div></header>
+        <header className="topbar"><div className="breadcrumb"><button className="mobile-menu" onClick={() => setMobileNav(true)}>☰</button><span>科研工作台</span><b>/</b><strong>{activeLabel}</strong></div><button className="command-trigger" onClick={() => setCommandOpen(true)}><span>⌕</span><span>搜索或运行科研工作流…</span><kbd>⌘ K</kbd></button><div className="top-actions"><button className="icon-button" aria-label="Notifications"><span>°</span>♢</button><button className="context-button" onClick={() => setContextOpen(true)}><span className="context-diamond">◇</span><span><small>CONTEXT</small><strong>就绪 · 94%</strong></span></button><button className="profile-button" aria-label="Profile">DR</button></div></header>
         <main className="content">
           {activeModule === "dashboard" && <Dashboard runAction={setAction} openContext={() => setContextOpen(true)} />}
           {activeModule === "research" && <Research runAction={setAction} />}
@@ -473,6 +575,7 @@ export default function Home() {
           {activeModule === "workspace" && <Workspace runAction={setAction} />}
           {activeModule === "review" && <Review runAction={setAction} />}
           {activeModule === "projects" && <Projects changeProject={changeProject} />}
+          {activeModule === "operations" && <Operations runAction={setAction} />}
         </main>
       </div>
 

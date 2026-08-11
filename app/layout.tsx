@@ -12,7 +12,7 @@ export async function generateMetadata(): Promise<Metadata> {
   const protocol = requestHeaders.get("x-forwarded-proto") ?? (host.includes("localhost") ? "http" : "https");
   const baseUrl = new URL(`${protocol}://${host}`);
   const title = "WorkBuddy — Sports Research OS";
-  const description = "An AI-powered research operating system for rigorous, traceable sports analytics research.";
+  const description = "A daily research cockpit and evidence-driven operating system for rigorous sports analytics PhD work.";
   const socialImage = new URL("/og.png", baseUrl).toString();
 
   return {
@@ -20,7 +20,7 @@ export async function generateMetadata(): Promise<Metadata> {
     title,
     description,
     icons: { icon: "/favicon.svg", shortcut: "/favicon.svg" },
-    openGraph: { title, description, type: "website", images: [{ url: socialImage, width: 1731, height: 909, alt: "WorkBuddy Sports Research OS" }] },
+    openGraph: { title, description, type: "website", images: [{ url: socialImage, width: 1672, height: 941, alt: "WorkBuddy 今日科研 Sports Research OS" }] },
     twitter: { card: "summary_large_image", title, description, images: [socialImage] },
   };
 }
