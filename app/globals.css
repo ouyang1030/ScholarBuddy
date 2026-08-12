@@ -1027,6 +1027,49 @@ body { font-size: 17px; line-height: 1.5; }
 .manuscript-records { display: grid; gap: 16px; }
 .coverage-row { margin-top: 14px; display: flex; flex-wrap: wrap; gap: 18px; color: #77837b; font-size: 10px; }
 
+/* Legibility pass — keep display headings intact and enlarge working text. */
+small { font-size: 13px !important; line-height: 1.45; }
+.brand small, .nav-label { font-size: 12px !important; }
+.sidebar nav button > span:nth-child(2), .sidebar-bottom button > span:nth-child(2) { font-size: 16px; }
+.sync-status strong { font-size: 15px; }
+.breadcrumb, .command-trigger > span:nth-child(2) { font-size: 15px; }
+.context-button small { font-size: 12px !important; }
+.context-button strong { font-size: 15px; }
+.eyebrow, .label { font-size: 13px; line-height: 1.45; }
+.status-pill, .object-id { font-size: 12px; }
+.section-heading p { font-size: 18px; }
+.primary-button, .quiet-button, .text-button, .wide-button, .mini-add { font-size: 15px; }
+.task-capture input, .task-inline-input, .literature-search input { font-size: 15px; }
+.literature-search button, .paper-buttons button { font-size: 13px; }
+.schedule-list time, .focus-object, .focus-top > span:last-child { font-size: 13px; }
+.focus-session > p { font-size: 14px; }
+.time-editor label, .record-form label { font-size: 13px; }
+.time-editor input, .time-editor select, .record-form input, .record-form select, .record-form textarea { font-size: 15px; }
+.real-empty strong { font-size: 16px; }
+.real-empty p, .real-summary p, .record-description, .data-banner p, .calendar-error p { font-size: 14px; }
+.real-empty button, .data-banner button, .calendar-error button { font-size: 13px; }
+.loading-bar { font-size: 13px; }
+.delete-record, .delete-confirm button { font-size: 13px; }
+.real-paper-list strong { font-size: 15px; }
+.real-paper-list small, .real-paper-list em { font-size: 13px !important; }
+.zotero-year { font-size: 12px; }
+.real-summary > span, .manual-progress, .record-meta, .coverage-row { font-size: 13px; }
+.real-record-list strong { font-size: 14px; }
+.real-record-list small { font-size: 13px !important; }
+.record-card > span:first-child { font-size: 12px; }
+.debt-table > button { font-size: 13px; }
+.debt-table strong { font-size: 14px; }
+.debt-table small { font-size: 13px !important; }
+.provider-switch b, .connection-list article strong, .bridge-banner strong { font-size: 15px; }
+.provider-switch small, .connection-list article small, .bridge-banner small { font-size: 13px !important; }
+.connection-state { font-size: 12px; }
+.workflow-error p, .workflow-error button, .workflow-result-head button { font-size: 13px; }
+.workflow-result-head small { font-size: 12px !important; }
+.workflow-result pre { font-size: 14px; line-height: 1.7; }
+.drawer-title > span, .drawer-section-title > span, .drawer-section-title strong, .drawer-section-title > b, .drawer-sources label, .drawer-sources b, .drawer-footer strong, .small-note { font-size: 13px; }
+.command-results button > b, .command-results small { font-size: 13px !important; }
+.toast { font-size: 14px; }
+
 @media (max-width: 950px) {
   .record-board, .real-summary-grid { grid-template-columns: repeat(2, minmax(0,1fr)); }
 }
