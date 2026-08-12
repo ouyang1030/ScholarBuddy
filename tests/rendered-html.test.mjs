@@ -22,11 +22,11 @@ test("server-renders the Sports Research OS", async () => {
   assert.match(html, /Today’s Research/i);
   assert.match(html, /No tasks yet/i);
   assert.match(html, /macOS Calendar \/ Live/i);
-  assert.match(html, /Ready for a new real focus session/i);
-  assert.match(html, /Today’s recommendations/i);
-  assert.match(html, /Research debt/i);
-  assert.match(html, /Add the first real research task/i);
-  assert.match(html, /Syncing Calendar/i);
+  assert.match(html, /Ready for a new focus session/i);
+  assert.match(html, /Zotero \/ Live Library/i);
+  assert.match(html, /Research debt \/ Kbase/i);
+  assert.match(html, /No active project/i);
+  assert.match(html, /Loading Kbase records/i);
   assert.doesNotMatch(html, /codex-preview|Your site is taking shape/i);
 });
 
@@ -36,8 +36,8 @@ test("every rendered button declares an interaction handler", async () => {
   assert.ok(buttons.length > 60, "expected the workbench interaction surface");
   const inertButtons = buttons.filter((button) => !button.includes("onClick="));
   assert.deepEqual(inertButtons, []);
-  assert.match(source, /saveTaskEdit/);
-  assert.match(source, /deleteTask/);
-  assert.match(source, /saveTimeBlock/);
-  assert.match(source, /deleteTimeBlock/);
+  assert.match(source, /saveRecord/);
+  assert.match(source, /deleteRecord/);
+  assert.match(source, /Save to Kbase/);
+  assert.match(source, /Save to Calendar/);
 });

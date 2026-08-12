@@ -78,10 +78,103 @@ function normalizeZoteroItem(item) {
 }
 
 async function searchZotero(config, query, limit = 5) {
-  const params = new URLSearchParams({ q: query, qmode: "everything", limit: String(limit), format: "json", itemType: "-attachment" });
+  const params = new URLSearchParams({ limit: String(limit), format: "json", itemType: "-attachment", sort: query ? "relevance" : "dateAdded", direction: "desc" });
+  if (query) {
+    params.set("q", query);
+    params.set("qmode", "everything");
+  }
   const response = await zoteroRequest(config, `/api/users/0/items?${params}`);
   const items = await response.json();
   return Array.isArray(items) ? items.map(normalizeZoteroItem) : [];
+}
+
+const recordCollections = new Set(["projects", "research-questions", "manuscripts", "research-debt", "experiments", "reviews", "operations", "reading-queue"]);
+
+function recordRoot(config) {
+  if (!config.OBSIDIAN_VAULT_PATH) throw new Error("OBSIDIAN_VAULT_PATH is not configured.");
+  return path.join(config.OBSIDIAN_VAULT_PATH, "WorkBuddy");
+}
+
+function safeCollection(value) {
+  const collection = String(value || "");
+  if (!recordCollections.has(collection)) throw new Error("Unsupported WorkBuddy collection.");
+  return collection;
+}
+
+function safeRecordId(value) {
+  const id = String(value || "").trim();
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(id)) throw new Error("Invalid WorkBuddy record id.");
+  return id;
+}
+
+function newRecordId(collection) {
+  const prefix = { projects: "PRJ", "research-questions": "RQ", manuscripts: "MS", "research-debt": "DEBT", experiments: "EXP", reviews: "REV", operations: "OPS", "reading-queue": "READ" }[collection] || "REC";
+  return `${prefix}-${Date.now().toString(36).toUpperCase()}`;
+}
+
+function serializeRecord(record) {
+  const metadata = { ...record };
+  delete metadata.description;
+  delete metadata.content;
+  const lines = Object.entries(metadata).map(([key, value]) => `${key}: ${JSON.stringify(value ?? null)}`);
+  const body = String(record.description || record.content || "").trim();
+  return `---\n${lines.join("\n")}\n---\n\n${body}${body ? "\n" : ""}`;
+}
+
+function parseRecord(text, fallbackId) {
+  const match = text.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/);
+  if (!match) return { id: fallbackId, title: fallbackId, description: text.trim() };
+  const record = {};
+  for (const line of match[1].split(/\r?\n/)) {
+    const split = line.indexOf(":");
+    if (split < 1) continue;
+    const key = line.slice(0, split).trim();
+    const raw = line.slice(split + 1).trim();
+    try { record[key] = JSON.parse(raw); } catch { record[key] = raw; }
+  }
+  return { id: fallbackId, ...record, description: match[2].trim() };
+}
+
+async function listRecords(config, collection) {
+  const folder = path.join(recordRoot(config), safeCollection(collection));
+  let entries;
+  try { entries = await readdir(folder, { withFileTypes: true }); } catch (error) {
+    if (error?.code === "ENOENT") return [];
+    throw error;
+  }
+  const records = await Promise.all(entries.filter((entry) => entry.isFile() && entry.name.endsWith(".md")).map(async (entry) => {
+    const id = entry.name.slice(0, -3);
+    return parseRecord(await readFile(path.join(folder, entry.name), "utf8"), id);
+  }));
+  return records.sort((a, b) => String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")) || String(a.title || "").localeCompare(String(b.title || "")));
+}
+
+async function workbenchState(config) {
+  const pairs = await Promise.all([...recordCollections].map(async (collection) => [collection, await listRecords(config, collection)]));
+  return Object.fromEntries(pairs);
+}
+
+async function saveRecord(config, collectionValue, incoming) {
+  const collection = safeCollection(collectionValue);
+  const id = incoming.id ? safeRecordId(incoming.id) : newRecordId(collection);
+  const folder = path.join(recordRoot(config), collection);
+  await mkdir(folder, { recursive: true });
+  const file = path.join(folder, `${id}.md`);
+  let previous = {};
+  try { previous = parseRecord(await readFile(file, "utf8"), id); } catch { /* new record */ }
+  const record = { ...previous, ...incoming, id, collection, updatedAt: new Date().toISOString() };
+  if (!record.createdAt) record.createdAt = record.updatedAt;
+  if (!String(record.title || "").trim()) throw new Error("Record title is required.");
+  await writeFile(file, serializeRecord(record), "utf8");
+  return record;
+}
+
+async function deleteRecord(config, collectionValue, idValue) {
+  const collection = safeCollection(collectionValue);
+  const id = safeRecordId(idValue);
+  const { unlink } = await import("node:fs/promises");
+  await unlink(path.join(recordRoot(config), collection, `${id}.md`));
+  return { deleted: true, id };
 }
 
 async function walkMarkdown(root, current = root, files = [], ceiling = 2500) {
@@ -196,6 +289,15 @@ async function handle(request) {
   if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders(request, config) });
   if (url.pathname === "/health" && request.method === "GET") return json(request, config, await bridgeStatus(config));
   if (url.pathname === "/zotero/search" && request.method === "GET") return json(request, config, { items: await searchZotero(config, url.searchParams.get("q") || "", 12) });
+  if (url.pathname === "/workbench/state" && request.method === "GET") return json(request, config, await workbenchState(config));
+  if (url.pathname === "/workbench/record" && request.method === "POST") {
+    const payload = await readJson(request);
+    return json(request, config, { record: await saveRecord(config, payload.collection, payload.record || {}) }, payload.record?.id ? 200 : 201);
+  }
+  if (url.pathname === "/workbench/record" && request.method === "DELETE") {
+    const payload = await readJson(request);
+    return json(request, config, await deleteRecord(config, payload.collection, payload.id));
+  }
   if (url.pathname === "/obsidian/search" && request.method === "GET") return json(request, config, { notes: await searchObsidian(config, url.searchParams.get("q") || "", 12) });
   if (url.pathname === "/calendar/today" && request.method === "GET") {
     const requestedDate = url.searchParams.get("date") || new Date().toISOString().slice(0, 10);

@@ -1,865 +1,224 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
-
-type ModuleKey =
-  | "dashboard"
-  | "research"
-  | "data"
-  | "manuscript"
-  | "workspace"
-  | "review"
-  | "projects"
-  | "operations";
-
-type Action = {
-  label: string;
-  meta: string;
-  tone: string;
-  command: string;
-};
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 const BRIDGE_URL = "http://127.0.0.1:32145";
 
+type ModuleKey = "dashboard" | "research" | "data" | "manuscript" | "workspace" | "review" | "projects" | "operations";
+type CollectionKey = "projects" | "research-questions" | "manuscripts" | "research-debt" | "experiments" | "reviews" | "operations" | "reading-queue";
+type Action = { label: string; meta: string; tone: string; command: string };
+type RecordItem = {
+  id: string; collection?: CollectionKey; title: string; description?: string; status?: string; progress?: number;
+  active?: boolean; phase?: string; keywords?: string; journal?: string; wordCount?: number; targetWords?: number;
+  evidenceCoverage?: number; severity?: string; type?: string; linkedObject?: string; linkedProject?: string;
+  dueDate?: string; method?: string; zoteroKey?: string; creators?: string[]; year?: string; doi?: string;
+  createdAt?: string; updatedAt?: string;
+};
+type WorkbenchState = {
+  projects: RecordItem[]; "research-questions": RecordItem[]; manuscripts: RecordItem[]; "research-debt": RecordItem[];
+  experiments: RecordItem[]; reviews: RecordItem[]; operations: RecordItem[]; "reading-queue": RecordItem[];
+};
+type ZoteroItem = { key: string; title: string; creators: string[]; year: string; itemType: string; doi: string; url: string };
 type BridgeStatus = {
-  bridge: boolean;
-  deepseek: { connected: boolean; model: string };
-  kimi: { connected: boolean; model: string };
-  zotero: { connected: boolean; version: string | null };
-  obsidian: { connected: boolean; vault: string | null };
-  calendar: { connected: boolean };
+  bridge: boolean; deepseek: { connected: boolean; model: string }; kimi: { connected: boolean; model: string };
+  zotero: { connected: boolean; version: string | null }; obsidian: { connected: boolean; vault: string | null }; calendar: { connected: boolean };
 };
-
+type CalendarEvent = { id: string; title: string; start: string; end: string; allDay: boolean; location: string; notes: string; calendar: string; color: string };
 type WorkflowResult = {
-  output: string;
-  provider: "deepseek" | "kimi";
-  model: string;
-  usage?: { total_tokens?: number } | null;
-  sources: {
-    zotero: { key: string; title: string; creators: string[]; year: string; doi: string }[];
-    obsidian: { title: string; path: string; snippet: string }[];
-  };
+  output: string; provider: "deepseek" | "kimi"; model: string; usage?: { total_tokens?: number } | null;
+  sources: { zotero: ZoteroItem[]; obsidian: { title: string; path: string; snippet: string }[] };
 };
 
-const navItems: { key: ModuleKey; label: string; icon: string; badge?: string }[] = [
-  { key: "dashboard", label: "Today", icon: "⌂", badge: "3" },
-  { key: "research", label: "Research Map", icon: "⌁", badge: "8" },
-  { key: "data", label: "Data & Experiments", icon: "∿", badge: "3" },
-  { key: "manuscript", label: "Manuscript", icon: "¶" },
-  { key: "workspace", label: "AI Workspace", icon: "✦" },
-  { key: "review", label: "Review Room", icon: "✓", badge: "4" },
-  { key: "projects", label: "Projects & Tasks", icon: "▦" },
-  { key: "operations", label: "PhD Operations", icon: "◫", badge: "2" },
+const emptyState: WorkbenchState = { projects: [], "research-questions": [], manuscripts: [], "research-debt": [], experiments: [], reviews: [], operations: [], "reading-queue": [] };
+const navItems: { key: ModuleKey; label: string; icon: string }[] = [
+  { key: "dashboard", label: "Today", icon: "⌂" }, { key: "research", label: "Research Map", icon: "⌁" },
+  { key: "data", label: "Data & Experiments", icon: "∿" }, { key: "manuscript", label: "Manuscript", icon: "¶" },
+  { key: "workspace", label: "AI Workspace", icon: "✦" }, { key: "review", label: "Review Room", icon: "✓" },
+  { key: "projects", label: "Projects & Tasks", icon: "▦" }, { key: "operations", label: "PhD Operations", icon: "◫" },
 ];
-
 const quickActions: Action[] = [
   { label: "Ask research knowledge", meta: "Obsidian", tone: "mint", command: "@ask-knowledge" },
   { label: "Find evidence for a claim", meta: "Zotero", tone: "blue", command: "@evidence-for-claim" },
   { label: "Explain a result", meta: "Statistics", tone: "violet", command: "@result-explain" },
   { label: "Review manuscript section", meta: "Reviewer", tone: "orange", command: "@reviewer-critique" },
+  { label: "Plan today’s research", meta: "Planning", tone: "mint", command: "@plan-today" },
+  { label: "Draft manuscript section", meta: "Writing", tone: "violet", command: "@write-section" },
 ];
+const collectionLabels: Record<CollectionKey, string> = {
+  projects: "Project", "research-questions": "Research question", manuscripts: "Manuscript", "research-debt": "Research debt",
+  experiments: "Experiment", reviews: "Review item", operations: "PhD operation", "reading-queue": "Reading queue item",
+};
 
-const commands: Action[] = [
-  ...quickActions,
-  { label: "Read a paper", meta: "Literature", tone: "blue", command: "@paper-read" },
-  { label: "Compare selected papers", meta: "Literature", tone: "blue", command: "@compare-papers" },
-  { label: "Inspect dataset", meta: "Data", tone: "mint", command: "@dataset-inspect" },
-  { label: "Select a method", meta: "Methods", tone: "violet", command: "@method-select" },
-  { label: "Run statistical check", meta: "Statistics", tone: "orange", command: "@stat-check" },
-  { label: "Draft methods", meta: "Writing", tone: "violet", command: "@write-methods" },
-  { label: "Save research decision", meta: "Obsidian", tone: "mint", command: "@save-decision" },
-];
-
-const manuscriptSections = [
-  { name: "Introduction", state: "Needs evidence", value: 72 },
-  { name: "Methods", state: "Internal review", value: 88 },
-  { name: "Results", state: "In progress", value: 46 },
-  { name: "Discussion", state: "Outline", value: 21 },
-  { name: "Figures", state: "3 of 5 ready", value: 60 },
-  { name: "Supplementary", state: "Not started", value: 4 },
-];
-
-const papers = [
-  { year: "2024", title: "Deep learning approaches for football formation recognition from tracking data", authors: "Bialkowski et al.", tag: "Direct evidence" },
-  { year: "2023", title: "Dynamic team formations in elite women's football", authors: "Forcher et al.", tag: "Context" },
-  { year: "2022", title: "Space control and collective tactical behaviour in association football", authors: "Memmert et al.", tag: "Method" },
-];
-
-const agents = [
-  ["Statistics Agent", "Model assumptions, diagnostics, uncertainty", "available"],
-  ["Football Analytics Agent", "Tactical validity and domain interpretation", "available"],
-  ["Literature Agent", "Evidence retrieval and synthesis", "available"],
-  ["Methods Editor", "Methodological completeness and precision", "available"],
-  ["Computer Vision Agent", "Detection, tracking and validation", "available"],
-  ["Reviewer Agent", "Independent critical review", "available"],
-];
-
-const projects = [
-  { code: "STUDY 02", name: "Formation Recognition", phase: "Analysis", progress: 64, color: "#b8f05a", detail: "Tracking data · Computer vision" },
-  { code: "STUDY 01", name: "Pace of Play", phase: "Writing", progress: 81, color: "#7db5ff", detail: "Event data · Mixed models" },
-  { code: "PILOT 03", name: "Defensive Assignment", phase: "Literature", progress: 27, color: "#bf9bff", detail: "Tracking data · Network analysis" },
-];
+function clampProgress(value: unknown) { return Math.max(0, Math.min(100, Number(value) || 0)); }
+function localDateKey(date: Date) { return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`; }
+function timeLabel(iso: string) { return new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(iso)); }
+function durationMinutes(start: string, end: string) { return Math.max(1, Math.round((new Date(end).getTime() - new Date(start).getTime()) / 60000)); }
+function recordContext(state: WorkbenchState) {
+  const project = state.projects.find((item) => item.active) || state.projects[0];
+  const rq = state["research-questions"].find((item) => item.status === "Active") || state["research-questions"][0];
+  return [project && `Project ${project.id}: ${project.title}`, rq && `Research question ${rq.id}: ${rq.title}`].filter(Boolean).join("\n");
+}
 
 function ProgressRing({ value }: { value: number }) {
-  return (
-    <div className="progress-ring" style={{ "--progress": `${value * 3.6}deg` } as React.CSSProperties}>
-      <div><strong>{value}</strong><span>%</span></div>
-    </div>
-  );
+  const normalized = clampProgress(value);
+  return <div className="progress-ring" style={{ "--progress": `${normalized * 3.6}deg` } as React.CSSProperties}><div><strong>{normalized}</strong><span>%</span></div></div>;
 }
-
-function SourceDot({ tone = "green" }: { tone?: string }) {
-  return <span className={`source-dot ${tone}`} aria-hidden="true" />;
+function SourceDot({ tone = "green" }: { tone?: string }) { return <span className={`source-dot ${tone}`} aria-hidden="true" />; }
+function EmptyState({ title, detail, action, onAction }: { title: string; detail: string; action?: string; onAction?: () => void }) {
+  return <div className="real-empty"><span>◇</span><div><strong>{title}</strong><p>{detail}</p></div>{action && onAction && <button onClick={onAction}>{action} →</button>}</div>;
 }
+function MetaPill({ children, tone = "neutral" }: { children: React.ReactNode; tone?: string }) { return <span className={`status-pill ${tone}`}><i />{children}</span>; }
 
-type DailyTask = {
-  id: number;
-  title: string;
-  object: string;
-  category: string;
-  time: string;
-  priority: "Must" | "Should";
-  done: boolean;
-};
-
-type TimeBlock = {
-  id: string;
-  start: string;
-  end: string;
-  title: string;
-  calendar: string;
-  allDay: boolean;
-  location: string;
-  notes: string;
-  color: string;
-};
-
-const starterTasks: DailyTask[] = [];
-const emptyTimeBlock = { time: "09:00", title: "", category: "WorkBuddy", duration: "60", calendar: "" };
-
-function localDateKey(date: Date) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
-
-function timeLabel(iso: string) {
-  return new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(iso));
-}
-
-function durationMinutes(start: string, end: string) {
-  return Math.max(1, Math.round((new Date(end).getTime() - new Date(start).getTime()) / 60000));
-}
-
-function Dashboard({ runAction, openContext }: { runAction: (a: Action) => void; openContext: () => void }) {
-  const [tasks, setTasks] = useState<DailyTask[]>(starterTasks);
-  const [timeBlocks, setTimeBlocks] = useState<TimeBlock[]>([]);
-  const [calendarNames, setCalendarNames] = useState<string[]>([]);
-  const [calendarLoading, setCalendarLoading] = useState(true);
-  const [calendarError, setCalendarError] = useState("");
-  const [newTask, setNewTask] = useState("");
-  const [editingTaskId, setEditingTaskId] = useState<number | null>(null);
-  const [taskDraft, setTaskDraft] = useState("");
-  const [deletingTaskId, setDeletingTaskId] = useState<number | null>(null);
-  const [timeEditorId, setTimeEditorId] = useState<string | "new" | null>(null);
-  const [timeDraft, setTimeDraft] = useState(emptyTimeBlock);
-  const [deletingTimeId, setDeletingTimeId] = useState<string | null>(null);
-  const [storageReady, setStorageReady] = useState(false);
-  const [now, setNow] = useState(() => new Date());
-  const [focusElapsed, setFocusElapsed] = useState(0);
-  const [focusStartedAt, setFocusStartedAt] = useState<number | null>(null);
-  const [focusTarget, setFocusTarget] = useState("");
-  const [queuedPapers, setQueuedPapers] = useState<string[]>([]);
-
-  useEffect(() => {
-    const timer = window.setTimeout(() => {
-      const savedTasks = window.localStorage.getItem("workbuddy-daily-tasks-en-v3");
-      const savedFocus = window.localStorage.getItem("workbuddy-focus-en-v1");
-      if (savedTasks) try { setTasks(JSON.parse(savedTasks) as DailyTask[]); } catch { /* keep starter state */ }
-      if (savedFocus) try {
-        const focus = JSON.parse(savedFocus) as { elapsed?: number; startedAt?: number | null; target?: string };
-        setFocusElapsed(Math.max(0, focus.elapsed || 0));
-        setFocusStartedAt(focus.startedAt || null);
-        setFocusTarget(focus.target || "");
-      } catch { /* start a fresh focus timer */ }
-      setStorageReady(true);
-    }, 0);
-    return () => window.clearTimeout(timer);
-  }, []);
-
-  useEffect(() => {
-    if (!storageReady) return;
-    window.localStorage.setItem("workbuddy-daily-tasks-en-v3", JSON.stringify(tasks));
-  }, [storageReady, tasks]);
-
-  useEffect(() => {
-    if (!storageReady) return;
-    window.localStorage.setItem("workbuddy-focus-en-v1", JSON.stringify({ elapsed: focusElapsed, startedAt: focusStartedAt, target: focusTarget }));
-  }, [focusElapsed, focusStartedAt, focusTarget, storageReady]);
-
-  useEffect(() => {
-    const timer = window.setInterval(() => setNow(new Date()), 1000);
-    return () => window.clearInterval(timer);
-  }, []);
-
-  const refreshCalendar = async () => {
-    setCalendarLoading(true);
-    setCalendarError("");
-    try {
-      const response = await fetch(`${BRIDGE_URL}/calendar/today?date=${localDateKey(new Date())}`, { signal: AbortSignal.timeout(20000) });
-      const body = await response.json() as { events?: TimeBlock[]; calendars?: string[]; error?: string };
-      if (!response.ok) throw new Error(body.error || "Calendar could not be loaded.");
-      setTimeBlocks(body.events || []);
-      setCalendarNames(body.calendars || []);
-    } catch (error) {
-      setCalendarError(error instanceof TypeError ? "Local Calendar connection is offline." : error instanceof Error ? error.message : "Calendar could not be loaded.");
-    } finally {
-      setCalendarLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    const first = window.setTimeout(() => void refreshCalendar(), 0);
-    const recurring = window.setInterval(() => void refreshCalendar(), 60000);
-    return () => { window.clearTimeout(first); window.clearInterval(recurring); };
-  }, []);
-
-  const completed = tasks.filter((task) => task.done).length;
-  const focusSeconds = focusElapsed + (focusStartedAt ? Math.max(0, Math.floor((now.getTime() - focusStartedAt) / 1000)) : 0);
-  const focusRunning = focusStartedAt !== null;
-  const focusTime = `${String(Math.floor(focusSeconds / 3600)).padStart(2, "0")}:${String(Math.floor((focusSeconds % 3600) / 60)).padStart(2, "0")}:${String(focusSeconds % 60).padStart(2, "0")}`;
-  const dateTimeLabel = new Intl.DateTimeFormat("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }).format(now);
-  const toggleTask = (id: number) => setTasks((items) => items.map((item) => item.id === id ? { ...item, done: !item.done } : item));
-  const addTask = () => {
-    if (!newTask.trim()) return;
-    setTasks((items) => [...items, { id: Date.now(), title: newTask.trim(), object: "INBOX", category: "Ad hoc", time: "Unscheduled", priority: "Should", done: false }]);
-    setNewTask("");
-  };
-  const startTaskEdit = (task: DailyTask) => {
-    setEditingTaskId(task.id);
-    setTaskDraft(task.title);
-    setDeletingTaskId(null);
-  };
-  const saveTaskEdit = () => {
-    if (!taskDraft.trim() || editingTaskId === null) return;
-    setTasks((items) => items.map((item) => item.id === editingTaskId ? { ...item, title: taskDraft.trim() } : item));
-    setEditingTaskId(null);
-    setTaskDraft("");
-  };
-  const deleteTask = (id: number) => {
-    setTasks((items) => items.filter((item) => item.id !== id));
-    setDeletingTaskId(null);
-  };
-  const startTimeEdit = (block?: TimeBlock) => {
-    setTimeEditorId(block ? block.id : "new");
-    setTimeDraft(block ? { time: timeLabel(block.start), title: block.title, category: block.calendar, duration: String(durationMinutes(block.start, block.end)), calendar: block.calendar } : { ...emptyTimeBlock, time: new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date()), calendar: calendarNames[0] || "" });
-    setDeletingTimeId(null);
-  };
-  const saveTimeBlock = async () => {
-    if (!timeDraft.title.trim() || timeEditorId === null) return;
-    setCalendarLoading(true);
-    setCalendarError("");
-    try {
-      const start = new Date(`${localDateKey(now)}T${timeDraft.time}:00`);
-      const minutes = Math.max(1, Number.parseInt(timeDraft.duration, 10) || 60);
-      const response = await fetch(`${BRIDGE_URL}/calendar/event`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: timeEditorId === "new" ? undefined : timeEditorId, title: timeDraft.title.trim(), start: start.toISOString(), end: new Date(start.getTime() + minutes * 60000).toISOString(), calendar: timeDraft.calendar, notes: "Created or updated by WorkBuddy" }) });
-      const body = await response.json() as { error?: string };
-      if (!response.ok) throw new Error(body.error || "Calendar event could not be saved.");
-      setTimeEditorId(null);
-      setTimeDraft(emptyTimeBlock);
-      await refreshCalendar();
-    } catch (error) {
-      setCalendarError(error instanceof Error ? error.message : "Calendar event could not be saved.");
-      setCalendarLoading(false);
-    }
-  };
-  const deleteTimeBlock = async (id: string) => {
-    setCalendarLoading(true);
-    setCalendarError("");
-    try {
-      const response = await fetch(`${BRIDGE_URL}/calendar/event`, { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) });
-      const body = await response.json() as { error?: string };
-      if (!response.ok) throw new Error(body.error || "Calendar event could not be deleted.");
-      setDeletingTimeId(null);
-      await refreshCalendar();
-    } catch (error) {
-      setCalendarError(error instanceof Error ? error.message : "Calendar event could not be deleted.");
-      setCalendarLoading(false);
-    }
-  };
-
-  const toggleFocus = () => {
-    if (focusStartedAt) {
-      setFocusElapsed(focusSeconds);
-      setFocusStartedAt(null);
-    } else {
-      setFocusStartedAt(Date.now());
-    }
-  };
-
-  const resetFocus = () => {
-    setFocusElapsed(0);
-    setFocusStartedAt(null);
-  };
-
-  return (
-    <>
-      <section className="daily-intro">
-        <div>
-          <p className="eyebrow" suppressHydrationWarning><span className="live-time-dot" />{dateTimeLabel}</p>
-          <h1>Today’s Research</h1>
-          <p>Tasks, time, research questions, and evidence—together in one place, focused on work that moves the thesis forward.</p>
-        </div>
-        <div className="daily-intro-actions">
-          <button className="quiet-button" onClick={openContext}><span className="context-diamond small">◇</span> Context ready · 94%</button>
-          <button className="primary-button" onClick={() => runAction({ label: "Plan today’s research", meta: "Research planning", tone: "mint", command: "@plan-today" })}>Plan today with AI <b>✦</b></button>
-        </div>
-      </section>
-
-      <section className="daily-command-grid">
-        <article className="today-tasks card">
-          <div className="section-heading">
-            <div><span className="label">TODAY / EXECUTION</span><p>Today’s tasks</p></div>
-            <span className="completion-count"><b>{completed}</b> / {tasks.length} complete</span>
-          </div>
-          <div className="task-capture">
-            <input value={newTask} onChange={(event) => setNewTask(event.target.value)} onKeyDown={(event) => event.key === "Enter" && addTask()} placeholder="Add an ad hoc research task…" aria-label="Add today’s research task" />
-            <button onClick={addTask}>+</button>
-          </div>
-          <div className="daily-task-list">
-            {!tasks.length && <div className="true-empty-state"><span>＋</span><p><strong>No tasks yet</strong><small>Add the first real research task above.</small></p></div>}
-            {tasks.map((task) => (
-              <div className={`${task.done ? "done" : ""} ${editingTaskId === task.id ? "editing" : ""}`} key={task.id}>
-                <button className="task-check" onClick={() => toggleTask(task.id)} aria-label={`${task.done ? "Reopen " : "Complete "}${task.title}`}>{task.done ? "✓" : ""}</button>
-                {editingTaskId === task.id ? (
-                  <div className="task-editor">
-                    <input autoFocus value={taskDraft} onChange={(event) => setTaskDraft(event.target.value)} onKeyDown={(event) => event.key === "Enter" && saveTaskEdit()} aria-label={`Edit ${task.title}`} />
-                    <button className="save-edit" onClick={saveTaskEdit}>Save</button>
-                    <button onClick={() => setEditingTaskId(null)}>Cancel</button>
-                  </div>
-                ) : <>
-                  <span className="task-copy"><strong>{task.title}</strong><small><b>{task.object}</b> · {task.category}</small></span>
-                  <span className="task-plan"><strong>{task.time}</strong><small className={task.priority === "Must" ? "must" : "should"}>{task.priority}</small></span>
-                  {deletingTaskId === task.id ? (
-                    <span className="inline-confirm"><button className="danger" onClick={() => deleteTask(task.id)}>Delete</button><button onClick={() => setDeletingTaskId(null)}>Keep</button></span>
-                  ) : (
-                    <span className="task-actions"><button aria-label={`Edit ${task.title}`} title="Edit" onClick={() => startTaskEdit(task)}>✎</button><button aria-label={`Delete ${task.title}`} title="Delete" onClick={() => setDeletingTaskId(task.id)}>×</button><button aria-label={`Open ${task.title}`} title="Open" onClick={() => runAction({ label: task.title, meta: task.object, tone: task.category === "Literature" ? "blue" : "mint", command: task.category === "Literature" ? "@evidence-for-claim" : "@continue-task" })}>↗</button></span>
-                  )}
-                </>}
-              </div>
-            ))}
-          </div>
-          <div className="task-footer"><span>Completed tasks feed the daily review and research log</span><button onClick={() => runAction({ label: "Open project task table", meta: "Projects", tone: "mint", command: "@project-tasks" })}>Open project task table →</button></div>
-        </article>
-
-        <article className="today-schedule card">
-          <div className="section-heading"><div><span className="label">MACOS CALENDAR / LIVE</span><p>Today’s schedule</p></div><button className="mini-add" onClick={() => startTimeEdit()}>＋ Calendar event</button></div>
-          {timeEditorId !== null && <div className="time-editor">
-            <label><span>Time</span><input type="time" value={timeDraft.time} onChange={(event) => setTimeDraft((value) => ({ ...value, time: event.target.value }))} /></label>
-            <label className="time-title"><span>Focus</span><input autoFocus value={timeDraft.title} onChange={(event) => setTimeDraft((value) => ({ ...value, title: event.target.value }))} onKeyDown={(event) => event.key === "Enter" && saveTimeBlock()} placeholder="Describe this research block" /></label>
-            <label><span>Calendar</span><select value={timeDraft.calendar} onChange={(event) => setTimeDraft((value) => ({ ...value, calendar: event.target.value }))}>{calendarNames.map((name) => <option key={name}>{name}</option>)}</select></label>
-            <label><span>Minutes</span><input inputMode="numeric" value={timeDraft.duration} onChange={(event) => setTimeDraft((value) => ({ ...value, duration: event.target.value.replace(/[^0-9]/g, "") }))} placeholder="60" /></label>
-            <div><button className="save-edit" disabled={calendarLoading} onClick={saveTimeBlock}>{calendarLoading ? "Saving…" : timeEditorId === "new" ? "Add to Calendar" : "Save to Calendar"}</button><button onClick={() => setTimeEditorId(null)}>Cancel</button></div>
-          </div>}
-          <div className="schedule-list">
-            {calendarLoading && !timeBlocks.length && <div className="schedule-loading"><span /> Reading Calendar…</div>}
-            {!calendarLoading && calendarError && <div className="calendar-error"><span>!</span><p>{calendarError}</p><button onClick={refreshCalendar}>Retry</button></div>}
-            {!calendarLoading && !calendarError && !timeBlocks.length && <div className="true-empty-state schedule-empty"><span>○</span><p><strong>No events today</strong><small>Add one here or in macOS Calendar.</small></p></div>}
-            {timeBlocks.map((block, index) => {
-              const isNow = !block.allDay && now >= new Date(block.start) && now < new Date(block.end);
-              const tone = ["mint", "blue", "violet", "neutral"][index % 4];
-              return <div className={isNow ? "now" : ""} key={block.id}><time>{block.allDay ? "ALL DAY" : timeLabel(block.start)}</time><i className={tone} style={block.color ? { background: block.color } : undefined} /><span><strong>{block.title}</strong><small>{block.calendar} · {block.allDay ? "All day" : `${durationMinutes(block.start, block.end)} min`}{block.location ? ` · ${block.location}` : ""}</small></span>{deletingTimeId === block.id ? <span className="inline-confirm schedule-confirm"><button className="danger" onClick={() => deleteTimeBlock(block.id)}>Delete event</button><button onClick={() => setDeletingTimeId(null)}>Keep</button></span> : <span className="schedule-actions">{isNow && <b>NOW</b>}<button aria-label={`Edit ${block.title}`} title="Edit" onClick={() => startTimeEdit(block)}>✎</button><button aria-label={`Delete ${block.title}`} title="Delete" onClick={() => setDeletingTimeId(block.id)}>×</button></span>}</div>;
-            })}
-          </div>
-          <button className="wide-button" disabled={calendarLoading} onClick={refreshCalendar}>{calendarLoading ? "Syncing Calendar…" : "Refresh from macOS Calendar"}<span>↻</span></button>
-        </article>
-
-        <article className="focus-session card">
-          <div className="focus-top"><span className="label">FOCUS SESSION</span><span className={focusRunning ? "live" : "paused"}><i /> {focusRunning ? "Recording" : "Paused"}</span></div>
-          <label className="focus-object"><span>FOCUS TARGET</span><input value={focusTarget} onChange={(event) => setFocusTarget(event.target.value)} placeholder="What are you focusing on?" /></label>
-          <h2>{focusTime}</h2>
-          <p>{focusRunning ? `Started at ${new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }).format(new Date(focusStartedAt || now.getTime()))}` : focusSeconds ? "Paused — elapsed time is saved on this device" : "Ready for a new real focus session"}</p>
-          <div className="focus-wave">{[4,8,13,21,12,17,25,10,18,8,5].map((height, index) => <i key={index} style={{ height }} />)}</div>
-          <div className="focus-actions"><button aria-pressed={focusRunning} onClick={toggleFocus}>{focusRunning ? "Pause session" : focusSeconds ? "Resume session" : "Start session"}<span>{focusRunning ? "Ⅱ" : "▶"}</span></button><button disabled={!focusSeconds} onClick={resetFocus}>Reset</button></div>
-        </article>
-      </section>
-
-      <section className="daily-progress-row">
-        <article className="writing-today card">
-          <div className="section-heading"><div><span className="label">WRITING / MANUSCRIPT-02</span><p>Current writing progress</p></div><button className="quiet-button" onClick={() => runAction(commands[9])}>Continue writing →</button></div>
-          <div className="writing-main">
-            <div><span className="writing-section-tag">METHODS · §2.4</span><h2>Phase segmentation and formation representation</h2><p>Next: justify the 8-second threshold and link DEC-041.</p></div>
-            <div className="writing-numbers"><span><strong>4,286</strong><small>Current words</small></span><span><strong>8,000</strong><small>Section target</small></span><span><strong>54%</strong><small>Argument coverage</small></span><span><strong>82%</strong><small>Citation coverage</small></span></div>
-          </div>
-          <div className="writing-track"><i style={{ width: "54%" }} /><span style={{ left: "54%" }}>4,286</span></div>
-          <div className="writing-log"><span>This week <b>312 min</b></span><span>Added <b>1,240 words</b></span><span>Open <b className="warning-text">2 AUTHOR CHECKS</b></span></div>
-        </article>
-
-        <article className="research-anchor card">
-          <div className="card-topline"><span className="label">RESEARCH ANCHOR</span><button onClick={openContext}>View context ↗</button></div>
-          <span className="object-id">RQ-02 · ACTIVE</span>
-          <h3>How reliably can team formations be recognized across possession phases and match contexts?</h3>
-          <div className="anchor-chain"><span><b>23</b> papers</span><i>→</i><span><b>3</b> experiments</span><i>→</i><span><b>5/7</b> verified</span></div>
-          <div className="anchor-health"><span><i /> Context coverage</span><strong>94%</strong></div>
-        </article>
-      </section>
-
-      <section className="daily-lower-grid">
-        <article className="literature-radar card">
-          <div className="section-heading"><div><span className="label">ZOTERO / LITERATURE RADAR</span><p>Today’s recommendations</p></div><button className="text-button" onClick={() => runAction(commands[1])}>Open Literature Lab →</button></div>
-          <div className="radar-list">
-            {papers.map((paper, index) => (
-              <div key={paper.title}>
-                <span className="paper-score"><strong>{index === 0 ? 94 : index === 1 ? 87 : 82}</strong><small>match</small></span>
-                <span className="radar-copy"><small>{paper.year} · {paper.authors}</small><strong>{paper.title}</strong><em>{paper.tag} · linked to RQ-02</em></span>
-                <button aria-pressed={queuedPapers.includes(paper.title)} className={queuedPapers.includes(paper.title) ? "queued" : ""} onClick={() => setQueuedPapers((items) => items.includes(paper.title) ? items.filter((item) => item !== paper.title) : [...items, paper.title])}>{queuedPapers.includes(paper.title) ? "Queued" : "+ Queue"}</button>
-                <button className="paper-open" aria-label={`Read ${paper.title}`} onClick={() => runAction(commands[4])}>↗</button>
-              </div>
-            ))}
-          </div>
-        </article>
-
-        <article className="research-debt card">
-          <div className="section-heading"><div><span className="label">RESEARCH DEBT</span><p>Research debt to clear</p></div><span className="count-badge">4</span></div>
-          <div className="debt-list">
-            <button onClick={() => runAction(commands[8])}><span className="debt-rank critical">01</span><span><strong>Result not yet verified</strong><small>EXP-024 · GMM model selection</small></span><b>Statistics</b></button>
-            <button onClick={() => runAction(quickActions[1])}><span className="debt-rank high">02</span><span><strong>Claim lacks direct evidence</strong><small>Introduction · paragraph 6</small></span><b>Evidence</b></button>
-            <button onClick={() => runAction(quickActions[3])}><span className="debt-rank medium">03</span><span><strong>Method decision not documented</strong><small>Phase segmentation threshold</small></span><b>Decision</b></button>
-          </div>
-          <div className="debt-foot"><span>Today’s tasks can clear <b>3 items</b></span><button onClick={() => runAction({ label: "Review all research debt", meta: "Quality control", tone: "orange", command: "@research-debt" })}>View all →</button></div>
-        </article>
-      </section>
-    </>
-  );
-}
-
-function Research({ runAction }: { runAction: (a: Action) => void }) {
-  return (
-    <>
-      <section className="page-intro compact">
-        <div><p className="eyebrow">Knowledge + evidence</p><h1>Research <em>map.</em></h1><p>Follow the chain from a question to the evidence, experiment, and manuscript.</p></div>
-        <button className="primary-button" onClick={() => runAction(commands[10])}>Save research decision <b>+</b></button>
-      </section>
-      <section className="research-layout">
-        <article className="rq-map card">
-          <div className="card-topline"><span className="label">Active research question</span><span className="object-id">RQ-02</span></div>
-          <h2>How reliably can team formations be recognized across possession phases and match contexts?</h2>
-          <div className="object-chain">
-            <div><small>SUPPORTED BY</small><strong>23 Papers</strong><span>Zotero collection</span></div><b>→</b>
-            <div><small>TESTED BY</small><strong>3 Experiments</strong><span>2 currently active</span></div><b>→</b>
-            <div><small>PRODUCES</small><strong>7 Results</strong><span>5 verified</span></div><b>→</b>
-            <div><small>REPORTED IN</small><strong>Results §3.2</strong><span>Draft in progress</span></div>
-          </div>
-          <div className="linked-objects">
-            <span>Hypothesis <b>H2.1</b></span><span>Dataset <b>TRK-WF-v2.4</b></span><span>Method <b>GMM</b></span><span>Concept <b>Formation</b></span>
-          </div>
-        </article>
-        <article className="knowledge-gateway card">
-          <div className="card-topline"><span className="label">Knowledge gateway</span><span className="source-chip"><SourceDot /> Obsidian</span></div>
-          <h3>Ask what you already know.</h3>
-          <p>Retrieve focused notes and decisions without dumping the whole vault into context.</p>
-          <button className="gateway-input" onClick={() => runAction(quickActions[0])}><span>What have I decided about…</span><kbd>⌘ ↵</kbd></button>
-          <div className="suggestion-list">
-            <button onClick={() => runAction(quickActions[0])}>Retrieve my definition of formation <span>→</span></button>
-            <button onClick={() => runAction(quickActions[0])}>Show decisions relevant to phase segmentation <span>→</span></button>
-          </div>
-        </article>
-      </section>
-      <section className="literature-card card">
-        <div className="section-heading">
-          <div><span className="label">Literature lab</span><p>Retrieved for RQ-02</p></div>
-          <div className="button-row"><button className="quiet-button" onClick={() => runAction(commands[5])}>Compare papers</button><button className="primary-button small" onClick={() => runAction(commands[4])}>Read paper</button></div>
-        </div>
-        <div className="paper-table">
-          <div className="paper-head"><span>Paper</span><span>Relevance</span><span>Evidence link</span></div>
-          {papers.map((paper) => (
-            <button className="paper-row" key={paper.title} onClick={() => runAction(commands[4])}>
-              <span className="paper-main"><b>{paper.year}</b><span><strong>{paper.title}</strong><small>{paper.authors}</small></span></span>
-              <span><i className="relevance-bar"><b style={{ width: paper.tag === "Direct evidence" ? "92%" : paper.tag === "Context" ? "71%" : "84%" }} /></i></span>
-              <span className="paper-tag">{paper.tag}</span>
-            </button>
-          ))}
-        </div>
-      </section>
-    </>
-  );
-}
-
-function DataExperiments({ runAction }: { runAction: (a: Action) => void }) {
-  return (
-    <>
-      <section className="page-intro compact">
-        <div><p className="eyebrow">Computational record</p><h1>Data & <em>experiments.</em></h1><p>Every result anchored to a dataset version, code revision, and model specification.</p></div>
-        <button className="primary-button" onClick={() => runAction({ label: "Start new analysis", meta: "Experiment", tone: "mint", command: "@start-analysis" })}>Start analysis <b>+</b></button>
-      </section>
-      <section className="registry-top">
-        <article className="dataset-card card">
-          <div className="card-topline"><span className="label">Active dataset</span><span className="status-pill blue"><i /> Validated</span></div>
-          <div className="dataset-title"><span>TRK</span><div><small>DATASET-006 · VERSION 2.4</small><h2>Women’s football tracking data</h2></div></div>
-          <div className="data-stats"><div><strong>52</strong><span>matches</span></div><div><strong>25 Hz</strong><span>frequency</span></div><div><strong>1.2%</strong><span>missing</span></div><div><strong>114</strong><span>variables</span></div></div>
-          <div className="trace-line"><span><i /> Source</span><b>Second Spectrum</b><span><i /> Version</span><b>SHA · a83f2c1</b></div>
-          <button className="wide-button" onClick={() => runAction(commands[6])}>Inspect dataset <span>→</span></button>
-        </article>
-        <article className="method-selector card">
-          <span className="label">Method selector</span><h3>Fit the method to the question.</h3><p>Recommendations use the research question, data structure, nesting, sample size and analytical objective.</p>
-          <div className="method-tags"><span>Repeated measures</span><span>Nested matches</span><span>Unsupervised</span></div>
-          <button className="primary-button" onClick={() => runAction(commands[7])}>Evaluate methods <b>→</b></button>
-        </article>
-      </section>
-      <section className="experiment-card card">
-        <div className="section-heading"><div><span className="label">Experiment registry</span><p>Study 02 · 3 experiments</p></div><button className="quiet-button" onClick={() => runAction({ label: "Browse experiment archive", meta: "Experiments", tone: "blue", command: "@experiment-archive" })}>View archive</button></div>
-        <div className="experiment-table">
-          <div className="experiment-head"><span>ID / objective</span><span>Method</span><span>Traceability</span><span>Status</span><span /></div>
-          <div className="experiment-row active"><span><b>EXP-024</b><strong>Pace of play — model selection</strong><small>Updated 18 min ago</small></span><span>Gaussian mixture</span><span><i className="trace-dots"><b /><b /><b /></i> Complete</span><span className="status-pill lime"><i /> Running</span><button onClick={() => runAction({ label: "Continue EXP-024", meta: "Analysis", tone: "mint", command: "@continue-experiment" })}>Open ↗</button></div>
-          <div className="experiment-row"><span><b>EXP-023</b><strong>Formation cluster stability</strong><small>Updated 2h ago</small></span><span>Bootstrapped GMM</span><span><i className="trace-dots"><b /><b /><b /></i> Complete</span><span className="status-pill blue"><i /> Verified</span><button onClick={() => runAction(commands[2])}>Open ↗</button></div>
-          <div className="experiment-row"><span><b>EXP-021</b><strong>Representation ablation</strong><small>Updated 3 days ago</small></span><span>Random forest</span><span><i className="trace-dots"><b /><b className="off" /><b /></i> 1 warning</span><span className="status-pill neutral"><i /> Paused</span><button onClick={() => runAction(commands[8])}>Open ↗</button></div>
-        </div>
-      </section>
-    </>
-  );
-}
-
-function Manuscript({ runAction }: { runAction: (a: Action) => void }) {
-  return (
-    <>
-      <section className="page-intro compact">
-        <div><p className="eyebrow">Argument before prose</p><h1>Manuscript <em>workspace.</em></h1><p>Structure first. Every claim traceable, every result verified.</p></div>
-        <button className="primary-button" onClick={() => runAction(commands[9])}>Continue Methods <b>→</b></button>
-      </section>
-      <section className="manuscript-overview card">
-        <div className="manuscript-meta"><span className="label">MANUSCRIPT-02</span><span className="status-pill violet"><i /> Drafting</span></div>
-        <div className="manuscript-main"><div><h2>Automated recognition of dynamic team formations in elite women’s football</h2><p>Target journal · Journal of Sports Sciences <span>·</span> 4,286 words</p></div><ProgressRing value={54} /></div>
-        <div className="section-progress-grid">
-          {manuscriptSections.map((section) => <button key={section.name} onClick={() => runAction({ label: `Open ${section.name}`, meta: "Manuscript", tone: "violet", command: "@polish-structure" })}><div><strong>{section.name}</strong><span>{section.value}%</span></div><i><b style={{ width: `${section.value}%` }} /></i><small>{section.state}</small></button>)}
-        </div>
-      </section>
-      <section className="manuscript-lower">
-        <article className="argument-map card">
-          <div className="section-heading"><div><span className="label">Introduction argument map</span><p>7 logical moves · 1 weak connection</p></div><button className="quiet-button" onClick={() => runAction({ label: "Edit argument map", meta: "Manuscript", tone: "violet", command: "@edit-argument-map" })}>Edit map</button></div>
-          <div className="argument-flow">
-            {["Problem", "Existing knowledge", "Current approaches", "Limitation", "Research gap", "Why it matters", "Present study"].map((item, index) => <div key={item} className={item === "Research gap" ? "warning" : ""}><span>{String(index + 1).padStart(2, "0")}</span><strong>{item}</strong>{index < 6 && <b>→</b>}</div>)}
-          </div>
-          <div className="map-warning"><span>!</span><p><strong>Weak transition detected</strong>The move from methodological limitation to the research gap needs direct evidence.</p><button onClick={() => runAction(quickActions[1])}>Find evidence</button></div>
-        </article>
-        <article className="editorial-rule card">
-          <span className="label">Editorial rule</span>
-          <div className="rule-stack"><div><b>01</b><span><strong>Section</strong><small>Argument sequence</small></span></div><i /><div><b>02</b><span><strong>Paragraph</strong><small>One clear function</small></span></div><i /><div><b>03</b><span><strong>Sentence</strong><small>Precision and tone</small></span></div></div>
-          <button className="wide-button" onClick={() => runAction({ label: "Check argument flow", meta: "Writing", tone: "violet", command: "@polish-structure" })}>Check argument flow <span>→</span></button>
-        </article>
-      </section>
-    </>
-  );
-}
-
-function Workspace({ runAction }: { runAction: (a: Action) => void }) {
-  return (
-    <>
-      <section className="page-intro compact"><div><p className="eyebrow">Orchestration layer</p><h1>AI <em>workspace.</em></h1><p>Choose the task. WorkBuddy selects an agent and assembles only the context it needs.</p></div><span className="context-health"><i /> Context systems healthy</span></section>
-      <section className="workspace-grid">
-        <article className="agent-panel card">
-          <div className="card-topline"><span className="label">Specialist agents</span><span className="count-badge">12</span></div>
-          <div className="agent-list">{agents.map(([name, detail, status], index) => <button key={name} onClick={() => runAction({ label: name, meta: "Specialist agent", tone: index % 2 ? "blue" : "mint", command: "@new-task" })}><span className={`agent-avatar a${index}`}>{name.split(" ").map((w) => w[0]).join("")}</span><span><strong>{name}</strong><small>{detail}</small></span><i className={status} /></button>)}</div>
-        </article>
-        <article className="workspace-composer card">
-          <div className="composer-top"><span className="spark">✦</span><div><span className="label">New research task</span><h2>What do you want to investigate?</h2></div></div>
-          <div className="composer-box"><textarea aria-label="Describe research task" defaultValue="Assess whether the three-cluster solution is stable enough to report, and identify the diagnostics I should verify." /><div><span>EXP-024 attached</span><button onClick={() => runAction(commands[8])}>Build context & run <b>↑</b></button></div></div>
-          <div className="context-preview"><div className="context-preview-head"><span>CONTEXT PREVIEW</span><strong>6 sources · 3,840 tokens</strong></div><div className="context-source-list"><span><SourceDot /> Project <b>Study 02</b></span><span><SourceDot /> RQ <b>RQ-02</b></span><span><SourceDot /> Experiment <b>EXP-024</b></span><span><SourceDot /> Dataset <b>v2.4</b></span><span><SourceDot tone="blue" /> Literature <b>5 papers</b></span><span><SourceDot tone="violet" /> Decisions <b>3 notes</b></span></div></div>
-          <p className="context-note"><span>◇</span> Irrelevant project history and unverified outputs will be excluded.</p>
-        </article>
-      </section>
-      <section className="skills-strip card"><div><span className="label">Skills library</span><p>Stable, reusable research workflows</p></div><div className="skill-chips">{commands.slice(4, 10).map((command) => <button key={command.command} onClick={() => runAction(command)}>{command.command}</button>)}</div><button className="text-button" onClick={() => runAction({ label: "Browse skills library", meta: "AI workspace", tone: "mint", command: "@skills-library" })}>View all 18 →</button></section>
-    </>
-  );
-}
-
-function Review({ runAction }: { runAction: (a: Action) => void }) {
-  const reviewerCards = [
-    ["Scientific reviewer", "Argument, novelty, interpretation", "2 major", "orange"],
-    ["Statistical reviewer", "Models, assumptions, uncertainty", "1 major", "violet"],
-    ["Football analysis reviewer", "Tactical and ecological validity", "3 minor", "mint"],
-    ["Machine learning reviewer", "Validation, leakage, generalization", "Ready", "blue"],
-  ];
-  return (
-    <>
-      <section className="page-intro compact"><div><p className="eyebrow">Independent challenge</p><h1>Review <em>room.</em></h1><p>Separate reviewer lenses surface concerns before they reach peer review.</p></div><button className="primary-button" onClick={() => runAction(quickActions[3])}>Run full review <b>→</b></button></section>
-      <section className="review-summary card"><div><span className="label">Manuscript readiness</span><ProgressRing value={68} /></div><div className="readiness-copy"><h2>Promising, with two issues to resolve.</h2><p>The analytical story is coherent. Validation reporting and the novelty claim need stronger support before internal circulation.</p></div><div className="review-counts"><span><strong>3</strong><small>Major concerns</small></span><span><strong>7</strong><small>Minor concerns</small></span><span><strong>5</strong><small>Resolved</small></span></div></section>
-      <section className="reviewer-grid">{reviewerCards.map(([name, detail, issue, tone], index) => <article className="reviewer-card card" key={name}><div className={`reviewer-mark ${tone}`}>{index === 0 ? "SC" : index === 1 ? "ST" : index === 2 ? "FA" : "ML"}</div><h3>{name}</h3><p>{detail}</p><div><span className={`status-pill ${tone}`}><i /> {issue}</span><button onClick={() => runAction({ label: `Open ${name}`, meta: "Review", tone, command: "@reviewer-critique" })}>Open report ↗</button></div></article>)}</section>
-      <section className="concerns card"><div className="section-heading"><div><span className="label">Priority concerns</span><p>Ranked by impact on scientific validity</p></div><span className="updated">Last review · 34 min ago</span></div><div className="concern-row"><span className="severity">01</span><span><strong>External validation is underspecified</strong><small>The held-out competition and selection criteria need explicit reporting.</small></span><b>MAJOR</b><button onClick={() => runAction(quickActions[3])}>Resolve →</button></div><div className="concern-row"><span className="severity">02</span><span><strong>Novelty claim exceeds retrieved evidence</strong><small>Two adjacent approaches should be acknowledged in the Introduction.</small></span><b>MAJOR</b><button onClick={() => runAction(quickActions[1])}>Resolve →</button></div></section>
-    </>
-  );
-}
-
-function Projects({ changeProject, runAction }: { changeProject: (name: string) => void; runAction: (a: Action) => void }) {
-  return (
-    <>
-      <section className="page-intro compact"><div><p className="eyebrow">Isolated research contexts</p><h1>PhD <em>projects.</em></h1><p>Switch studies without mixing research questions, decisions, datasets, or evidence.</p></div><button className="primary-button" onClick={() => runAction({ label: "Create research project", meta: "Projects", tone: "mint", command: "@new-project" })}>New project <b>+</b></button></section>
-      <section className="project-grid">
-        {projects.map((project, index) => <article className={`project-card card ${index === 0 ? "selected" : ""}`} key={project.name} style={{ "--project-color": project.color } as React.CSSProperties}><div className="project-top"><span>{project.code}</span>{index === 0 && <b>ACTIVE</b>}</div><div className="project-orbit"><span /><i /><b /></div><h2>{project.name}</h2><p>{project.detail}</p><div className="project-phase"><span>Current phase</span><strong>{project.phase}</strong></div><div className="project-progress"><i><b style={{ width: `${project.progress}%` }} /></i><span>{project.progress}%</span></div><div className="project-links"><span><b>{index === 0 ? 3 : 2}</b> RQs</span><span><b>{index === 1 ? 11 : index === 0 ? 7 : 2}</b> Results</span><span><b>{index === 2 ? 9 : 23}</b> Papers</span></div><button onClick={() => changeProject(project.name)}>{index === 0 ? "Open project" : "Switch context"} <span>→</span></button></article>)}
-        <button className="new-project-card" onClick={() => runAction({ label: "Create research project", meta: "Projects", tone: "mint", command: "@new-project" })}><span>+</span><strong>Create research project</strong><small>Start with a clean, isolated context</small></button>
-      </section>
-      <section className="portfolio-note card"><span>◇</span><div><strong>Cross-project insight</strong><p>The operational definition of “possession phase” differs between Study 01 and Study 02. Consider documenting why.</p></div><button onClick={() => runAction({ label: "Review project definitions", meta: "Cross-project", tone: "violet", command: "@compare-definitions" })}>Review definitions →</button></section>
-    </>
-  );
-}
-
-function Operations({ runAction }: { runAction: (a: Action) => void }) {
-  const [activeTab, setActiveTab] = useState<"pipeline" | "mentor" | "review">("pipeline");
-  const [energy, setEnergy] = useState(4);
-  const [reviewSaved, setReviewSaved] = useState(false);
-  const [reflection, setReflection] = useState("Built the stability-check framework for EXP-024; bootstrap iterations and reporting criteria still need confirmation.\nTomorrow’s priority: verify the result, then update Results §3.2.");
-
-  const tabs = [
-    ["pipeline", "Submission pipeline"],
-    ["mentor", "Supervision"],
-    ["review", "Research review"],
-  ] as const;
-
-  return (
-    <>
-      <section className="page-intro compact operations-intro">
-        <div><p className="eyebrow">PHD OPERATIONS</p><h1>PhD <em>operations.</em></h1><p>Manage submissions, supervisory decisions, and reflection without letting administration interrupt the research.</p></div>
-        <div className="energy-check"><span>Energy</span>{[1,2,3,4,5].map((value) => <button key={value} aria-pressed={energy === value} className={energy === value ? "active" : ""} onClick={() => setEnergy(value)}>{value}</button>)}<strong>{energy >= 4 ? "Ready for deep work" : energy >= 3 ? "Steady pace" : "Reduce the load"}</strong></div>
-      </section>
-
-      <div className="operations-tabs">{tabs.map(([key, label]) => <button key={key} aria-pressed={activeTab === key} className={activeTab === key ? "active" : ""} onClick={() => setActiveTab(key)}>{label}{key === "mentor" && <span>2</span>}</button>)}</div>
-
-      {activeTab === "pipeline" && <>
-        <section className="ops-overview card"><div><span className="label">SUBMISSION OVERVIEW</span><h2>A traceable path from manuscript to publication.</h2></div><div className="ops-stats"><span><strong>3</strong><small>Active</small></span><span><strong>1</strong><small>Awaiting feedback</small></span><span><strong>24d</strong><small>Next deadline</small></span></div><button className="primary-button" onClick={() => runAction({ label: "Add submission", meta: "Submission pipeline", tone: "mint", command: "@new-submission" })}>Add submission <b>＋</b></button></section>
-        <section className="submission-board">
-          <article className="pipeline-column card"><div><span>DRAFTING</span><b>1</b></div><button className="submission-ticket" onClick={() => runAction({ label: "Open MANUSCRIPT-02 submission", meta: "Drafting", tone: "violet", command: "@submission-detail" })}><small>MANUSCRIPT-02</small><strong>Formation recognition in elite women’s football</strong><span>Journal of Sports Sciences</span><i><b style={{ width: "54%" }} /></i><em>Methods · internal review</em></button></article>
-          <article className="pipeline-column card"><div><span>INTERNAL REVIEW</span><b>1</b></div><button className="submission-ticket warning" onClick={() => runAction({ label: "Open MANUSCRIPT-01 review", meta: "Internal review", tone: "orange", command: "@submission-detail" })}><small>MANUSCRIPT-01</small><strong>Pace of play across match contexts</strong><span>Sports Biomechanics</span><p><b>2</b> major concerns remain</p><em>Review due · 18 Aug</em></button></article>
-          <article className="pipeline-column card"><div><span>SUBMITTED</span><b>1</b></div><button className="submission-ticket blue" onClick={() => runAction({ label: "Open CONF-004 submission", meta: "Submitted", tone: "blue", command: "@submission-detail" })}><small>CONF-004</small><strong>Tracking-derived tactical compactness</strong><span>World Congress of Performance Analysis</span><p>Waiting for decision</p><em>Submitted · 29 Jul</em></button></article>
-          <article className="pipeline-column card"><div><span>REVISION</span><b>0</b></div><div className="empty-pipeline"><span>◇</span><p>No active revisions</p></div></article>
-        </section>
-        <section className="submission-deadline card"><span className="deadline-date"><strong>04</strong><small>SEP</small></span><div><span className="label">NEXT DEADLINE</span><strong>MANUSCRIPT-01 · Internal circulation</strong><small>24 days · argument check, statistical review and figure audit required</small></div><div className="deadline-gates"><span className="done">✓ Argument</span><span>○ Statistics</span><span>○ Figures</span></div><button onClick={() => runAction(quickActions[3])}>Prepare review →</button></section>
-      </>}
-
-      {activeTab === "mentor" && <section className="mentor-grid">
-        <article className="mentor-brief card"><div className="section-heading"><div><span className="label">NEXT SUPERVISION · 14 AUG</span><p>Supervision brief</p></div><span className="status-pill lime"><i /> 80% ready</span></div><h2>Ask for decisions with evidence—not a full progress dump.</h2><div className="brief-sections"><div><span>01</span><p><strong>Core progress</strong>EXP-024 model selection is complete; agree the minimum reporting standard for stability.</p></div><div><span>02</span><p><strong>Decision required</strong>Should cross-match validation be a primary analysis or supplementary material?</p></div><div><span>03</span><p><strong>Evidence prepared</strong>Figure 3, stability diagnostics, and five directly relevant papers.</p></div></div><button className="primary-button" onClick={() => runAction({ label: "Prepare supervisor briefing", meta: "Meeting", tone: "violet", command: "@supervisor-brief" })}>Generate one-page brief <b>✦</b></button></article>
-        <article className="mentor-commitments card"><div className="section-heading"><div><span className="label">COMMITMENT TRACKER</span><p>Commitments & feedback</p></div><span className="count-badge">2</span></div><div className="commitment-list"><div><span className="commit-status overdue">!</span><span><strong>Review the Methods draft</strong><small>Supervisor · due 8 Aug</small><em>3 days overdue</em></span><button onClick={() => runAction({ label: "Follow up on Methods feedback", meta: "Supervision", tone: "orange", command: "@supervisor-follow-up" })}>Follow up</button></div><div><span className="commit-status waiting">…</span><span><strong>Confirm the target journal</strong><small>Joint decision · review 14 Aug</small><em>Awaiting discussion</em></span><button onClick={() => runAction({ label: "Prepare target journal decision", meta: "Supervision", tone: "blue", command: "@journal-decision" })}>Prepare</button></div><div><span className="commit-status done">✓</span><span><strong>Approved exclusion of phases under 8s</strong><small>Meeting · 31 Jul</small><em>Saved as DEC-041</em></span><button onClick={() => runAction({ label: "View DEC-041", meta: "Decision memory", tone: "mint", command: "@open-decision" })}>View</button></div></div></article>
-        <article className="decision-recall card"><span className="label">DECISION MEMORY</span><blockquote>“Run the cross-match validation first; then decide whether it belongs in the main results or supplementary material.”</blockquote><p>Recorded at the 31 Jul meeting · linked to EXP-026 · review on 14 Aug</p><button onClick={() => runAction({ label: "Convert meeting note to research decision", meta: "Decision memory", tone: "mint", command: "@save-decision" })}>Convert to research decision →</button></article>
-      </section>}
-
-      {activeTab === "review" && <section className="reflection-grid">
-        <article className="daily-reflection card"><div className="section-heading"><div><span className="label">STRUCTURED DAILY REVIEW</span><p>PhD research review</p></div><span className="updated">Compiled from 7 sources</span></div><div className="reflection-summary"><span><strong>2</strong><small>Tasks completed</small></span><span><strong>47m</strong><small>Deep work</small></span><span><strong>1</strong><small>New decisions</small></span><span><strong>3↓</strong><small>Research debt</small></span></div><label><span>Core output, unfinished analysis, and tomorrow’s priority</span><textarea value={reflection} onChange={(event) => { setReflection(event.target.value); setReviewSaved(false); }} /></label><div className="reflection-actions"><button className="quiet-button" onClick={() => runAction({ label: "Synthesize daily research log", meta: "Reflection", tone: "mint", command: "@daily-review" })}>Refine with AI</button><button className="primary-button" onClick={() => setReviewSaved(true)}>{reviewSaved ? "Saved to Obsidian ✓" : "Save research review"}</button></div></article>
-        <article className="research-week card"><div className="section-heading"><div><span className="label">THIS WEEK</span><p>Research effort</p></div></div><div className="week-bars"><div><span>Analysis</span><i><b style={{ width: "82%" }} /></i><strong>6.4h</strong></div><div><span>Writing</span><i><b style={{ width: "61%" }} /></i><strong>4.8h</strong></div><div><span>Reading</span><i><b style={{ width: "39%" }} /></i><strong>3.1h</strong></div><div><span>Meetings</span><i><b style={{ width: "17%" }} /></i><strong>1.3h</strong></div></div><div className="week-insight"><span>◇</span><p><strong>Pacing note</strong>Analysis is ahead of plan this week, but Results writing has not kept pace.</p></div></article>
-        <article className="tomorrow-plan card"><span className="label">TOMORROW / RECOMMENDED</span><h3>Once the result is verified, write the statistical fact into Results immediately.</h3><p>This prevents scientific interpretation from drifting away from the statistical evidence.</p><button onClick={() => runAction({ label: "Plan tomorrow", meta: "Planning", tone: "blue", command: "@plan-tomorrow" })}>Add to tomorrow’s Must list →</button></article>
-      </section>}
-    </>
-  );
-}
-
-function ActionDrawer({ action, onClose, openConnections }: { action: Action; onClose: () => void; openConnections: () => void }) {
-  const [running, setRunning] = useState(false);
-  const [provider, setProvider] = useState<"deepseek" | "kimi">(() => {
-    if (typeof window === "undefined") return "deepseek";
-    return window.localStorage.getItem("workbuddy-ai-provider") === "kimi" ? "kimi" : "deepseek";
-  });
-  const [input, setInput] = useState(action.command.includes("evidence") ? "Team formations become less stable during defensive transitions." : action.command.includes("result") ? "Interpret the selected three-cluster solution from EXP-024." : "Focus on the active research question and current analysis.");
-  const [sources, setSources] = useState({ zotero: true, obsidian: true });
-  const [result, setResult] = useState<WorkflowResult | null>(null);
+type EditorState = { collection: CollectionKey; record?: RecordItem } | null;
+function RecordEditor({ editor, onClose, onSave, onDelete }: { editor: NonNullable<EditorState>; onClose: () => void; onSave: (collection: CollectionKey, record: Partial<RecordItem>) => Promise<void>; onDelete: (collection: CollectionKey, id: string) => Promise<void> }) {
+  const [form, setForm] = useState<Partial<RecordItem>>({ status: "Active", progress: 0, ...editor.record });
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-  const [savedPath, setSavedPath] = useState("");
-  const controllerRef = useRef<AbortController | null>(null);
-
-  useEffect(() => {
-    return () => controllerRef.current?.abort();
-  }, []);
-
-  const chooseProvider = (value: "deepseek" | "kimi") => {
-    setProvider(value);
-    window.localStorage.setItem("workbuddy-ai-provider", value);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const set = (key: keyof RecordItem, value: string | number | boolean) => setForm((current) => ({ ...current, [key]: value }));
+  const save = async () => {
+    if (!String(form.title || "").trim()) { setError("Title is required."); return; }
+    setSaving(true); setError("");
+    try { await onSave(editor.collection, { ...form, title: String(form.title).trim(), progress: clampProgress(form.progress) }); onClose(); }
+    catch (saveError) { setError(saveError instanceof Error ? saveError.message : "Could not save this record."); }
+    finally { setSaving(false); }
   };
-
-  const runWorkflow = async () => {
-    if (!input.trim()) return;
-    controllerRef.current?.abort();
-    const controller = new AbortController();
-    controllerRef.current = controller;
-    setRunning(true);
-    setError("");
-    setResult(null);
-    setSavedPath("");
-    try {
-      const response = await fetch(`${BRIDGE_URL}/ai/run`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ provider, input, command: action.command, sources, projectContext: "Study 02 · Formation Recognition · active research question RQ-02 · experiment EXP-024" }),
-        signal: controller.signal,
-      });
-      const body = await response.json() as WorkflowResult & { error?: string };
-      if (!response.ok) throw new Error(body.error || "The research workflow failed.");
-      setResult(body);
-    } catch (workflowError) {
-      if (controller.signal.aborted) return;
-      setError(workflowError instanceof TypeError ? "The local research bridge is offline. Open Connections to finish setup." : workflowError instanceof Error ? workflowError.message : "The workflow could not be completed.");
-    } finally {
-      if (!controller.signal.aborted) setRunning(false);
-    }
+  const remove = async () => {
+    if (!form.id) return;
+    setSaving(true); setError("");
+    try { await onDelete(editor.collection, form.id); onClose(); }
+    catch (deleteError) { setError(deleteError instanceof Error ? deleteError.message : "Could not delete this record."); setSaving(false); }
   };
-
-  const cancelWorkflow = () => {
-    controllerRef.current?.abort();
-    setRunning(false);
-  };
-
-  const saveResult = async () => {
-    if (!result) return;
-    setError("");
-    try {
-      const response = await fetch(`${BRIDGE_URL}/obsidian/note`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title: `${action.label} — ${new Date().toISOString().slice(0, 10)}`, content: `---\nsource: WorkBuddy\nworkflow: ${action.command}\nprovider: ${result.provider}\nmodel: ${result.model}\ncreated: ${new Date().toISOString()}\n---\n\n# ${action.label}\n\n${result.output}` }),
-      });
-      const body = await response.json() as { path?: string; error?: string };
-      if (!response.ok) throw new Error(body.error || "The note could not be saved.");
-      setSavedPath(body.path || "WorkBuddy");
-    } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : "The note could not be saved.");
-    }
-  };
-
-  return (
-    <div className="drawer-backdrop" onMouseDown={onClose}>
-      <aside className="action-drawer" onMouseDown={(event) => event.stopPropagation()} aria-label={`${action.label} workflow`}>
-        <div className="drawer-head"><button onClick={onClose}>×</button><span className="label">Structured AI workflow</span><span className={`action-mark ${action.tone}`}>✦</span></div>
-        <div className="drawer-title"><span>{action.command}</span><h2>{action.label}</h2><p>This workflow retrieves live Zotero and Obsidian context before asking the selected model.</p></div>
-        <div className="provider-switch" aria-label="AI provider"><button className={provider === "deepseek" ? "active" : ""} onClick={() => chooseProvider("deepseek")}><span>DS</span><b>DeepSeek</b><small>V4 Flash</small></button><button className={provider === "kimi" ? "active" : ""} onClick={() => chooseProvider("kimi")}><span>KM</span><b>Kimi</b><small>K3</small></button></div>
-        <div className="drawer-section"><div className="drawer-section-title"><span>01</span><strong>Task input</strong><b>Required</b></div><textarea value={input} onChange={(event) => setInput(event.target.value)} /></div>
-        <div className="drawer-section"><div className="drawer-section-title"><span>02</span><strong>Live research context</strong><b className="ready">On demand</b></div><div className="drawer-sources"><label><input type="checkbox" checked disabled /><span>Project + active research question</span><b>Attached</b></label><label><input type="checkbox" checked={sources.obsidian} onChange={(event) => setSources((value) => ({ ...value, obsidian: event.target.checked }))} /><span>Obsidian · Kbase</span><b>Local search</b></label><label><input type="checkbox" checked={sources.zotero} onChange={(event) => setSources((value) => ({ ...value, zotero: event.target.checked }))} /><span>Zotero literature</span><b>Local API</b></label><label><input type="checkbox" checked disabled /><span>Experiment + results</span><b>EXP-024</b></label></div></div>
-        <div className="drawer-section output-contract"><div className="drawer-section-title"><span>03</span><strong>Output contract</strong></div><p><i /> Separate evidence from inference</p><p><i /> Cite retrieved records as [Z1] and [O1]</p><p><i /> Flag missing information as [AUTHOR CHECK]</p></div>
-        {error && <div className="workflow-error"><span>!</span><p>{error}</p><button onClick={() => { onClose(); openConnections(); }}>Open Connections</button></div>}
-        {result && <section className="workflow-result"><div className="workflow-result-head"><span><b>{result.provider === "kimi" ? "Kimi" : "DeepSeek"}</b><small>{result.model} · {result.sources.zotero.length} papers · {result.sources.obsidian.length} notes</small></span><button onClick={saveResult}>{savedPath ? "Saved ✓" : "Save to Obsidian"}</button></div><pre>{result.output}</pre>{savedPath && <p>Saved to Kbase/{savedPath}</p>}</section>}
-        <div className="drawer-footer"><div><SourceDot tone={result ? "green" : "blue"} /><span><strong>{result ? "Evidence-linked output ready" : "Local-first research workflow"}</strong><small>{provider === "kimi" ? "Kimi K3" : "DeepSeek V4 Flash"} · keys stay on this Mac</small></span></div><button className="primary-button" disabled={running || !input.trim()} onClick={runWorkflow}>{running ? "Agent is working…" : result ? "Run again" : "Run workflow"} <b>{running ? "···" : "↑"}</b></button></div>
-        {running && <div className="running-state"><span className="running-orb">✦</span><div><strong>{provider === "kimi" ? "Kimi" : "DeepSeek"} is working</strong><p>Retrieving Zotero papers and Kbase notes first…</p></div><button onClick={cancelWorkflow}>Cancel</button></div>}
-      </aside>
+  const showProgress = editor.collection !== "reading-queue";
+  return <div className="drawer-backdrop" onMouseDown={onClose}><aside className="action-drawer record-editor" onMouseDown={(event) => event.stopPropagation()} aria-label={`Edit ${collectionLabels[editor.collection]}`}>
+    <div className="drawer-head"><button onClick={onClose}>×</button><span className="label">KBASE / {editor.collection.toUpperCase()}</span><span className="action-mark mint">✎</span></div>
+    <div className="drawer-title"><span>{form.id || "NEW RECORD"}</span><h2>{editor.record ? `Edit ${collectionLabels[editor.collection]}` : `New ${collectionLabels[editor.collection]}`}</h2><p>Saved as a readable Markdown record in Kbase. Manual values remain authoritative until you change them.</p></div>
+    <div className="record-form">
+      <label className="wide"><span>Title</span><input autoFocus value={form.title || ""} onChange={(event) => set("title", event.target.value)} /></label>
+      <label className="wide"><span>Description / notes</span><textarea value={form.description || ""} onChange={(event) => set("description", event.target.value)} /></label>
+      <label><span>Status</span><select value={form.status || "Active"} onChange={(event) => set("status", event.target.value)}><option>Active</option><option>Planned</option><option>In progress</option><option>Blocked</option><option>Resolved</option><option>Completed</option><option>Archived</option></select></label>
+      {showProgress && <label><span>Manual progress · {clampProgress(form.progress)}%</span><input type="range" min="0" max="100" value={clampProgress(form.progress)} onChange={(event) => set("progress", Number(event.target.value))} /></label>}
+      {editor.collection === "projects" && <><label><span>Phase</span><input value={form.phase || ""} onChange={(event) => set("phase", event.target.value)} placeholder="Literature, analysis, writing…" /></label><label><span>Keywords</span><input value={form.keywords || ""} onChange={(event) => set("keywords", event.target.value)} placeholder="Comma-separated retrieval terms" /></label><label className="checkbox-label"><input type="checkbox" checked={Boolean(form.active)} onChange={(event) => set("active", event.target.checked)} /><span>Active project</span></label></>}
+      {editor.collection === "research-questions" && <><label><span>Linked project ID</span><input value={form.linkedProject || ""} onChange={(event) => set("linkedProject", event.target.value)} /></label><label><span>Keywords</span><input value={form.keywords || ""} onChange={(event) => set("keywords", event.target.value)} /></label></>}
+      {editor.collection === "manuscripts" && <><label><span>Target journal</span><input value={form.journal || ""} onChange={(event) => set("journal", event.target.value)} /></label><label><span>Current words</span><input inputMode="numeric" value={form.wordCount || ""} onChange={(event) => set("wordCount", Number(event.target.value.replace(/\D/g, "")))} /></label><label><span>Target words</span><input inputMode="numeric" value={form.targetWords || ""} onChange={(event) => set("targetWords", Number(event.target.value.replace(/\D/g, "")))} /></label><label><span>Evidence coverage · {clampProgress(form.evidenceCoverage)}%</span><input type="range" min="0" max="100" value={clampProgress(form.evidenceCoverage)} onChange={(event) => set("evidenceCoverage", Number(event.target.value))} /></label></>}
+      {editor.collection === "research-debt" && <><label><span>Severity</span><select value={form.severity || "Major"} onChange={(event) => set("severity", event.target.value)}><option>Critical</option><option>Major</option><option>Minor</option></select></label><label><span>Type</span><select value={form.type || "Evidence"} onChange={(event) => set("type", event.target.value)}><option>Evidence</option><option>Methods</option><option>Statistics</option><option>Writing</option><option>Reproducibility</option></select></label><label><span>Linked object</span><input value={form.linkedObject || ""} onChange={(event) => set("linkedObject", event.target.value)} /></label><label><span>Due date</span><input type="date" value={form.dueDate || ""} onChange={(event) => set("dueDate", event.target.value)} /></label></>}
+      {editor.collection === "experiments" && <><label><span>Method</span><input value={form.method || ""} onChange={(event) => set("method", event.target.value)} /></label><label><span>Linked project ID</span><input value={form.linkedProject || ""} onChange={(event) => set("linkedProject", event.target.value)} /></label></>}
+      {editor.collection === "reviews" && <><label><span>Severity</span><select value={form.severity || "Major"} onChange={(event) => set("severity", event.target.value)}><option>Major</option><option>Minor</option><option>Suggestion</option></select></label><label><span>Linked object</span><input value={form.linkedObject || ""} onChange={(event) => set("linkedObject", event.target.value)} /></label></>}
+      {editor.collection === "operations" && <><label><span>Type</span><select value={form.type || "Submission"} onChange={(event) => set("type", event.target.value)}><option>Submission</option><option>Supervision</option><option>Commitment</option><option>Meeting</option><option>Deadline</option></select></label><label><span>Due date</span><input type="date" value={form.dueDate || ""} onChange={(event) => set("dueDate", event.target.value)} /></label></>}
     </div>
-  );
+    {error && <div className="workflow-error"><span>!</span><p>{error}</p><button onClick={() => setError("")}>Dismiss</button></div>}
+    <div className="record-editor-footer">{form.id ? confirmDelete ? <span className="delete-confirm"><button onClick={remove}>Delete permanently</button><button onClick={() => setConfirmDelete(false)}>Keep</button></span> : <button className="delete-record" onClick={() => setConfirmDelete(true)}>Delete</button> : <span />}<span><button className="quiet-button" onClick={onClose}>Cancel</button><button className="primary-button" disabled={saving} onClick={save}>{saving ? "Saving…" : "Save to Kbase"}</button></span></div>
+  </aside></div>;
 }
 
-function ConnectionsDrawer({ onClose, onStatus }: { onClose: () => void; onStatus: (online: boolean) => void }) {
-  const [status, setStatus] = useState<BridgeStatus | null>(null);
-  const [checking, setChecking] = useState(true);
-  const [message, setMessage] = useState("");
-
-  const refresh = async () => {
-    setChecking(true);
-    setMessage("");
-    try {
-      const response = await fetch(`${BRIDGE_URL}/health`, { signal: AbortSignal.timeout(5000) });
-      if (!response.ok) throw new Error("Bridge unavailable");
-      const body = await response.json() as BridgeStatus;
-      setStatus(body);
-      onStatus(true);
-    } catch {
-      setStatus(null);
-      onStatus(false);
-    } finally {
-      setChecking(false);
-    }
-  };
-
-  useEffect(() => {
-    const timer = window.setTimeout(() => void refresh(), 0);
-    return () => window.clearTimeout(timer);
-    // The drawer performs one connection check on mount; manual checks use the button.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const copyPath = async () => {
-    await navigator.clipboard.writeText("/Users/biomech/Documents/workbench/.env.local");
-    setMessage("Key file path copied");
-  };
-
-  const connection = (connected?: boolean) => connected ? <b className="connection-state connected">Connected</b> : <b className="connection-state missing">Setup needed</b>;
-
-  return <div className="drawer-backdrop" onMouseDown={onClose}><aside className="action-drawer connections-drawer" onMouseDown={(event) => event.stopPropagation()} aria-label="Research system connections"><div className="drawer-head"><button onClick={onClose}>×</button><span className="label">Connections</span><span className="action-mark mint">⌁</span></div><div className="drawer-title"><span>LOCAL RESEARCH BRIDGE</span><h2>Real tools, private context.</h2><p>Keys, Zotero records, Calendar events, and Kbase notes remain on this Mac. The deployed workbench receives only the output needed for your current session.</p></div><div className={`bridge-banner ${status ? "online" : "offline"}`}><span>{checking ? "···" : status ? "✓" : "!"}</span><div><strong>{checking ? "Checking local bridge" : status ? "Research bridge is online" : "Research bridge is offline"}</strong><small>{status ? "Listening securely on this Mac" : "The background connector needs to be started"}</small></div><button onClick={refresh}>{checking ? "Checking…" : "Test again"}</button></div><div className="connection-list"><article><span className="connection-logo deepseek">DS</span><div><strong>DeepSeek API</strong><small>{status?.deepseek.model || "deepseek-v4-flash"}</small></div>{connection(status?.deepseek.connected)}</article><article><span className="connection-logo kimi">KM</span><div><strong>Kimi API</strong><small>{status?.kimi.model || "kimi-k3"}</small></div>{connection(status?.kimi.connected)}</article><article><span className="connection-logo calendar">C</span><div><strong>macOS Calendar</strong><small>{status?.calendar.connected ? "Today view · read + write" : "Calendar permission required"}</small></div>{connection(status?.calendar.connected)}</article><article><span className="connection-logo zotero">Z</span><div><strong>Zotero Desktop</strong><small>{status?.zotero.connected ? `Local API · Zotero ${status.zotero.version || "ready"}` : "Open Zotero to connect"}</small></div>{connection(status?.zotero.connected)}</article><article><span className="connection-logo obsidian">O</span><div><strong>Obsidian · Kbase</strong><small>{status?.obsidian.connected ? "Read + write access" : "iCloud Vault unavailable"}</small></div>{connection(status?.obsidian.connected)}</article></div><section className="key-setup"><span className="label">LOCAL API KEYS</span><p>Both providers are checked through the bridge. To rotate a key, replace only the value after the equals sign.</p><code>/Users/biomech/Documents/workbench/.env.local</code><div><span><b>DEEPSEEK_API_KEY=</b><small>DeepSeek V4 Flash</small></span><span><b>KIMI_API_KEY=</b><small>Kimi K3 · Moonshot China endpoint</small></span></div><button onClick={copyPath}>{message || "Copy key file path"}</button></section><div className="privacy-note"><span>⌾</span><p><strong>Local privacy boundary</strong>Secrets are ignored by Git and never included in the deployed site. The bridge reloads this file for every request, so saving the file is enough.</p></div></aside></div>;
+function CalendarPanel() {
+  const [events, setEvents] = useState<CalendarEvent[]>([]); const [calendars, setCalendars] = useState<string[]>([]);
+  const [loading, setLoading] = useState(true); const [error, setError] = useState(""); const [now, setNow] = useState(() => new Date());
+  const [edit, setEdit] = useState<CalendarEvent | "new" | null>(null); const [draft, setDraft] = useState({ title: "", time: "09:00", minutes: "60", calendar: "" }); const [deleteId, setDeleteId] = useState("");
+  const refresh = async () => { setLoading(true); setError(""); try { const response = await fetch(`${BRIDGE_URL}/calendar/today?date=${localDateKey(new Date())}`, { signal: AbortSignal.timeout(20000) }); const body = await response.json(); if (!response.ok) throw new Error(body.error || "Calendar could not be loaded."); setEvents(body.events || []); setCalendars(body.calendars || []); } catch (e) { setError(e instanceof Error ? e.message : "Calendar could not be loaded."); } finally { setLoading(false); } };
+  useEffect(() => { const start = window.setTimeout(() => void refresh(), 0); const timer = window.setInterval(() => void refresh(), 60000); const clock = window.setInterval(() => setNow(new Date()), 1000); return () => { window.clearTimeout(start); window.clearInterval(timer); window.clearInterval(clock); }; }, []);
+  const openEditor = (event?: CalendarEvent) => { setEdit(event || "new"); setDraft(event ? { title: event.title, time: timeLabel(event.start), minutes: String(durationMinutes(event.start, event.end)), calendar: event.calendar } : { title: "", time: timeLabel(new Date().toISOString()), minutes: "60", calendar: calendars[0] || "" }); };
+  const save = async () => { if (!draft.title.trim()) return; setLoading(true); try { const start = new Date(`${localDateKey(now)}T${draft.time}:00`); const minutes = Math.max(1, Number(draft.minutes) || 60); const response = await fetch(`${BRIDGE_URL}/calendar/event`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: typeof edit === "object" ? edit.id : undefined, title: draft.title.trim(), start: start.toISOString(), end: new Date(start.getTime() + minutes * 60000).toISOString(), calendar: draft.calendar, notes: "Created or updated by WorkBuddy" }) }); const body = await response.json(); if (!response.ok) throw new Error(body.error); setEdit(null); await refresh(); } catch (e) { setError(e instanceof Error ? e.message : "Calendar event could not be saved."); setLoading(false); } };
+  const remove = async (id: string) => { setLoading(true); try { const response = await fetch(`${BRIDGE_URL}/calendar/event`, { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) }); const body = await response.json(); if (!response.ok) throw new Error(body.error); setDeleteId(""); await refresh(); } catch (e) { setError(e instanceof Error ? e.message : "Calendar event could not be deleted."); setLoading(false); } };
+  return <article className="today-schedule card real-panel"><div className="section-heading"><div><span className="label">MACOS CALENDAR / LIVE</span><p>Today’s schedule</p></div><button className="mini-add" onClick={() => openEditor()}>＋ Event</button></div>
+    {edit && <div className="time-editor"><label><span>Time</span><input type="time" value={draft.time} onChange={(e) => setDraft({ ...draft, time: e.target.value })} /></label><label className="time-title"><span>Event</span><input autoFocus value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })} /></label><label><span>Calendar</span><select value={draft.calendar} onChange={(e) => setDraft({ ...draft, calendar: e.target.value })}>{calendars.map((name) => <option key={name}>{name}</option>)}</select></label><label><span>Minutes</span><input value={draft.minutes} onChange={(e) => setDraft({ ...draft, minutes: e.target.value.replace(/\D/g, "") })} /></label><div><button className="save-edit" onClick={save}>Save to Calendar</button><button onClick={() => setEdit(null)}>Cancel</button></div></div>}
+    {error && <div className="calendar-error"><span>!</span><p>{error}</p><button onClick={refresh}>Retry</button></div>}
+    <div className="schedule-list">{loading && !events.length ? <div className="schedule-loading"><span />Reading Calendar…</div> : !events.length && !error ? <EmptyState title="No events today" detail="Add an event here or in macOS Calendar." /> : events.map((event, index) => { const active = !event.allDay && now >= new Date(event.start) && now < new Date(event.end); return <div className={active ? "now" : ""} key={event.id}><time>{event.allDay ? "ALL DAY" : timeLabel(event.start)}</time><i className={["mint", "blue", "violet", "neutral"][index % 4]} style={event.color ? { background: event.color } : undefined} /><span><strong>{event.title}</strong><small>{event.calendar} · {event.allDay ? "All day" : `${durationMinutes(event.start, event.end)} min`}</small></span>{deleteId === event.id ? <span className="inline-confirm schedule-confirm"><button className="danger" onClick={() => remove(event.id)}>Delete</button><button onClick={() => setDeleteId("")}>Keep</button></span> : <span className="schedule-actions">{active && <b>NOW</b>}<button onClick={() => openEditor(event)}>✎</button><button onClick={() => setDeleteId(event.id)}>×</button></span>}</div>; })}</div>
+    <button className="wide-button" disabled={loading} onClick={refresh}>{loading ? "Syncing…" : "Refresh Calendar"}<span>↻</span></button>
+  </article>;
 }
 
-function ContextDrawer({ onClose }: { onClose: () => void }) {
-  return <div className="drawer-backdrop" onMouseDown={onClose}><aside className="action-drawer context-drawer" onMouseDown={(e) => e.stopPropagation()}><div className="drawer-head"><button onClick={onClose}>×</button><span className="label">Context builder</span><span className="action-mark mint">◇</span></div><div className="drawer-title"><span>ACTIVE CONTEXT · RQ-02</span><h2>What WorkBuddy knows right now</h2><p>Assembled for relevance, with source boundaries and verification state preserved.</p></div><div className="context-meter"><div><strong>94</strong><span>/100</span></div><p><b>Excellent context coverage</b><span>One operational definition needs confirmation.</span></p></div><div className="context-groups"><section><div><span>PROJECT FRAME</span><b>3 objects</b></div><p><i className="checked">✓</i><span><strong>Study 02 · Formation Recognition</strong><small>Project · active</small></span></p><p><i className="checked">✓</i><span><strong>RQ-02 · Cross-context reliability</strong><small>Research question</small></span></p></section><section><div><span>KNOWLEDGE</span><b>6 notes</b></div><p><i className="checked">✓</i><span><strong>Formation · operational definition</strong><small>Obsidian · updated 4d ago</small></span></p><p><i className="warning">!</i><span><strong>Possession phase threshold</strong><small>Obsidian · author check required</small></span></p></section><section><div><span>EVIDENCE + COMPUTATION</span><b>9 sources</b></div><p><i className="checked">✓</i><span><strong>5 directly relevant papers</strong><small>Zotero · metadata verified</small></span></p><p><i className="checked">✓</i><span><strong>EXP-024 + TRK-WF-v2.4</strong><small>GitHub · a83f2c1</small></span></p></section></div><div className="drawer-footer"><span className="small-note">Last assembled 18 min ago</span><button className="primary-button" onClick={onClose}>Use this context <b>→</b></button></div></aside></div>;
+function FocusPanel() {
+  const [now, setNow] = useState(() => new Date()); const [elapsed, setElapsed] = useState(0); const [startedAt, setStartedAt] = useState<number | null>(null); const [target, setTarget] = useState(""); const [ready, setReady] = useState(false);
+  useEffect(() => { const hydrate = window.setTimeout(() => { try { const saved = JSON.parse(window.localStorage.getItem("workbuddy-focus-en-v1") || "{}"); setElapsed(saved.elapsed || 0); setStartedAt(saved.startedAt || null); setTarget(saved.target || ""); } catch { /* new timer */ } setReady(true); }, 0); const clock = window.setInterval(() => setNow(new Date()), 1000); return () => { window.clearTimeout(hydrate); window.clearInterval(clock); }; }, []);
+  useEffect(() => { if (ready) window.localStorage.setItem("workbuddy-focus-en-v1", JSON.stringify({ elapsed, startedAt, target })); }, [elapsed, ready, startedAt, target]);
+  const seconds = elapsed + (startedAt ? Math.max(0, Math.floor((now.getTime() - startedAt) / 1000)) : 0); const running = startedAt !== null;
+  const label = `${String(Math.floor(seconds / 3600)).padStart(2, "0")}:${String(Math.floor((seconds % 3600) / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
+  const toggle = () => { if (startedAt) { setElapsed(seconds); setStartedAt(null); } else setStartedAt(Date.now()); };
+  return <article className="focus-session card"><div className="focus-top"><span className="label">FOCUS SESSION</span><span className={running ? "live" : "paused"}><i />{running ? "Recording" : "Paused"}</span></div><label className="focus-object"><span>FOCUS TARGET</span><input value={target} onChange={(e) => setTarget(e.target.value)} placeholder="What are you focusing on?" /></label><h2>{label}</h2><p>{running ? `Started at ${timeLabel(new Date(startedAt || now.getTime()).toISOString())}` : seconds ? "Paused — saved on this device" : "Ready for a new focus session"}</p><div className="focus-wave">{[4,8,13,21,12,17,25,10,18,8,5].map((height, index) => <i key={index} style={{ height }} />)}</div><div className="focus-actions"><button aria-pressed={running} onClick={toggle}>{running ? "Pause session" : seconds ? "Resume session" : "Start session"}<span>{running ? "Ⅱ" : "▶"}</span></button><button disabled={!seconds} onClick={() => { setElapsed(0); setStartedAt(null); }}>Reset</button></div></article>;
+}
+
+function TaskPanel() {
+  const [tasks, setTasks] = useState<{ id: number; title: string; done: boolean }[]>([]); const [newTask, setNewTask] = useState(""); const [ready, setReady] = useState(false);
+  useEffect(() => { const timer = window.setTimeout(() => { try { setTasks(JSON.parse(window.localStorage.getItem("workbuddy-daily-tasks-en-v3") || "[]")); } catch { /* empty */ } setReady(true); }, 0); return () => window.clearTimeout(timer); }, []);
+  useEffect(() => { if (ready) window.localStorage.setItem("workbuddy-daily-tasks-en-v3", JSON.stringify(tasks)); }, [ready, tasks]);
+  const add = () => { if (newTask.trim()) { setTasks((items) => [...items, { id: Date.now(), title: newTask.trim(), done: false }]); setNewTask(""); } };
+  return <article className="today-tasks card real-panel"><div className="section-heading"><div><span className="label">TODAY / THIS DEVICE</span><p>Research tasks</p></div><span className="completion-count"><b>{tasks.filter((task) => task.done).length}</b> / {tasks.length}</span></div><div className="task-capture"><input value={newTask} onChange={(e) => setNewTask(e.target.value)} onKeyDown={(e) => e.key === "Enter" && add()} placeholder="Add a real research task…" /><button onClick={add}>+</button></div><div className="daily-task-list">{!tasks.length ? <EmptyState title="No tasks yet" detail="Add the first task above. Tasks are stored on this device." /> : tasks.map((task) => <div className={task.done ? "done" : ""} key={task.id}><button className="task-check" onClick={() => setTasks((items) => items.map((item) => item.id === task.id ? { ...item, done: !item.done } : item))}>{task.done ? "✓" : ""}</button><input className="task-inline-input" value={task.title} onChange={(e) => setTasks((items) => items.map((item) => item.id === task.id ? { ...item, title: e.target.value } : item))} /><span className="task-actions"><button onClick={() => setTasks((items) => items.filter((item) => item.id !== task.id))}>×</button></span></div>)}</div></article>;
+}
+
+function LiteraturePanel({ state, saveRecord, compact = false }: { state: WorkbenchState; saveRecord: (collection: CollectionKey, record: Partial<RecordItem>) => Promise<void>; compact?: boolean }) {
+  const activeProject = state.projects.find((item) => item.active) || state.projects[0]; const activeRQ = state["research-questions"].find((item) => item.status === "Active") || state["research-questions"][0];
+  const seed = [activeProject?.keywords, activeProject?.title, activeRQ?.keywords, activeRQ?.title].filter(Boolean).join(" ").slice(0, 240);
+  const [query, setQuery] = useState(""); const [items, setItems] = useState<ZoteroItem[]>([]); const [loading, setLoading] = useState(true); const [error, setError] = useState("");
+  const search = useCallback(async (value: string) => { setLoading(true); setError(""); try { const response = await fetch(`${BRIDGE_URL}/zotero/search?q=${encodeURIComponent(value.trim())}`); const body = await response.json(); if (!response.ok) throw new Error(body.error || "Zotero search failed."); setItems(body.items || []); } catch (e) { setError(e instanceof Error ? e.message : "Zotero search failed."); } finally { setLoading(false); } }, []);
+  useEffect(() => { const timer = window.setTimeout(() => { const initial = seed || ""; setQuery(initial); void search(initial); }, 0); return () => window.clearTimeout(timer); }, [search, seed]);
+  const queued = new Set(state["reading-queue"].map((item) => item.zoteroKey));
+  return <article className={`${compact ? "literature-radar" : "literature-card"} card real-panel`}><div className="section-heading"><div><span className="label">ZOTERO / LIVE LIBRARY</span><p>{query ? "Recommendations for your current terms" : "Recently added literature"}</p></div><span className="source-chip"><SourceDot />Zotero</span></div><div className="literature-search"><input value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => e.key === "Enter" && search(query)} placeholder="Search your Zotero library…" /><button onClick={() => search(query)}>Search</button></div>{error && <div className="calendar-error"><span>!</span><p>{error}</p><button onClick={() => search(query)}>Retry</button></div>}{loading ? <div className="schedule-loading"><span />Searching Zotero…</div> : !items.length ? <EmptyState title="No matching Zotero records" detail="Change the search terms or add literature to Zotero." /> : <div className="real-paper-list">{items.slice(0, compact ? 5 : 12).map((paper) => <article key={paper.key}><span className="zotero-year">{paper.year || "—"}</span><div><strong>{paper.title.replace(/<[^>]+>/g, "")}</strong><small>{paper.creators.join(", ") || "No creators recorded"}</small><em>{paper.doi ? `DOI ${paper.doi}` : `Zotero item ${paper.key}`}</em></div><span className="paper-buttons"><button onClick={() => { window.location.href = `zotero://select/library/items/${paper.key}`; }}>Open</button><button className={queued.has(paper.key) ? "queued" : ""} disabled={queued.has(paper.key)} onClick={() => saveRecord("reading-queue", { id: `zotero-${paper.key}`, title: paper.title.replace(/<[^>]+>/g, ""), zoteroKey: paper.key, creators: paper.creators, year: paper.year, doi: paper.doi, status: "Queued" })}>{queued.has(paper.key) ? "Queued" : "+ Queue"}</button></span></article>)}</div>}</article>;
+}
+
+type DataProps = { state: WorkbenchState; openEditor: (collection: CollectionKey, record?: RecordItem) => void; saveRecord: (collection: CollectionKey, record: Partial<RecordItem>) => Promise<void>; runAction: (action: Action) => void };
+function Dashboard({ state, openEditor, saveRecord, runAction, openContext }: DataProps & { openContext: () => void }) {
+  const [now, setNow] = useState(() => new Date()); useEffect(() => { const timer = window.setInterval(() => setNow(new Date()), 1000); return () => window.clearInterval(timer); }, []);
+  const project = state.projects.find((item) => item.active) || state.projects[0]; const manuscript = state.manuscripts[0]; const debts = state["research-debt"].filter((item) => !["Resolved", "Completed", "Archived"].includes(item.status || ""));
+  const date = new Intl.DateTimeFormat("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }).format(now);
+  return <><section className="daily-intro"><div><p className="eyebrow" suppressHydrationWarning><span className="live-time-dot" />{date}</p><h1>Today’s Research</h1><p>Live Calendar, real Zotero literature, editable Kbase records, and device-local focus data.</p></div><div className="daily-intro-actions"><button className="quiet-button" onClick={openContext}>◇ View real context</button><button className="primary-button" onClick={() => runAction(quickActions[4])}>Plan today with AI <b>✦</b></button></div></section>
+    <section className="daily-command-grid"><TaskPanel /><CalendarPanel /><FocusPanel /></section>
+    <section className="real-summary-grid"><article className="card real-summary"><div className="section-heading"><div><span className="label">ACTIVE PROJECT</span><p>Research anchor</p></div>{project && <button className="quiet-button" onClick={() => openEditor("projects", project)}>Edit</button>}</div>{project ? <><h2>{project.title}</h2><p>{project.description || "No project description yet."}</p><div className="manual-progress"><span>Manual progress</span><b>{clampProgress(project.progress)}%</b><i><em style={{ width: `${clampProgress(project.progress)}%` }} /></i></div></> : <EmptyState title="No active project" detail="Create a project to define the dashboard context." action="Create project" onAction={() => openEditor("projects")} />}</article>
+      <article className="card real-summary"><div className="section-heading"><div><span className="label">MANUSCRIPT</span><p>Writing progress</p></div>{manuscript && <button className="quiet-button" onClick={() => openEditor("manuscripts", manuscript)}>Edit</button>}</div>{manuscript ? <><h2>{manuscript.title}</h2><p>{manuscript.journal || "No target journal set"} · {(manuscript.wordCount || 0).toLocaleString()} / {(manuscript.targetWords || 0).toLocaleString()} words</p><div className="manual-progress"><span>Manual progress</span><b>{clampProgress(manuscript.progress)}%</b><i><em style={{ width: `${clampProgress(manuscript.progress)}%` }} /></i></div></> : <EmptyState title="No manuscript record" detail="Add one when you are ready to track a paper." action="Add manuscript" onAction={() => openEditor("manuscripts")} />}</article></section>
+    <section className="daily-lower-grid"><LiteraturePanel state={state} saveRecord={saveRecord} compact /><article className="research-debt card real-panel"><div className="section-heading"><div><span className="label">RESEARCH DEBT / KBASE</span><p>Open items to clear</p></div><button className="mini-add" onClick={() => openEditor("research-debt")}>＋ Debt</button></div>{!debts.length ? <EmptyState title="No open research debt" detail="Add evidence, methods, statistics, writing, or reproducibility debt as it appears." /> : <div className="real-record-list">{debts.slice(0, 6).map((item) => <button key={item.id} onClick={() => openEditor("research-debt", item)}><span className={`severity-mark ${(item.severity || "minor").toLowerCase()}`}>!</span><span><strong>{item.title}</strong><small>{item.type || "Unclassified"} · {item.linkedObject || "No link"}</small></span><b>{item.severity || "Minor"}</b></button>)}</div>}</article></section>
+  </>;
+}
+
+function ResearchMap({ state, openEditor, saveRecord }: DataProps) {
+  const rqs = state["research-questions"]; const debts = state["research-debt"];
+  return <><section className="page-intro compact"><div><p className="eyebrow">KBASE / EDITABLE</p><h1>Research <em>map.</em></h1><p>Questions and research debt are real Markdown records in your vault.</p></div><button className="primary-button" onClick={() => openEditor("research-questions")}>New research question <b>+</b></button></section><section className="record-board">{!rqs.length ? <EmptyState title="No research questions" detail="Create the first question; link it to a project and add retrieval keywords." action="Create RQ" onAction={() => openEditor("research-questions")} /> : rqs.map((item) => <article className="record-card card" key={item.id}><div><span className="object-id">{item.id}</span><MetaPill tone={item.status === "Active" ? "lime" : "neutral"}>{item.status || "Unspecified"}</MetaPill></div><h2>{item.title}</h2><p>{item.description || "No rationale or definition yet."}</p><div className="record-meta"><span>Project <b>{item.linkedProject || "Unlinked"}</b></span><span>Keywords <b>{item.keywords || "None"}</b></span></div><div className="manual-progress"><span>Manual progress</span><b>{clampProgress(item.progress)}%</b><i><em style={{ width: `${clampProgress(item.progress)}%` }} /></i></div><button onClick={() => openEditor("research-questions", item)}>Edit question →</button></article>)}</section><section className="editable-section card"><div className="section-heading"><div><span className="label">RESEARCH DEBT REGISTER</span><p>{debts.filter((item) => item.status !== "Resolved").length} open · {debts.filter((item) => item.status === "Resolved").length} resolved</p></div><button className="primary-button small" onClick={() => openEditor("research-debt")}>Add debt +</button></div>{!debts.length ? <EmptyState title="Debt register is empty" detail="Record a gap instead of relying on an invented dashboard warning." /> : <div className="debt-table">{debts.map((item) => <button key={item.id} onClick={() => openEditor("research-debt", item)}><span className={`severity-mark ${(item.severity || "minor").toLowerCase()}`}>!</span><span><strong>{item.title}</strong><small>{item.description || "No detail"}</small></span><span>{item.type || "—"}</span><span>{item.linkedObject || "—"}</span><MetaPill tone={item.status === "Resolved" ? "lime" : item.severity === "Critical" ? "orange" : "neutral"}>{item.status || "Open"}</MetaPill></button>)}</div>}</section><LiteraturePanel state={state} saveRecord={saveRecord} /></>;
+}
+
+function RecordModule({ collection, title, eyebrow, description, state, openEditor }: { collection: CollectionKey; title: React.ReactNode; eyebrow: string; description: string; state: WorkbenchState; openEditor: (collection: CollectionKey, record?: RecordItem) => void }) {
+  const records = state[collection]; return <><section className="page-intro compact"><div><p className="eyebrow">{eyebrow}</p><h1>{title}</h1><p>{description}</p></div><button className="primary-button" onClick={() => openEditor(collection)}>New {collectionLabels[collection]} <b>+</b></button></section><section className="record-board">{!records.length ? <EmptyState title={`No ${collectionLabels[collection].toLowerCase()} records`} detail="No demo records are shown. Add the first real record when it exists." action={`Add ${collectionLabels[collection]}`} onAction={() => openEditor(collection)} /> : records.map((item) => <article className="record-card card" key={item.id}><div><span className="object-id">{item.id}</span><MetaPill tone={item.status === "Completed" || item.status === "Resolved" ? "lime" : item.status === "Blocked" ? "orange" : "blue"}>{item.status || "Unspecified"}</MetaPill></div><h2>{item.title}</h2><p>{item.description || "No notes yet."}</p><div className="record-meta">{item.phase && <span>Phase <b>{item.phase}</b></span>}{item.method && <span>Method <b>{item.method}</b></span>}{item.journal && <span>Journal <b>{item.journal}</b></span>}{item.type && <span>Type <b>{item.type}</b></span>}{item.dueDate && <span>Due <b>{item.dueDate}</b></span>}</div><div className="manual-progress"><span>Manual progress</span><b>{clampProgress(item.progress)}%</b><i><em style={{ width: `${clampProgress(item.progress)}%` }} /></i></div><button onClick={() => openEditor(collection, item)}>Edit record →</button></article>)}</section></>;
+}
+
+function ManuscriptModule({ state, openEditor }: Pick<DataProps, "state" | "openEditor">) {
+  const records = state.manuscripts; return <><section className="page-intro compact"><div><p className="eyebrow">KBASE / MANUAL PROGRESS</p><h1>Manuscript <em>workspace.</em></h1><p>Track only the manuscripts and progress values you enter.</p></div><button className="primary-button" onClick={() => openEditor("manuscripts")}>New manuscript <b>+</b></button></section>{!records.length ? <EmptyState title="No manuscripts" detail="The previous demo manuscript has been removed." action="Add manuscript" onAction={() => openEditor("manuscripts")} /> : <section className="manuscript-records">{records.map((item) => <article className="manuscript-overview card" key={item.id}><div className="manuscript-meta"><span className="label">{item.id}</span><MetaPill tone="violet">{item.status || "Unspecified"}</MetaPill></div><div className="manuscript-main"><div><h2>{item.title}</h2><p>{item.journal || "No target journal"} · {(item.wordCount || 0).toLocaleString()} / {(item.targetWords || 0).toLocaleString()} words</p></div><ProgressRing value={item.progress || 0} /></div><p className="record-description">{item.description || "No manuscript notes yet."}</p><div className="coverage-row"><span>Manual progress <b>{clampProgress(item.progress)}%</b></span><span>Evidence coverage <b>{clampProgress(item.evidenceCoverage)}%</b></span></div><button className="wide-button" onClick={() => openEditor("manuscripts", item)}>Edit manuscript <span>→</span></button></article>)}</section>}</>;
+}
+
+function AIWorkspace({ state, runAction }: Pick<DataProps, "state" | "runAction">) {
+  const [task, setTask] = useState(""); const context = recordContext(state);
+  return <><section className="page-intro compact"><div><p className="eyebrow">DEEPSEEK + KIMI</p><h1>AI <em>workspace.</em></h1><p>AI uses the real project/RQ context and retrieves Zotero and Kbase evidence on demand.</p></div><MetaPill tone="lime">Local bridge</MetaPill></section><section className="workspace-grid"><article className="workspace-composer card"><div className="composer-top"><span className="spark">✦</span><div><span className="label">NEW RESEARCH TASK</span><h2>What do you want to investigate?</h2></div></div><div className="composer-box"><textarea value={task} onChange={(e) => setTask(e.target.value)} placeholder="Describe the real research task…" /><div><span>{context ? "Kbase context attached" : "No project context yet"}</span><button disabled={!task.trim()} onClick={() => runAction({ label: task.trim(), meta: "Research task", tone: "mint", command: "@research-task" })}>Build context & run <b>↑</b></button></div></div></article><article className="agent-panel card"><div className="section-heading"><div><span className="label">WORKFLOWS</span><p>Choose a structured task</p></div></div><div className="action-grid">{quickActions.slice(0,4).map((action) => <button key={action.command} onClick={() => runAction(action)}><span className={`action-mark ${action.tone}`}>✦</span><span><strong>{action.label}</strong><small>{action.meta}</small></span></button>)}</div></article></section></>;
+}
+
+function ContextDrawer({ state, status, onClose }: { state: WorkbenchState; status: BridgeStatus | null; onClose: () => void }) {
+  const project = state.projects.find((item) => item.active) || state.projects[0]; const rq = state["research-questions"].find((item) => item.status === "Active") || state["research-questions"][0];
+  return <div className="drawer-backdrop" onMouseDown={onClose}><aside className="action-drawer context-drawer" onMouseDown={(e) => e.stopPropagation()}><div className="drawer-head"><button onClick={onClose}>×</button><span className="label">REAL CONTEXT</span><span className="action-mark mint">◇</span></div><div className="drawer-title"><span>KBASE + ZOTERO</span><h2>What WorkBuddy can use now</h2><p>No completeness score is invented. These are the actual connected sources and current records.</p></div><div className="context-groups"><section><div><span>PROJECT FRAME</span><b>{state.projects.length + state["research-questions"].length} records</b></div>{project ? <p><i className="checked">✓</i><span><strong>{project.title}</strong><small>{project.id} · {project.active ? "active" : "first available"}</small></span></p> : <p><i className="warning">!</i><span><strong>No project</strong><small>Create one in Projects</small></span></p>}{rq ? <p><i className="checked">✓</i><span><strong>{rq.title}</strong><small>{rq.id}</small></span></p> : <p><i className="warning">!</i><span><strong>No research question</strong><small>Create one in Research Map</small></span></p>}</section><section><div><span>CONNECTED SOURCES</span><b>Live status</b></div><p><i className={status?.zotero.connected ? "checked" : "warning"}>{status?.zotero.connected ? "✓" : "!"}</i><span><strong>Zotero</strong><small>{status?.zotero.connected ? `Desktop ${status.zotero.version}` : "Offline"}</small></span></p><p><i className={status?.obsidian.connected ? "checked" : "warning"}>{status?.obsidian.connected ? "✓" : "!"}</i><span><strong>Obsidian · {status?.obsidian.vault || "Kbase"}</strong><small>{status?.obsidian.connected ? `${Object.values(state).flat().length} WorkBuddy records` : "Offline"}</small></span></p></section></div><div className="drawer-footer"><span className="small-note">Context is assembled at workflow run time</span><button className="primary-button" onClick={onClose}>Done</button></div></aside></div>;
+}
+
+function ActionDrawer({ action, state, onClose, openConnections }: { action: Action; state: WorkbenchState; onClose: () => void; openConnections: () => void }) {
+  const [running, setRunning] = useState(false); const [provider, setProvider] = useState<"deepseek" | "kimi">(() => typeof window !== "undefined" && window.localStorage.getItem("workbuddy-ai-provider") === "kimi" ? "kimi" : "deepseek");
+  const [input, setInput] = useState(action.label); const [sources, setSources] = useState({ zotero: true, obsidian: true }); const [result, setResult] = useState<WorkflowResult | null>(null); const [error, setError] = useState(""); const [savedPath, setSavedPath] = useState(""); const controller = useRef<AbortController | null>(null);
+  useEffect(() => () => controller.current?.abort(), []);
+  const run = async () => { if (!input.trim()) return; controller.current?.abort(); const active = new AbortController(); controller.current = active; setRunning(true); setError(""); setResult(null); try { const response = await fetch(`${BRIDGE_URL}/ai/run`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ provider, input, command: action.command, sources, projectContext: recordContext(state) }), signal: active.signal }); const body = await response.json(); if (!response.ok) throw new Error(body.error || "Workflow failed."); setResult(body); } catch (e) { if (!active.signal.aborted) setError(e instanceof TypeError ? "The local bridge is offline." : e instanceof Error ? e.message : "Workflow failed."); } finally { if (!active.signal.aborted) setRunning(false); } };
+  const save = async () => { if (!result) return; try { const response = await fetch(`${BRIDGE_URL}/obsidian/note`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: `${action.command} ${localDateKey(new Date())}`, content: `# ${action.label}\n\n${result.output}` }) }); const body = await response.json(); if (!response.ok) throw new Error(body.error); setSavedPath(body.path); } catch (e) { setError(e instanceof Error ? e.message : "Could not save to Obsidian."); } };
+  return <div className="drawer-backdrop" onMouseDown={onClose}><aside className="action-drawer" onMouseDown={(e) => e.stopPropagation()}><div className="drawer-head"><button onClick={onClose}>×</button><span className="label">STRUCTURED AI WORKFLOW</span><span className={`action-mark ${action.tone}`}>✦</span></div><div className="drawer-title"><span>{action.command}</span><h2>{action.label}</h2><p>Uses the real records currently available; absent context is reported, not fabricated.</p></div><div className="provider-switch"><button className={provider === "deepseek" ? "active" : ""} onClick={() => { setProvider("deepseek"); window.localStorage.setItem("workbuddy-ai-provider", "deepseek"); }}><span>DS</span><b>DeepSeek</b><small>V4 Flash</small></button><button className={provider === "kimi" ? "active" : ""} onClick={() => { setProvider("kimi"); window.localStorage.setItem("workbuddy-ai-provider", "kimi"); }}><span>KM</span><b>Kimi</b><small>K3</small></button></div><div className="drawer-section"><div className="drawer-section-title"><span>01</span><strong>Task input</strong><b>Required</b></div><textarea value={input} onChange={(e) => setInput(e.target.value)} /></div><div className="drawer-section"><div className="drawer-section-title"><span>02</span><strong>Live sources</strong><b className="ready">On demand</b></div><div className="drawer-sources"><label><input type="checkbox" checked={sources.obsidian} onChange={(e) => setSources({ ...sources, obsidian: e.target.checked })} /><span>Obsidian · Kbase</span><b>{Object.values(state).flat().length} records</b></label><label><input type="checkbox" checked={sources.zotero} onChange={(e) => setSources({ ...sources, zotero: e.target.checked })} /><span>Zotero literature</span><b>Live search</b></label></div></div>{error && <div className="workflow-error"><span>!</span><p>{error}</p><button onClick={openConnections}>Connections</button></div>}{result && <section className="workflow-result"><div className="workflow-result-head"><span><b>{result.provider}</b><small>{result.model} · {result.sources.zotero.length} papers · {result.sources.obsidian.length} notes</small></span><button onClick={save}>{savedPath ? "Saved ✓" : "Save to Obsidian"}</button></div><pre>{result.output}</pre></section>}<div className="drawer-footer"><div><SourceDot /><span><strong>Real-source workflow</strong><small>{provider === "kimi" ? "Kimi K3" : "DeepSeek V4 Flash"}</small></span></div><button className="primary-button" disabled={running || !input.trim()} onClick={run}>{running ? "Working…" : result ? "Run again" : "Run workflow"}</button></div></aside></div>;
+}
+
+function ConnectionsDrawer({ status, refresh, onClose }: { status: BridgeStatus | null; refresh: () => Promise<void>; onClose: () => void }) {
+  const connection = (connected?: boolean) => <b className={`connection-state ${connected ? "connected" : "missing"}`}>{connected ? "Connected" : "Setup needed"}</b>;
+  return <div className="drawer-backdrop" onMouseDown={onClose}><aside className="action-drawer connections-drawer" onMouseDown={(e) => e.stopPropagation()}><div className="drawer-head"><button onClick={onClose}>×</button><span className="label">CONNECTIONS</span><span className="action-mark mint">⌁</span></div><div className="drawer-title"><span>LOCAL RESEARCH BRIDGE</span><h2>Real tools, private context.</h2><p>Current live connection state—not a placeholder.</p></div><div className={`bridge-banner ${status ? "online" : "offline"}`}><span>{status ? "✓" : "!"}</span><div><strong>{status ? "Research bridge is online" : "Research bridge is offline"}</strong><small>Listening only on this Mac</small></div><button onClick={refresh}>Test again</button></div><div className="connection-list"><article><span className="connection-logo deepseek">DS</span><div><strong>DeepSeek API</strong><small>{status?.deepseek.model || "V4 Flash"}</small></div>{connection(status?.deepseek.connected)}</article><article><span className="connection-logo kimi">KM</span><div><strong>Kimi API</strong><small>{status?.kimi.model || "K3"}</small></div>{connection(status?.kimi.connected)}</article><article><span className="connection-logo calendar">C</span><div><strong>macOS Calendar</strong><small>Today · read + write</small></div>{connection(status?.calendar.connected)}</article><article><span className="connection-logo zotero">Z</span><div><strong>Zotero Desktop</strong><small>{status?.zotero.version || "Local API"}</small></div>{connection(status?.zotero.connected)}</article><article><span className="connection-logo obsidian">O</span><div><strong>Obsidian · {status?.obsidian.vault || "Kbase"}</strong><small>Markdown records</small></div>{connection(status?.obsidian.connected)}</article></div></aside></div>;
 }
 
 export default function Home() {
-  const [activeModule, setActiveModule] = useState<ModuleKey>("dashboard");
-  const [action, setAction] = useState<Action | null>(null);
-  const [contextOpen, setContextOpen] = useState(false);
-  const [commandOpen, setCommandOpen] = useState(false);
-  const [commandQuery, setCommandQuery] = useState("");
-  const [mobileNav, setMobileNav] = useState(false);
-  const [toast, setToast] = useState("");
-  const [connectionsOpen, setConnectionsOpen] = useState(false);
-  const [bridgeOnline, setBridgeOnline] = useState<boolean | null>(null);
-
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
-        event.preventDefault();
-        setCommandOpen(true);
-      }
-      if (event.key === "Escape") {
-        setCommandOpen(false);
-        setAction(null);
-        setContextOpen(false);
-        setConnectionsOpen(false);
-      }
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, []);
-
-  useEffect(() => {
-    const check = () => fetch(`${BRIDGE_URL}/health`, { signal: AbortSignal.timeout(3500) }).then((response) => setBridgeOnline(response.ok)).catch(() => setBridgeOnline(false));
-    void check();
-    const timer = window.setInterval(check, 30000);
-    return () => window.clearInterval(timer);
-  }, []);
-
-  useEffect(() => {
-    if (!toast) return;
-    const timer = window.setTimeout(() => setToast(""), 2600);
-    return () => window.clearTimeout(timer);
-  }, [toast]);
-
-  const filteredCommands = useMemo(() => commands.filter((item) => `${item.label} ${item.meta} ${item.command}`.toLowerCase().includes(commandQuery.toLowerCase())), [commandQuery]);
-  const activeLabel = navItems.find((item) => item.key === activeModule)?.label ?? "Today";
-
-  const selectModule = (key: ModuleKey) => {
-    setActiveModule(key);
-    setMobileNav(false);
-    window.scrollTo({ top: 0, behavior: "smooth" });
-  };
-  const changeProject = (name: string) => setToast(`Opened ${name}`);
-
-  return (
-    <div className="app-shell">
-      <aside className={`sidebar ${mobileNav ? "mobile-open" : ""}`}>
-        <div className="brand"><span className="brand-mark"><i /><b /></span><span><strong>WORKBUDDY</strong><small>SPORTS RESEARCH OS</small></span><button className="mobile-close" onClick={() => setMobileNav(false)}>×</button></div>
-        <nav aria-label="Main navigation"><span className="nav-label">RESEARCH WORKBENCH</span>{navItems.map((item) => <button key={item.key} aria-current={activeModule === item.key ? "page" : undefined} className={activeModule === item.key ? "active" : ""} onClick={() => selectModule(item.key)}><span className="nav-icon">{item.icon}</span><span>{item.label}</span>{item.badge && <b>{item.badge}</b>}</button>)}</nav>
-        <div className="sidebar-bottom"><button onClick={() => setCommandOpen(true)}><span className="nav-icon">⌘</span><span>Command library</span></button><button onClick={() => setConnectionsOpen(true)}><span className="nav-icon">⚙</span><span>Connections</span></button><div className={`sync-status ${bridgeOnline === false ? "offline" : ""}`}><span className="sync-orbit"><i /><b /></span><span><strong>Research systems</strong><small><SourceDot tone={bridgeOnline === false ? "orange" : "green"} /> {bridgeOnline === null ? "Checking local bridge" : bridgeOnline ? "Local bridge connected" : "Setup required"}</small></span></div></div>
-      </aside>
-
-      <div className="main-shell">
-        <header className="topbar"><div className="breadcrumb"><button className="mobile-menu" onClick={() => setMobileNav(true)}>☰</button><span>Research Workbench</span><b>/</b><strong>{activeLabel}</strong></div><button className="command-trigger" onClick={() => setCommandOpen(true)}><span>⌕</span><span>Search or run a research workflow…</span><kbd>⌘ K</kbd></button><div className="top-actions"><button className="icon-button" aria-label="Notifications" onClick={() => setToast("No new research alerts") }><span>°</span>♢</button><button className="context-button" onClick={() => setContextOpen(true)}><span className="context-diamond">◇</span><span><small>CONTEXT</small><strong>Ready · 94%</strong></span></button><button className="profile-button" aria-label="Profile" onClick={() => setToast("Researcher profile is ready")}>DR</button></div></header>
-        <main className="content">
-          {activeModule === "dashboard" && <Dashboard runAction={setAction} openContext={() => setContextOpen(true)} />}
-          {activeModule === "research" && <Research runAction={setAction} />}
-          {activeModule === "data" && <DataExperiments runAction={setAction} />}
-          {activeModule === "manuscript" && <Manuscript runAction={setAction} />}
-          {activeModule === "workspace" && <Workspace runAction={setAction} />}
-          {activeModule === "review" && <Review runAction={setAction} />}
-          {activeModule === "projects" && <Projects changeProject={changeProject} runAction={setAction} />}
-          {activeModule === "operations" && <Operations runAction={setAction} />}
-        </main>
-      </div>
-
-      {action && <ActionDrawer action={action} onClose={() => setAction(null)} openConnections={() => setConnectionsOpen(true)} />}
-      {contextOpen && <ContextDrawer onClose={() => setContextOpen(false)} />}
-      {connectionsOpen && <ConnectionsDrawer onClose={() => setConnectionsOpen(false)} onStatus={setBridgeOnline} />}
-      {commandOpen && <div className="command-backdrop" onMouseDown={() => setCommandOpen(false)}><div className="command-palette" onMouseDown={(e) => e.stopPropagation()}><div className="command-search"><span>⌕</span><input autoFocus value={commandQuery} onChange={(event) => setCommandQuery(event.target.value)} placeholder="Search research actions…" /><kbd>ESC</kbd></div><div className="command-results"><span className="label">Suggested workflows</span>{filteredCommands.length ? filteredCommands.map((item) => <button key={item.command} onClick={() => { setCommandOpen(false); setAction(item); setCommandQuery(""); }}><span className={`action-mark ${item.tone}`}>✦</span><span><strong>{item.label}</strong><small>{item.command}</small></span><b>{item.meta}</b></button>) : <p className="empty-command">No workflow matches “{commandQuery}”.</p>}</div><div className="command-footer"><span><kbd>↑</kbd><kbd>↓</kbd> Navigate</span><span><kbd>↵</kbd> Open</span><span>Context-aware search</span></div></div></div>}
-      {toast && <div className="toast"><span>✓</span>{toast}</div>}
-    </div>
-  );
+  const [active, setActive] = useState<ModuleKey>("dashboard"); const [state, setState] = useState<WorkbenchState>(emptyState); const [loading, setLoading] = useState(true); const [dataError, setDataError] = useState("");
+  const [editor, setEditor] = useState<EditorState>(null); const [action, setAction] = useState<Action | null>(null); const [status, setStatus] = useState<BridgeStatus | null>(null); const [contextOpen, setContextOpen] = useState(false); const [connectionsOpen, setConnectionsOpen] = useState(false); const [mobileNav, setMobileNav] = useState(false); const [commandOpen, setCommandOpen] = useState(false); const [query, setQuery] = useState(""); const [toast, setToast] = useState("");
+  const loadState = async () => { setLoading(true); setDataError(""); try { const response = await fetch(`${BRIDGE_URL}/workbench/state`); const body = await response.json(); if (!response.ok) throw new Error(body.error); setState({ ...emptyState, ...body }); } catch (e) { setDataError(e instanceof Error ? e.message : "Kbase data could not be loaded."); } finally { setLoading(false); } };
+  const loadStatus = async () => { try { const response = await fetch(`${BRIDGE_URL}/health`, { signal: AbortSignal.timeout(5000) }); setStatus(response.ok ? await response.json() : null); } catch { setStatus(null); } };
+  useEffect(() => { const start = window.setTimeout(() => { void loadState(); void loadStatus(); }, 0); const timer = window.setInterval(() => { void loadState(); void loadStatus(); }, 60000); return () => { window.clearTimeout(start); window.clearInterval(timer); }; }, []);
+  useEffect(() => { const onKey = (event: KeyboardEvent) => { if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") { event.preventDefault(); setCommandOpen(true); } if (event.key === "Escape") { setCommandOpen(false); setEditor(null); setAction(null); setContextOpen(false); setConnectionsOpen(false); } }; window.addEventListener("keydown", onKey); return () => window.removeEventListener("keydown", onKey); }, []);
+  useEffect(() => { if (!toast) return; const timer = window.setTimeout(() => setToast(""), 2400); return () => window.clearTimeout(timer); }, [toast]);
+  const saveRecord = async (collection: CollectionKey, record: Partial<RecordItem>) => { const response = await fetch(`${BRIDGE_URL}/workbench/record`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ collection, record }) }); const body = await response.json(); if (!response.ok) throw new Error(body.error || "Record could not be saved."); await loadState(); setToast(`${collectionLabels[collection]} saved to Kbase`); };
+  const deleteRecord = async (collection: CollectionKey, id: string) => { const response = await fetch(`${BRIDGE_URL}/workbench/record`, { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ collection, id }) }); const body = await response.json(); if (!response.ok) throw new Error(body.error || "Record could not be deleted."); await loadState(); setToast(`${collectionLabels[collection]} deleted`); };
+  const openEditor = (collection: CollectionKey, record?: RecordItem) => setEditor({ collection, record }); const activeLabel = navItems.find((item) => item.key === active)?.label || "Today";
+  const badges: Partial<Record<ModuleKey, number>> = { research: state["research-questions"].length, data: state.experiments.length, manuscript: state.manuscripts.length, review: state.reviews.filter((item) => item.status !== "Resolved").length, projects: state.projects.length, operations: state.operations.length };
+  const commands = useMemo(() => quickActions.filter((item) => `${item.label} ${item.meta} ${item.command}`.toLowerCase().includes(query.toLowerCase())), [query]);
+  const props: DataProps = { state, openEditor, saveRecord, runAction: setAction };
+  return <div className="app-shell"><aside className={`sidebar ${mobileNav ? "mobile-open" : ""}`}><div className="brand"><span className="brand-mark"><i /><b /></span><span><strong>WORKBUDDY</strong><small>SPORTS RESEARCH OS</small></span><button className="mobile-close" onClick={() => setMobileNav(false)}>×</button></div><nav><span className="nav-label">RESEARCH WORKBENCH</span>{navItems.map((item) => <button key={item.key} className={active === item.key ? "active" : ""} onClick={() => { setActive(item.key); setMobileNav(false); window.scrollTo({ top: 0, behavior: "smooth" }); }}><span className="nav-icon">{item.icon}</span><span>{item.label}</span>{Boolean(badges[item.key]) && <b>{badges[item.key]}</b>}</button>)}</nav><div className="sidebar-bottom"><button onClick={() => setCommandOpen(true)}><span className="nav-icon">⌘</span><span>Command library</span></button><button onClick={() => setConnectionsOpen(true)}><span className="nav-icon">⚙</span><span>Connections</span></button><div className={`sync-status ${status ? "" : "offline"}`}><span className="sync-orbit"><i /><b /></span><span><strong>Research systems</strong><small><SourceDot tone={status ? "green" : "orange"} />{status ? "Local bridge connected" : "Bridge offline"}</small></span></div></div></aside><div className="main-shell"><header className="topbar"><div className="breadcrumb"><button className="mobile-menu" onClick={() => setMobileNav(true)}>☰</button><span>Research Workbench</span><b>/</b><strong>{activeLabel}</strong></div><button className="command-trigger" onClick={() => setCommandOpen(true)}><span>⌕</span><span>Search or run a workflow…</span><kbd>⌘ K</kbd></button><div className="top-actions"><button className="icon-button" onClick={() => { void loadState(); void loadStatus(); setToast("Refreshing real data"); }}>↻</button><button className="context-button" onClick={() => setContextOpen(true)}><span className="context-diamond">◇</span><span><small>CONTEXT</small><strong>{Object.values(state).flat().length} real records</strong></span></button><button className="profile-button" onClick={() => setConnectionsOpen(true)}>DR</button></div></header><main className="content">{dataError && <div className="data-banner"><span>!</span><p>{dataError}</p><button onClick={loadState}>Retry</button></div>}{loading && !Object.values(state).flat().length && <div className="loading-bar"><i />Loading Kbase records…</div>}{active === "dashboard" && <Dashboard {...props} openContext={() => setContextOpen(true)} />}{active === "research" && <ResearchMap {...props} />}{active === "data" && <RecordModule collection="experiments" title={<>Data & <em>experiments.</em></>} eyebrow="KBASE / COMPUTATIONAL RECORD" description="Experiment names, methods, status, notes, and progress are editable real records." state={state} openEditor={openEditor} />}{active === "manuscript" && <ManuscriptModule state={state} openEditor={openEditor} />}{active === "workspace" && <AIWorkspace state={state} runAction={setAction} />}{active === "review" && <RecordModule collection="reviews" title={<>Review <em>room.</em></>} eyebrow="KBASE / INDEPENDENT REVIEW" description="Record actual review concerns, severity, linked objects, and resolution state." state={state} openEditor={openEditor} />}{active === "projects" && <RecordModule collection="projects" title={<>PhD <em>projects.</em></>} eyebrow="KBASE / RESEARCH CONTEXTS" description="Create projects and manually maintain their phase, progress, keywords, and active state." state={state} openEditor={openEditor} />}{active === "operations" && <RecordModule collection="operations" title={<>PhD <em>operations.</em></>} eyebrow="KBASE / OPERATIONS" description="Track real submissions, supervision, commitments, meetings, and deadlines." state={state} openEditor={openEditor} />}</main></div>{editor && <RecordEditor key={`${editor.collection}-${editor.record?.id || "new"}`} editor={editor} onClose={() => setEditor(null)} onSave={saveRecord} onDelete={deleteRecord} />}{action && <ActionDrawer action={action} state={state} onClose={() => setAction(null)} openConnections={() => setConnectionsOpen(true)} />}{contextOpen && <ContextDrawer state={state} status={status} onClose={() => setContextOpen(false)} />}{connectionsOpen && <ConnectionsDrawer status={status} refresh={loadStatus} onClose={() => setConnectionsOpen(false)} />}{commandOpen && <div className="command-backdrop" onMouseDown={() => setCommandOpen(false)}><div className="command-palette" onMouseDown={(e) => e.stopPropagation()}><div className="command-search"><span>⌕</span><input autoFocus value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search workflows…" /><kbd>ESC</kbd></div><div className="command-results"><span className="label">REAL-SOURCE WORKFLOWS</span>{commands.map((item) => <button key={item.command} onClick={() => { setAction(item); setCommandOpen(false); setQuery(""); }}><span className={`action-mark ${item.tone}`}>✦</span><span><strong>{item.label}</strong><small>{item.command}</small></span><b>{item.meta}</b></button>)}</div></div></div>}{toast && <div className="toast"><span>✓</span>{toast}</div>}</div>;
 }
