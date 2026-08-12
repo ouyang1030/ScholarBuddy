@@ -27,6 +27,7 @@ test("server-renders the Sports Research OS", async () => {
   assert.match(html, /Research debt \/ Kbase/i);
   assert.match(html, /No active project/i);
   assert.match(html, /Loading Kbase records/i);
+  assert.match(html, /User Guide/i);
   assert.doesNotMatch(html, /codex-preview|Your site is taking shape/i);
 });
 
@@ -40,4 +41,6 @@ test("every rendered button declares an interaction handler", async () => {
   assert.match(source, /deleteRecord/);
   assert.match(source, /Save to Kbase/);
   assert.match(source, /Save to Calendar/);
+  assert.match(source, /How to use your workbench/);
+  assert.doesNotMatch(source, /Command library/);
 });
