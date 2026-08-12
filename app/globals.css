@@ -1062,6 +1062,10 @@ body { font-size: 17px; line-height: 1.5; }
 small { font-size: 13px !important; line-height: 1.45; }
 .brand small, .nav-label { font-size: 12px !important; }
 .sidebar nav button > span:nth-child(2), .sidebar-bottom button > span:nth-child(2) { font-size: 16px; }
+.sidebar nav button, .sidebar-bottom > button { grid-template-columns: minmax(0,1fr) auto; padding-left: 16px; }
+.sidebar nav button .nav-icon, .sidebar-bottom > button .nav-icon { display: none; }
+.sidebar nav button > span:nth-child(2), .sidebar-bottom button > span:nth-child(2) { grid-column: 1; }
+.sidebar nav button > b { grid-column: 2; }
 .sync-status strong { font-size: 15px; }
 .breadcrumb, .command-trigger > span:nth-child(2) { font-size: 15px; }
 .context-button small { font-size: 12px !important; }
