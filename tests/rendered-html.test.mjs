@@ -20,11 +20,13 @@ test("server-renders the Sports Research OS", async () => {
   const html = await response.text();
   assert.match(html, /WorkBuddy — Sports Research OS/i);
   assert.match(html, /Today’s Research/i);
-  assert.match(html, /Verify the stability of the three-cluster solution/i);
+  assert.match(html, /No tasks yet/i);
+  assert.match(html, /macOS Calendar \/ Live/i);
+  assert.match(html, /Ready for a new real focus session/i);
   assert.match(html, /Today’s recommendations/i);
   assert.match(html, /Research debt/i);
-  assert.match(html, /Edit Verify the stability of the three-cluster solution/i);
-  assert.match(html, /Delete EXP-024 stability diagnostics/i);
+  assert.match(html, /Add the first real research task/i);
+  assert.match(html, /Syncing Calendar/i);
   assert.doesNotMatch(html, /codex-preview|Your site is taking shape/i);
 });
 

@@ -8,6 +8,7 @@ Configuration lives in the ignored `.env.local` file at the repository root. Sup
 - `KIMI_API_KEY` for Kimi chat completions.
 - `OBSIDIAN_VAULT_PATH` for Markdown search and `WorkBuddy/` note writes.
 - `ZOTERO_LOCAL_URL` for the Zotero Desktop Local API.
+- macOS Calendar through the user-approved Calendar automation permission, including today reads and explicit event create, update, and delete actions.
 
 Run it manually with `npm run bridge`. On this Mac, `com.workbuddy.research-bridge.plist` is also installed as a per-user LaunchAgent so the bridge starts at login and restarts if interrupted.
 

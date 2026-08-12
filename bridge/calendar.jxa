@@ -1,0 +1,115 @@
+function clean(value) {
+  return value === null || value === undefined ? "" : String(value);
+}
+
+function cssColor(value) {
+  const channels = clean(value).split(",").slice(0, 3).map(Number);
+  if (channels.length !== 3 || channels.some((channel) => !Number.isFinite(channel))) return "";
+  return `#${channels.map((channel) => Math.round(Math.max(0, Math.min(1, channel)) * 255).toString(16).padStart(2, "0")).join("")}`;
+}
+
+function calendarEvents(calendar, start, end) {
+  const name = clean(calendar.name());
+  const color = cssColor(calendar.color());
+  return calendar.events().flatMap((event) => {
+    try {
+      const startDate = event.startDate();
+      if (!(startDate >= start && startDate < end)) return [];
+      return [{
+        id: clean(event.uid()),
+        title: clean(event.summary()) || "Untitled event",
+        start: startDate.toISOString(),
+        end: event.endDate().toISOString(),
+        allDay: Boolean(event.alldayEvent()),
+        location: clean(event.location()),
+        notes: clean(event.description()),
+        calendar: name,
+        color,
+      }];
+    } catch (_) {
+      return [];
+    }
+  });
+}
+
+function findEvent(calendars, uid) {
+  for (const calendar of calendars) {
+    for (const event of calendar.events()) {
+      try {
+        if (clean(event.uid()) === uid) return { calendar, event };
+      } catch (_) { /* continue */ }
+    }
+  }
+  return null;
+}
+
+function writableCalendar(calendars, requestedName) {
+  if (requestedName) {
+    const requested = calendars.find((calendar) => clean(calendar.name()) === requestedName);
+    if (requested) return requested;
+  }
+  return calendars.find((calendar) => {
+    try { return calendar.writable(); } catch (_) { return true; }
+  }) || calendars[0];
+}
+
+function run(argv) {
+  const Calendar = Application("Calendar");
+  const action = argv[0] || "list";
+  const payload = argv[1] ? JSON.parse(argv[1]) : {};
+  const calendars = Calendar.calendars();
+
+  if (action === "list") {
+    const start = new Date(payload.start);
+    const end = new Date(payload.end);
+    const events = calendars.flatMap((calendar) => calendarEvents(calendar, start, end));
+    events.sort((a, b) => a.start.localeCompare(b.start));
+    return JSON.stringify({
+      events,
+      calendars: calendars.map((calendar) => clean(calendar.name())).filter(Boolean),
+    });
+  }
+
+  if (action === "create") {
+    const calendar = writableCalendar(calendars, payload.calendar);
+    if (!calendar) throw new Error("No writable calendar is available.");
+    const event = Calendar.Event({
+      summary: payload.title,
+      startDate: new Date(payload.start),
+      endDate: new Date(payload.end),
+      description: payload.notes || "Created by WorkBuddy",
+    });
+    calendar.events.push(event);
+    return JSON.stringify({ saved: true, id: clean(event.uid()) });
+  }
+
+  const match = findEvent(calendars, clean(payload.id));
+  if (!match) throw new Error("Calendar event was not found.");
+
+  if (action === "update") {
+    const newStart = new Date(payload.start);
+    const newEnd = new Date(payload.end);
+    const currentStart = match.event.startDate();
+    const currentEnd = match.event.endDate();
+    if (newStart >= currentEnd) {
+      match.event.endDate = newEnd;
+      match.event.startDate = newStart;
+    } else if (newEnd <= currentStart) {
+      match.event.startDate = newStart;
+      match.event.endDate = newEnd;
+    } else {
+      match.event.startDate = newStart;
+      match.event.endDate = newEnd;
+    }
+    match.event.summary = payload.title;
+    if (payload.notes !== undefined) match.event.description = payload.notes;
+    return JSON.stringify({ saved: true, id: clean(match.event.uid()) });
+  }
+
+  if (action === "delete") {
+    match.event.delete();
+    return JSON.stringify({ deleted: true });
+  }
+
+  throw new Error(`Unsupported calendar action: ${action}`);
+}

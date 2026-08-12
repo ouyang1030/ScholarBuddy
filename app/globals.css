@@ -534,13 +534,20 @@ kbd, .key-hint { font-family: var(--font-geist-mono); font-size: 12px; color: #7
 .focus-top > span:last-child { display: flex; align-items: center; gap: 5px; font: 11px var(--font-geist-mono); color: #819087; }
 .focus-top > span:last-child i { width: 5px; height: 5px; border-radius: 50%; background: #859188; }
 .focus-top > span.live i { background: var(--lime); box-shadow: 0 0 0 3px rgba(183,237,98,.09); }
-.focus-object { margin-top: 33px; font: 12px var(--font-geist-mono); letter-spacing: .09em; color: #76847d; }
+.focus-object { margin-top: 33px; font: 12px var(--font-geist-mono); letter-spacing: .09em; color: #76847d; display: flex; flex-direction: column; gap: 7px; }
+.focus-object input { width: min(100%, 420px); border: 0; border-bottom: 1px solid #3b4842; background: transparent; color: #edf2ef; padding: 0 0 6px; font: 14px/1.35 var(--font-geist-sans); outline: none; }
+.focus-object input:focus { border-color: var(--lime); }
+.focus-object input::placeholder { color: #718078; }
 .focus-session h2 { margin: 8px 0 5px; font: 26px var(--font-geist-mono); font-weight: 450; letter-spacing: -.04em; }
 .focus-session > p { margin: 0; color: #a1aca6; font-size: 11px; line-height: 1.5; }
 .focus-wave { margin-top: auto; height: 32px; display: flex; align-items: center; gap: 5px; }
 .focus-wave i { width: 2px; background: var(--lime); opacity: .55; border-radius: 2px; }
-.focus-session > button { height: 37px; width: 100%; margin-top: 12px; border: 1px solid #3b4741; background: #222c28; border-radius: 5px; color: #d9e1dc; font-size: 11px; display: flex; align-items: center; justify-content: space-between; padding: 0 12px; }
-.focus-session > button span { color: var(--lime); }
+.focus-actions { width: 100%; margin-top: 12px; display: grid; grid-template-columns: 1fr auto; gap: 7px; position: relative; z-index: 1; }
+.focus-actions button { height: 37px; border: 1px solid #3b4741; background: #222c28; border-radius: 5px; color: #d9e1dc; font-size: 11px; padding: 0 12px; }
+.focus-actions button:first-child { display: flex; align-items: center; justify-content: space-between; }
+.focus-actions button:first-child span { color: var(--lime); }
+.focus-actions button:last-child { color: #8e9a93; }
+.focus-actions button:disabled { opacity: .4; }
 .daily-progress-row { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(310px, .55fr); gap: 14px; margin-top: 14px; }
 .writing-today, .research-anchor { padding: 20px; }
 .writing-main { display: flex; align-items: flex-start; justify-content: space-between; gap: 25px; margin: 20px 0 17px; }
@@ -811,7 +818,8 @@ body { font-size: 17px; line-height: 1.5; }
 .focus-session h2 { grid-column: 2; grid-row: 2 / 4; margin: 14px 0 0; font-size: 42px; }
 .focus-session > p { grid-column: 1; grid-row: 3; align-self: start; margin-top: 7px; font-size: 15px; }
 .focus-wave { grid-column: 3; grid-row: 2; margin: 15px 0 0; height: 38px; }
-.focus-session > button { grid-column: 3; grid-row: 3; align-self: start; height: 44px; margin-top: 6px; border-radius: 9px; font-size: 14px; z-index: 1; }
+.focus-actions { grid-column: 3; grid-row: 3; align-self: start; margin-top: 6px; }
+.focus-actions button { height: 44px; border-radius: 9px; font-size: 13px; }
 
 .daily-progress-row { grid-template-columns: minmax(0, 1.35fr) minmax(360px, .65fr); gap: 18px; margin-top: 18px; }
 .writing-today, .research-anchor { padding: 28px; }
@@ -926,6 +934,22 @@ body { font-size: 17px; line-height: 1.5; }
 .privacy-note > span { color: var(--lime); font-size: 17px; }
 .privacy-note p { margin: 0; color: #9aa79f; font-size: 11px; line-height: 1.5; }
 .privacy-note strong { display: block; color: #e5ebe7; font-size: 12px; margin-bottom: 3px; }
+.connection-logo.calendar { background: #e45c50; color: white; font-size: 15px; }
+.live-time-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--lime-deep); display: inline-block; margin-right: 8px; box-shadow: 0 0 0 4px rgba(109,158,52,.1); }
+.true-empty-state { min-height: 104px !important; padding: 20px !important; border: 1px dashed #d6ddd5 !important; border-radius: 9px; background: #f8faf6; display: flex !important; align-items: center !important; justify-content: center !important; gap: 11px !important; color: #859088; }
+.true-empty-state > span { width: 30px; height: 30px; display: grid; place-items: center; border: 1px solid #d3dbd2; border-radius: 50%; font-size: 15px; }
+.true-empty-state p { margin: 0; display: flex; flex-direction: column; gap: 4px; }
+.true-empty-state strong { color: #5c6861; font-size: 13px; }
+.true-empty-state small { color: #8c9690; font-size: 11px; }
+.schedule-empty { margin-top: 18px; }
+.schedule-loading { min-height: 100px; display: flex; align-items: center; justify-content: center; gap: 9px; color: #7f8b84; font-size: 12px; }
+.schedule-loading > span { width: 14px; height: 14px; border: 2px solid #d6ddd3; border-top-color: #759b46; border-radius: 50%; animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.calendar-error { margin: 18px 0; min-height: 74px; padding: 12px; border: 1px solid #e6cbb9; border-radius: 9px; background: #fff5ec; display: grid; grid-template-columns: 24px 1fr auto; align-items: center; gap: 8px; color: #8c5a39; }
+.calendar-error > span { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; background: #f3dccb; font-weight: 800; }
+.calendar-error p { margin: 0; font-size: 11px; }
+.calendar-error button { border: 0; background: transparent; color: #7d5135; font-size: 11px; font-weight: 700; }
+.schedule-list time { white-space: nowrap; }
 
 @media (max-width: 1180px) {
   .content { padding-left: 25px; padding-right: 25px; }
@@ -1022,6 +1046,7 @@ body { font-size: 17px; line-height: 1.5; }
   .daily-intro-actions button { flex: 1; }
   .daily-command-grid { grid-template-columns: 1fr; }
   .focus-session { grid-column: 1; }
+  .focus-actions { grid-column: 1 / -1; grid-row: auto; width: 100%; }
   .daily-task-list > div { grid-template-columns: 28px minmax(0,1fr); }
   .daily-task-list .task-check, .daily-task-list .task-copy { grid-row: 1; }
   .task-plan { display: none; }

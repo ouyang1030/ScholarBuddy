@@ -1,11 +1,15 @@
 import { createServer } from "node:http";
+import { execFile } from "node:child_process";
 import { access, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const configFile = path.join(repoRoot, ".env.local");
+const calendarScript = path.join(repoRoot, "bridge", "calendar.jxa");
+const execFileAsync = promisify(execFile);
 
 function parseEnv(text) {
   return Object.fromEntries(text.split(/\r?\n/).flatMap((line) => {
@@ -120,7 +124,7 @@ async function searchObsidian(config, query, limit = 5) {
 function modelConfig(config, provider) {
   if (provider === "kimi") return {
     apiKey: config.KIMI_API_KEY,
-    baseUrl: (config.KIMI_BASE_URL || "https://api.moonshot.ai/v1").replace(/\/$/, ""),
+    baseUrl: (config.KIMI_BASE_URL || "https://api.moonshot.cn/v1").replace(/\/$/, ""),
     model: config.KIMI_MODEL || "kimi-k3",
   };
   return {
@@ -147,7 +151,7 @@ async function runModel(config, payload, zotero, obsidian) {
   const response = await fetch(`${target.baseUrl}/chat/completions`, {
     method: "POST",
     headers: { "Authorization": `Bearer ${target.apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ model: target.model, messages: [{ role: "system", content: system }, { role: "user", content: buildPrompt(payload, zotero, obsidian) }], temperature: 0.2, max_tokens: 2400 }),
+    body: JSON.stringify({ model: target.model, messages: [{ role: "system", content: system }, { role: "user", content: buildPrompt(payload, zotero, obsidian) }], temperature: provider === "kimi" ? 1 : 0.2, max_tokens: 2400 }),
     signal: AbortSignal.timeout(120_000),
   });
   const body = await response.json().catch(() => ({}));
@@ -164,6 +168,7 @@ async function bridgeStatus(config) {
     kimi: { connected: Boolean(config.KIMI_API_KEY), model: config.KIMI_MODEL || "kimi-k3" },
     zotero: { connected: false, version: null },
     obsidian: { connected: false, vault: config.OBSIDIAN_VAULT_PATH ? path.basename(config.OBSIDIAN_VAULT_PATH) : null },
+    calendar: { connected: false },
   };
   try {
     const response = await zoteroRequest(config, "/api/users/0/items?limit=1&format=json");
@@ -173,7 +178,16 @@ async function bridgeStatus(config) {
     await access(config.OBSIDIAN_VAULT_PATH, constants.R_OK | constants.W_OK);
     status.obsidian.connected = true;
   } catch { /* unavailable */ }
+  try {
+    await runCalendar("list", { start: new Date().toISOString(), end: new Date(Date.now() + 1000).toISOString() });
+    status.calendar.connected = true;
+  } catch { /* unavailable */ }
   return status;
+}
+
+async function runCalendar(action, payload) {
+  const { stdout } = await execFileAsync("/usr/bin/osascript", ["-l", "JavaScript", calendarScript, action, JSON.stringify(payload)], { timeout: 20_000, maxBuffer: 2_000_000 });
+  return JSON.parse(stdout.trim() || "{}");
 }
 
 async function handle(request) {
@@ -183,6 +197,22 @@ async function handle(request) {
   if (url.pathname === "/health" && request.method === "GET") return json(request, config, await bridgeStatus(config));
   if (url.pathname === "/zotero/search" && request.method === "GET") return json(request, config, { items: await searchZotero(config, url.searchParams.get("q") || "", 12) });
   if (url.pathname === "/obsidian/search" && request.method === "GET") return json(request, config, { notes: await searchObsidian(config, url.searchParams.get("q") || "", 12) });
+  if (url.pathname === "/calendar/today" && request.method === "GET") {
+    const requestedDate = url.searchParams.get("date") || new Date().toISOString().slice(0, 10);
+    const start = new Date(`${requestedDate}T00:00:00`);
+    const end = new Date(start);
+    end.setDate(end.getDate() + 1);
+    return json(request, config, await runCalendar("list", { start: start.toISOString(), end: end.toISOString() }));
+  }
+  if (url.pathname === "/calendar/event" && request.method === "POST") {
+    const payload = await readJson(request);
+    return json(request, config, await runCalendar(payload.id ? "update" : "create", payload), payload.id ? 200 : 201);
+  }
+  if (url.pathname === "/calendar/event" && request.method === "DELETE") {
+    const payload = await readJson(request);
+    if (!payload.id) return json(request, config, { error: "Calendar event id is required." }, 400);
+    return json(request, config, await runCalendar("delete", payload));
+  }
   if (url.pathname === "/obsidian/note" && request.method === "POST") {
     const payload = await readJson(request);
     const title = String(payload.title || "WorkBuddy research note").replace(/[\\/:*?\"<>|]/g, "-").trim().slice(0, 120);

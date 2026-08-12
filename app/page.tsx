@@ -27,6 +27,7 @@ type BridgeStatus = {
   kimi: { connected: boolean; model: string };
   zotero: { connected: boolean; version: string | null };
   obsidian: { connected: boolean; vault: string | null };
+  calendar: { connected: boolean };
 };
 
 type WorkflowResult = {
@@ -67,15 +68,6 @@ const commands: Action[] = [
   { label: "Run statistical check", meta: "Statistics", tone: "orange", command: "@stat-check" },
   { label: "Draft methods", meta: "Writing", tone: "violet", command: "@write-methods" },
   { label: "Save research decision", meta: "Obsidian", tone: "mint", command: "@save-decision" },
-];
-
-const progress = [
-  { label: "Literature", value: 82, note: "Evidence map stable" },
-  { label: "Data", value: 100, note: "v2.4 frozen" },
-  { label: "Analysis", value: 64, note: "2 experiments active" },
-  { label: "Writing", value: 41, note: "Methods in review" },
-  { label: "Internal review", value: 18, note: "4 concerns open" },
-  { label: "Submission", value: 0, note: "Not started" },
 ];
 
 const manuscriptSections = [
@@ -120,24 +112,6 @@ function SourceDot({ tone = "green" }: { tone?: string }) {
   return <span className={`source-dot ${tone}`} aria-hidden="true" />;
 }
 
-function PitchMap() {
-  const players = [
-    [50, 88, "gk"], [18, 68, "p"], [40, 67, "p"], [62, 67, "p"], [84, 68, "p"],
-    [25, 43, "p"], [50, 48, "p"], [76, 43, "p"], [22, 20, "p"], [50, 18, "p"], [78, 20, "p"],
-  ];
-  return (
-    <div className="pitch-map" aria-label="4-3-3 formation diagram">
-      <div className="pitch-half" />
-      <div className="pitch-circle" />
-      <div className="pitch-box" />
-      {players.map(([x, y, kind], index) => (
-        <span key={index} className={`player-dot ${kind}`} style={{ left: `${x}%`, top: `${y}%` }} />
-      ))}
-      <span className="formation-label">4–3–3</span>
-    </div>
-  );
-}
-
 type DailyTask = {
   id: number;
   title: string;
@@ -149,51 +123,66 @@ type DailyTask = {
 };
 
 type TimeBlock = {
-  id: number;
-  time: string;
+  id: string;
+  start: string;
+  end: string;
   title: string;
-  category: string;
-  duration: string;
-  tone: "mint" | "blue" | "violet" | "neutral";
-  now?: boolean;
+  calendar: string;
+  allDay: boolean;
+  location: string;
+  notes: string;
+  color: string;
 };
 
-const starterTasks: DailyTask[] = [
-  { id: 1, title: "Verify the stability of the three-cluster solution", object: "EXP-024", category: "Statistical analysis", time: "09:30–11:00", priority: "Must", done: false },
-  { id: 2, title: "Find direct evidence for Introduction §1.6", object: "RQ-02", category: "Literature", time: "11:30–12:00", priority: "Must", done: false },
-  { id: 3, title: "Document the phase-segmentation threshold decision", object: "DEC-041", category: "Writing", time: "14:00–15:00", priority: "Should", done: false },
-];
+const starterTasks: DailyTask[] = [];
+const emptyTimeBlock = { time: "09:00", title: "", category: "WorkBuddy", duration: "60", calendar: "" };
 
-const starterTimeBlocks: TimeBlock[] = [
-  { id: 1, time: "09:30", title: "EXP-024 stability diagnostics", category: "Analysis", duration: "90 min", tone: "mint" },
-  { id: 2, time: "11:30", title: "Introduction evidence search", category: "Reading", duration: "30 min", tone: "blue" },
-  { id: 3, time: "14:00", title: "Methods decision rationale", category: "Writing", duration: "60 min", tone: "violet", now: true },
-  { id: 4, time: "16:30", title: "Prepare supervision meeting brief", category: "Meeting", duration: "30 min", tone: "neutral" },
-];
+function localDateKey(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
 
-const emptyTimeBlock = { time: "09:00", title: "", category: "Analysis", duration: "60 min" };
+function timeLabel(iso: string) {
+  return new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(iso));
+}
+
+function durationMinutes(start: string, end: string) {
+  return Math.max(1, Math.round((new Date(end).getTime() - new Date(start).getTime()) / 60000));
+}
 
 function Dashboard({ runAction, openContext }: { runAction: (a: Action) => void; openContext: () => void }) {
   const [tasks, setTasks] = useState<DailyTask[]>(starterTasks);
-  const [timeBlocks, setTimeBlocks] = useState<TimeBlock[]>(starterTimeBlocks);
+  const [timeBlocks, setTimeBlocks] = useState<TimeBlock[]>([]);
+  const [calendarNames, setCalendarNames] = useState<string[]>([]);
+  const [calendarLoading, setCalendarLoading] = useState(true);
+  const [calendarError, setCalendarError] = useState("");
   const [newTask, setNewTask] = useState("");
   const [editingTaskId, setEditingTaskId] = useState<number | null>(null);
   const [taskDraft, setTaskDraft] = useState("");
   const [deletingTaskId, setDeletingTaskId] = useState<number | null>(null);
-  const [timeEditorId, setTimeEditorId] = useState<number | "new" | null>(null);
+  const [timeEditorId, setTimeEditorId] = useState<string | "new" | null>(null);
   const [timeDraft, setTimeDraft] = useState(emptyTimeBlock);
-  const [deletingTimeId, setDeletingTimeId] = useState<number | null>(null);
+  const [deletingTimeId, setDeletingTimeId] = useState<string | null>(null);
   const [storageReady, setStorageReady] = useState(false);
-  const [focusSeconds, setFocusSeconds] = useState(47 * 60 + 18);
-  const [focusRunning, setFocusRunning] = useState(false);
+  const [now, setNow] = useState(() => new Date());
+  const [focusElapsed, setFocusElapsed] = useState(0);
+  const [focusStartedAt, setFocusStartedAt] = useState<number | null>(null);
+  const [focusTarget, setFocusTarget] = useState("");
   const [queuedPapers, setQueuedPapers] = useState<string[]>([]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      const savedTasks = window.localStorage.getItem("workbuddy-daily-tasks-en-v2");
-      const savedTimeBlocks = window.localStorage.getItem("workbuddy-time-blocks-en-v1");
+      const savedTasks = window.localStorage.getItem("workbuddy-daily-tasks-en-v3");
+      const savedFocus = window.localStorage.getItem("workbuddy-focus-en-v1");
       if (savedTasks) try { setTasks(JSON.parse(savedTasks) as DailyTask[]); } catch { /* keep starter state */ }
-      if (savedTimeBlocks) try { setTimeBlocks(JSON.parse(savedTimeBlocks) as TimeBlock[]); } catch { /* keep starter state */ }
+      if (savedFocus) try {
+        const focus = JSON.parse(savedFocus) as { elapsed?: number; startedAt?: number | null; target?: string };
+        setFocusElapsed(Math.max(0, focus.elapsed || 0));
+        setFocusStartedAt(focus.startedAt || null);
+        setFocusTarget(focus.target || "");
+      } catch { /* start a fresh focus timer */ }
       setStorageReady(true);
     }, 0);
     return () => window.clearTimeout(timer);
@@ -201,22 +190,46 @@ function Dashboard({ runAction, openContext }: { runAction: (a: Action) => void;
 
   useEffect(() => {
     if (!storageReady) return;
-    window.localStorage.setItem("workbuddy-daily-tasks-en-v2", JSON.stringify(tasks));
+    window.localStorage.setItem("workbuddy-daily-tasks-en-v3", JSON.stringify(tasks));
   }, [storageReady, tasks]);
 
   useEffect(() => {
     if (!storageReady) return;
-    window.localStorage.setItem("workbuddy-time-blocks-en-v1", JSON.stringify(timeBlocks));
-  }, [storageReady, timeBlocks]);
+    window.localStorage.setItem("workbuddy-focus-en-v1", JSON.stringify({ elapsed: focusElapsed, startedAt: focusStartedAt, target: focusTarget }));
+  }, [focusElapsed, focusStartedAt, focusTarget, storageReady]);
 
   useEffect(() => {
-    if (!focusRunning) return;
-    const timer = window.setInterval(() => setFocusSeconds((value) => value + 1), 1000);
+    const timer = window.setInterval(() => setNow(new Date()), 1000);
     return () => window.clearInterval(timer);
-  }, [focusRunning]);
+  }, []);
+
+  const refreshCalendar = async () => {
+    setCalendarLoading(true);
+    setCalendarError("");
+    try {
+      const response = await fetch(`${BRIDGE_URL}/calendar/today?date=${localDateKey(new Date())}`, { signal: AbortSignal.timeout(20000) });
+      const body = await response.json() as { events?: TimeBlock[]; calendars?: string[]; error?: string };
+      if (!response.ok) throw new Error(body.error || "Calendar could not be loaded.");
+      setTimeBlocks(body.events || []);
+      setCalendarNames(body.calendars || []);
+    } catch (error) {
+      setCalendarError(error instanceof TypeError ? "Local Calendar connection is offline." : error instanceof Error ? error.message : "Calendar could not be loaded.");
+    } finally {
+      setCalendarLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    const first = window.setTimeout(() => void refreshCalendar(), 0);
+    const recurring = window.setInterval(() => void refreshCalendar(), 60000);
+    return () => { window.clearTimeout(first); window.clearInterval(recurring); };
+  }, []);
 
   const completed = tasks.filter((task) => task.done).length;
+  const focusSeconds = focusElapsed + (focusStartedAt ? Math.max(0, Math.floor((now.getTime() - focusStartedAt) / 1000)) : 0);
+  const focusRunning = focusStartedAt !== null;
   const focusTime = `${String(Math.floor(focusSeconds / 3600)).padStart(2, "0")}:${String(Math.floor((focusSeconds % 3600) / 60)).padStart(2, "0")}:${String(focusSeconds % 60).padStart(2, "0")}`;
+  const dateTimeLabel = new Intl.DateTimeFormat("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }).format(now);
   const toggleTask = (id: number) => setTasks((items) => items.map((item) => item.id === id ? { ...item, done: !item.done } : item));
   const addTask = () => {
     if (!newTask.trim()) return;
@@ -240,30 +253,61 @@ function Dashboard({ runAction, openContext }: { runAction: (a: Action) => void;
   };
   const startTimeEdit = (block?: TimeBlock) => {
     setTimeEditorId(block ? block.id : "new");
-    setTimeDraft(block ? { time: block.time, title: block.title, category: block.category, duration: block.duration } : emptyTimeBlock);
+    setTimeDraft(block ? { time: timeLabel(block.start), title: block.title, category: block.calendar, duration: String(durationMinutes(block.start, block.end)), calendar: block.calendar } : { ...emptyTimeBlock, time: new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date()), calendar: calendarNames[0] || "" });
     setDeletingTimeId(null);
   };
-  const saveTimeBlock = () => {
+  const saveTimeBlock = async () => {
     if (!timeDraft.title.trim() || timeEditorId === null) return;
-    const toneByCategory: Record<string, TimeBlock["tone"]> = { Analysis: "mint", Reading: "blue", Writing: "violet", Meeting: "neutral" };
-    if (timeEditorId === "new") {
-      setTimeBlocks((items) => [...items, { id: Date.now(), ...timeDraft, title: timeDraft.title.trim(), tone: toneByCategory[timeDraft.category] ?? "neutral" }].sort((a, b) => a.time.localeCompare(b.time)));
-    } else {
-      setTimeBlocks((items) => items.map((item) => item.id === timeEditorId ? { ...item, ...timeDraft, title: timeDraft.title.trim(), tone: toneByCategory[timeDraft.category] ?? "neutral" } : item).sort((a, b) => a.time.localeCompare(b.time)));
+    setCalendarLoading(true);
+    setCalendarError("");
+    try {
+      const start = new Date(`${localDateKey(now)}T${timeDraft.time}:00`);
+      const minutes = Math.max(1, Number.parseInt(timeDraft.duration, 10) || 60);
+      const response = await fetch(`${BRIDGE_URL}/calendar/event`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: timeEditorId === "new" ? undefined : timeEditorId, title: timeDraft.title.trim(), start: start.toISOString(), end: new Date(start.getTime() + minutes * 60000).toISOString(), calendar: timeDraft.calendar, notes: "Created or updated by WorkBuddy" }) });
+      const body = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(body.error || "Calendar event could not be saved.");
+      setTimeEditorId(null);
+      setTimeDraft(emptyTimeBlock);
+      await refreshCalendar();
+    } catch (error) {
+      setCalendarError(error instanceof Error ? error.message : "Calendar event could not be saved.");
+      setCalendarLoading(false);
     }
-    setTimeEditorId(null);
-    setTimeDraft(emptyTimeBlock);
   };
-  const deleteTimeBlock = (id: number) => {
-    setTimeBlocks((items) => items.filter((item) => item.id !== id));
-    setDeletingTimeId(null);
+  const deleteTimeBlock = async (id: string) => {
+    setCalendarLoading(true);
+    setCalendarError("");
+    try {
+      const response = await fetch(`${BRIDGE_URL}/calendar/event`, { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) });
+      const body = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(body.error || "Calendar event could not be deleted.");
+      setDeletingTimeId(null);
+      await refreshCalendar();
+    } catch (error) {
+      setCalendarError(error instanceof Error ? error.message : "Calendar event could not be deleted.");
+      setCalendarLoading(false);
+    }
+  };
+
+  const toggleFocus = () => {
+    if (focusStartedAt) {
+      setFocusElapsed(focusSeconds);
+      setFocusStartedAt(null);
+    } else {
+      setFocusStartedAt(Date.now());
+    }
+  };
+
+  const resetFocus = () => {
+    setFocusElapsed(0);
+    setFocusStartedAt(null);
   };
 
   return (
     <>
       <section className="daily-intro">
         <div>
-          <p className="eyebrow">Tuesday, 11 August 2026 · Research cycle 08</p>
+          <p className="eyebrow" suppressHydrationWarning><span className="live-time-dot" />{dateTimeLabel}</p>
           <h1>Today’s Research</h1>
           <p>Tasks, time, research questions, and evidence—together in one place, focused on work that moves the thesis forward.</p>
         </div>
@@ -284,6 +328,7 @@ function Dashboard({ runAction, openContext }: { runAction: (a: Action) => void;
             <button onClick={addTask}>+</button>
           </div>
           <div className="daily-task-list">
+            {!tasks.length && <div className="true-empty-state"><span>＋</span><p><strong>No tasks yet</strong><small>Add the first real research task above.</small></p></div>}
             {tasks.map((task) => (
               <div className={`${task.done ? "done" : ""} ${editingTaskId === task.id ? "editing" : ""}`} key={task.id}>
                 <button className="task-check" onClick={() => toggleTask(task.id)} aria-label={`${task.done ? "Reopen " : "Complete "}${task.title}`}>{task.done ? "✓" : ""}</button>
@@ -309,27 +354,34 @@ function Dashboard({ runAction, openContext }: { runAction: (a: Action) => void;
         </article>
 
         <article className="today-schedule card">
-          <div className="section-heading"><div><span className="label">TIME BLOCKS</span><p>Today’s schedule</p></div><button className="mini-add" onClick={() => startTimeEdit()}>＋ Time block</button></div>
+          <div className="section-heading"><div><span className="label">MACOS CALENDAR / LIVE</span><p>Today’s schedule</p></div><button className="mini-add" onClick={() => startTimeEdit()}>＋ Calendar event</button></div>
           {timeEditorId !== null && <div className="time-editor">
             <label><span>Time</span><input type="time" value={timeDraft.time} onChange={(event) => setTimeDraft((value) => ({ ...value, time: event.target.value }))} /></label>
             <label className="time-title"><span>Focus</span><input autoFocus value={timeDraft.title} onChange={(event) => setTimeDraft((value) => ({ ...value, title: event.target.value }))} onKeyDown={(event) => event.key === "Enter" && saveTimeBlock()} placeholder="Describe this research block" /></label>
-            <label><span>Type</span><select value={timeDraft.category} onChange={(event) => setTimeDraft((value) => ({ ...value, category: event.target.value }))}><option>Analysis</option><option>Reading</option><option>Writing</option><option>Meeting</option></select></label>
-            <label><span>Duration</span><input value={timeDraft.duration} onChange={(event) => setTimeDraft((value) => ({ ...value, duration: event.target.value }))} placeholder="60 min" /></label>
-            <div><button className="save-edit" onClick={saveTimeBlock}>{timeEditorId === "new" ? "Add block" : "Save"}</button><button onClick={() => setTimeEditorId(null)}>Cancel</button></div>
+            <label><span>Calendar</span><select value={timeDraft.calendar} onChange={(event) => setTimeDraft((value) => ({ ...value, calendar: event.target.value }))}>{calendarNames.map((name) => <option key={name}>{name}</option>)}</select></label>
+            <label><span>Minutes</span><input inputMode="numeric" value={timeDraft.duration} onChange={(event) => setTimeDraft((value) => ({ ...value, duration: event.target.value.replace(/[^0-9]/g, "") }))} placeholder="60" /></label>
+            <div><button className="save-edit" disabled={calendarLoading} onClick={saveTimeBlock}>{calendarLoading ? "Saving…" : timeEditorId === "new" ? "Add to Calendar" : "Save to Calendar"}</button><button onClick={() => setTimeEditorId(null)}>Cancel</button></div>
           </div>}
           <div className="schedule-list">
-            {timeBlocks.map((block) => <div className={block.now ? "now" : ""} key={block.id}><time>{block.time}</time><i className={block.tone} /><span><strong>{block.title}</strong><small>{block.category} · {block.duration}</small></span>{deletingTimeId === block.id ? <span className="inline-confirm schedule-confirm"><button className="danger" onClick={() => deleteTimeBlock(block.id)}>Delete</button><button onClick={() => setDeletingTimeId(null)}>Keep</button></span> : <span className="schedule-actions">{block.now && <b>NOW</b>}<button aria-label={`Edit ${block.title}`} title="Edit" onClick={() => startTimeEdit(block)}>✎</button><button aria-label={`Delete ${block.title}`} title="Delete" onClick={() => setDeletingTimeId(block.id)}>×</button></span>}</div>)}
+            {calendarLoading && !timeBlocks.length && <div className="schedule-loading"><span /> Reading Calendar…</div>}
+            {!calendarLoading && calendarError && <div className="calendar-error"><span>!</span><p>{calendarError}</p><button onClick={refreshCalendar}>Retry</button></div>}
+            {!calendarLoading && !calendarError && !timeBlocks.length && <div className="true-empty-state schedule-empty"><span>○</span><p><strong>No events today</strong><small>Add one here or in macOS Calendar.</small></p></div>}
+            {timeBlocks.map((block, index) => {
+              const isNow = !block.allDay && now >= new Date(block.start) && now < new Date(block.end);
+              const tone = ["mint", "blue", "violet", "neutral"][index % 4];
+              return <div className={isNow ? "now" : ""} key={block.id}><time>{block.allDay ? "ALL DAY" : timeLabel(block.start)}</time><i className={tone} style={block.color ? { background: block.color } : undefined} /><span><strong>{block.title}</strong><small>{block.calendar} · {block.allDay ? "All day" : `${durationMinutes(block.start, block.end)} min`}{block.location ? ` · ${block.location}` : ""}</small></span>{deletingTimeId === block.id ? <span className="inline-confirm schedule-confirm"><button className="danger" onClick={() => deleteTimeBlock(block.id)}>Delete event</button><button onClick={() => setDeletingTimeId(null)}>Keep</button></span> : <span className="schedule-actions">{isNow && <b>NOW</b>}<button aria-label={`Edit ${block.title}`} title="Edit" onClick={() => startTimeEdit(block)}>✎</button><button aria-label={`Delete ${block.title}`} title="Delete" onClick={() => setDeletingTimeId(block.id)}>×</button></span>}</div>;
+            })}
           </div>
-          <button className="wide-button" onClick={() => runAction({ label: "Open research calendar", meta: "Planning", tone: "blue", command: "@research-calendar" })}>Open research calendar <span>→</span></button>
+          <button className="wide-button" disabled={calendarLoading} onClick={refreshCalendar}>{calendarLoading ? "Syncing Calendar…" : "Refresh from macOS Calendar"}<span>↻</span></button>
         </article>
 
         <article className="focus-session card">
           <div className="focus-top"><span className="label">FOCUS SESSION</span><span className={focusRunning ? "live" : "paused"}><i /> {focusRunning ? "Recording" : "Paused"}</span></div>
-          <span className="focus-object">EXP-024 · STATISTICAL CHECK</span>
+          <label className="focus-object"><span>FOCUS TARGET</span><input value={focusTarget} onChange={(event) => setFocusTarget(event.target.value)} placeholder="What are you focusing on?" /></label>
           <h2>{focusTime}</h2>
-          <p>Verify the stability of the three-cluster solution</p>
+          <p>{focusRunning ? `Started at ${new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }).format(new Date(focusStartedAt || now.getTime()))}` : focusSeconds ? "Paused — elapsed time is saved on this device" : "Ready for a new real focus session"}</p>
           <div className="focus-wave">{[4,8,13,21,12,17,25,10,18,8,5].map((height, index) => <i key={index} style={{ height }} />)}</div>
-          <button aria-pressed={focusRunning} onClick={() => setFocusRunning((value) => !value)}>{focusRunning ? "Pause session" : "Resume session"}<span>{focusRunning ? "Ⅱ" : "▶"}</span></button>
+          <div className="focus-actions"><button aria-pressed={focusRunning} onClick={toggleFocus}>{focusRunning ? "Pause session" : focusSeconds ? "Resume session" : "Start session"}<span>{focusRunning ? "Ⅱ" : "▶"}</span></button><button disabled={!focusSeconds} onClick={resetFocus}>Reset</button></div>
         </article>
       </section>
 
@@ -723,7 +775,7 @@ function ConnectionsDrawer({ onClose, onStatus }: { onClose: () => void; onStatu
 
   const connection = (connected?: boolean) => connected ? <b className="connection-state connected">Connected</b> : <b className="connection-state missing">Setup needed</b>;
 
-  return <div className="drawer-backdrop" onMouseDown={onClose}><aside className="action-drawer connections-drawer" onMouseDown={(event) => event.stopPropagation()} aria-label="Research system connections"><div className="drawer-head"><button onClick={onClose}>×</button><span className="label">Connections</span><span className="action-mark mint">⌁</span></div><div className="drawer-title"><span>LOCAL RESEARCH BRIDGE</span><h2>Real tools, private context.</h2><p>Keys, Zotero records, and Kbase notes remain on this Mac. The deployed workbench receives only the output needed for your current session.</p></div><div className={`bridge-banner ${status ? "online" : "offline"}`}><span>{checking ? "···" : status ? "✓" : "!"}</span><div><strong>{checking ? "Checking local bridge" : status ? "Research bridge is online" : "Research bridge is offline"}</strong><small>{status ? "Listening securely on this Mac" : "The background connector needs to be started"}</small></div><button onClick={refresh}>{checking ? "Checking…" : "Test again"}</button></div><div className="connection-list"><article><span className="connection-logo deepseek">DS</span><div><strong>DeepSeek API</strong><small>{status?.deepseek.model || "deepseek-v4-flash"}</small></div>{connection(status?.deepseek.connected)}</article><article><span className="connection-logo kimi">KM</span><div><strong>Kimi API</strong><small>{status?.kimi.model || "kimi-k3"}</small></div>{connection(status?.kimi.connected)}</article><article><span className="connection-logo zotero">Z</span><div><strong>Zotero Desktop</strong><small>{status?.zotero.connected ? `Local API · Zotero ${status.zotero.version || "ready"}` : "Open Zotero to connect"}</small></div>{connection(status?.zotero.connected)}</article><article><span className="connection-logo obsidian">O</span><div><strong>Obsidian · Kbase</strong><small>{status?.obsidian.connected ? "Read + write access" : "iCloud Vault unavailable"}</small></div>{connection(status?.obsidian.connected)}</article></div><section className="key-setup"><span className="label">ADD YOUR API KEYS</span><p>Open the private local file below and paste each key after the equals sign. Leave the key you do not use blank.</p><code>/Users/biomech/Documents/workbench/.env.local</code><div><span><b>DEEPSEEK_API_KEY=</b><small>Paste your DeepSeek key here</small></span><span><b>KIMI_API_KEY=</b><small>Paste your Kimi key here</small></span></div><button onClick={copyPath}>{message || "Copy key file path"}</button></section><div className="privacy-note"><span>⌾</span><p><strong>Local privacy boundary</strong>Secrets are ignored by Git and never included in the deployed site. The bridge reloads this file for every request, so saving the file is enough.</p></div></aside></div>;
+  return <div className="drawer-backdrop" onMouseDown={onClose}><aside className="action-drawer connections-drawer" onMouseDown={(event) => event.stopPropagation()} aria-label="Research system connections"><div className="drawer-head"><button onClick={onClose}>×</button><span className="label">Connections</span><span className="action-mark mint">⌁</span></div><div className="drawer-title"><span>LOCAL RESEARCH BRIDGE</span><h2>Real tools, private context.</h2><p>Keys, Zotero records, Calendar events, and Kbase notes remain on this Mac. The deployed workbench receives only the output needed for your current session.</p></div><div className={`bridge-banner ${status ? "online" : "offline"}`}><span>{checking ? "···" : status ? "✓" : "!"}</span><div><strong>{checking ? "Checking local bridge" : status ? "Research bridge is online" : "Research bridge is offline"}</strong><small>{status ? "Listening securely on this Mac" : "The background connector needs to be started"}</small></div><button onClick={refresh}>{checking ? "Checking…" : "Test again"}</button></div><div className="connection-list"><article><span className="connection-logo deepseek">DS</span><div><strong>DeepSeek API</strong><small>{status?.deepseek.model || "deepseek-v4-flash"}</small></div>{connection(status?.deepseek.connected)}</article><article><span className="connection-logo kimi">KM</span><div><strong>Kimi API</strong><small>{status?.kimi.model || "kimi-k3"}</small></div>{connection(status?.kimi.connected)}</article><article><span className="connection-logo calendar">C</span><div><strong>macOS Calendar</strong><small>{status?.calendar.connected ? "Today view · read + write" : "Calendar permission required"}</small></div>{connection(status?.calendar.connected)}</article><article><span className="connection-logo zotero">Z</span><div><strong>Zotero Desktop</strong><small>{status?.zotero.connected ? `Local API · Zotero ${status.zotero.version || "ready"}` : "Open Zotero to connect"}</small></div>{connection(status?.zotero.connected)}</article><article><span className="connection-logo obsidian">O</span><div><strong>Obsidian · Kbase</strong><small>{status?.obsidian.connected ? "Read + write access" : "iCloud Vault unavailable"}</small></div>{connection(status?.obsidian.connected)}</article></div><section className="key-setup"><span className="label">LOCAL API KEYS</span><p>Both providers are checked through the bridge. To rotate a key, replace only the value after the equals sign.</p><code>/Users/biomech/Documents/workbench/.env.local</code><div><span><b>DEEPSEEK_API_KEY=</b><small>DeepSeek V4 Flash</small></span><span><b>KIMI_API_KEY=</b><small>Kimi K3 · Moonshot China endpoint</small></span></div><button onClick={copyPath}>{message || "Copy key file path"}</button></section><div className="privacy-note"><span>⌾</span><p><strong>Local privacy boundary</strong>Secrets are ignored by Git and never included in the deployed site. The bridge reloads this file for every request, so saving the file is enough.</p></div></aside></div>;
 }
 
 function ContextDrawer({ onClose }: { onClose: () => void }) {
