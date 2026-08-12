@@ -44,3 +44,17 @@ test("every rendered button declares an interaction handler", async () => {
   assert.match(source, /How to use your workbench/);
   assert.doesNotMatch(source, /Command library/);
 });
+
+test("client routes all bridge calls through pairing auth and keeps daily and source scopes explicit", async () => {
+  const source = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
+  assert.match(source, /Authorization.*Bearer/);
+  assert.match(source, /workbuddy-bridge-token/);
+  assert.match(source, /task\.date === today/);
+  assert.match(source, /sources\.kbase \? recordContext\(state\) : ""/);
+  assert.match(source, /role="dialog"/);
+  assert.match(source, /aria-modal="true"/);
+  assert.match(source, /Evidence manifest/);
+  assert.match(css, /\.focus-session \{ grid-column: 1; min-height: 0;[\s\S]*grid-template-columns: 1fr/);
+  assert.match(css, /\.debt-table \{[^}]*overflow-x: auto/);
+});

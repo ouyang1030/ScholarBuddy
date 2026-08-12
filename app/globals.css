@@ -1018,8 +1018,8 @@ body { font-size: 17px; line-height: 1.5; }
 .record-description { margin: 0; color: #77837b; font-size: 12px; line-height: 1.55; }
 .record-meta { margin-top: auto; padding-top: 16px; display: flex; align-items: center; justify-content: space-between; gap: 8px; color: #758279; font: 10px var(--font-geist-mono); }
 .editable-section { margin-top: 22px; }
-.debt-table { overflow-x: auto; }
-.debt-table { display: grid; border: 1px solid #e0e5df; border-radius: 10px; overflow: hidden; }
+.debt-table { display: grid; border: 1px solid #e0e5df; border-radius: 10px; overflow-x: auto; overflow-y: hidden; }
+.debt-table > button { min-width: 650px; }
 .debt-table > button { width: 100%; padding: 13px 14px; display: grid; grid-template-columns: 12px minmax(220px,1fr) 110px 120px auto; align-items: center; gap: 10px; border: 0; border-bottom: 1px solid #e7ebe6; background: #fff; color: #56625b; text-align: left; font-size: 11px; }
 .debt-table > button:last-child { border-bottom: 0; }
 .debt-table > button:hover { background: #f5f8f3; }
@@ -1105,6 +1105,15 @@ small { font-size: 13px !important; line-height: 1.45; }
 .drawer-title > span, .drawer-section-title > span, .drawer-section-title strong, .drawer-section-title > b, .drawer-sources label, .drawer-sources b, .drawer-footer strong, .small-note { font-size: 13px; }
 .command-results button > b, .command-results small { font-size: 13px !important; }
 .toast { font-size: 14px; }
+.pairing-card { margin: 18px 0; padding: 18px; display: grid; gap: 12px; border: 1px solid #d9e3d5; border-radius: 12px; background: #f1f6ec; }
+.pairing-card > b { color: #31422f; font-size: 17px; }
+.pairing-card p { margin: 0; color: #647260; font-size: 14px; line-height: 1.5; }
+.pairing-card label { display: grid; gap: 6px; color: #59675a; font-size: 13px; }
+.pairing-card input { width: 100%; min-height: 44px; padding: 0 12px; border: 1px solid #cbd8c7; border-radius: 8px; background: #fff; font-size: 15px; }
+.citation-warning { padding: 10px 12px; border-left: 3px solid #d08345; background: #fff1e4; color: #7c4e2c; font-size: 14px; }
+.evidence-manifest { padding: 14px 18px 18px; border-top: 1px solid #dde4dc; color: #58665e; font-size: 14px; }
+.evidence-manifest summary { cursor: pointer; color: #35453b; font-weight: 750; }
+.evidence-manifest p { margin: 10px 0 0; line-height: 1.45; }
 
 @media (max-width: 950px) {
   .record-board, .real-summary-grid { grid-template-columns: repeat(2, minmax(0,1fr)); }
@@ -1222,8 +1231,10 @@ small { font-size: 13px !important; line-height: 1.45; }
   .daily-intro-actions { width: 100%; }
   .daily-intro-actions button { flex: 1; }
   .daily-command-grid { grid-template-columns: 1fr; }
-  .focus-session { grid-column: 1; }
-  .focus-actions { grid-column: 1 / -1; grid-row: auto; width: 100%; }
+  .focus-session { grid-column: 1; min-height: 0; padding: 22px; display: grid; grid-template-columns: 1fr; grid-template-rows: auto; gap: 12px; overflow: visible; }
+  .focus-session .focus-top, .focus-session .focus-object, .focus-session h2, .focus-session > p, .focus-session .focus-wave, .focus-actions { grid-column: 1; grid-row: auto; width: 100%; margin: 0; }
+  .focus-session h2 { font-size: 36px; }
+  .focus-actions { align-self: auto; }
   .daily-task-list > div { grid-template-columns: 28px minmax(0,1fr); }
   .daily-task-list .task-check, .daily-task-list .task-copy { grid-row: 1; }
   .task-plan { display: none; }
