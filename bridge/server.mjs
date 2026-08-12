@@ -34,7 +34,7 @@ function corsHeaders(request, config) {
   const allowed = (config.WORKBUDDY_ORIGINS || "").split(",").map((item) => item.trim()).filter(Boolean);
   return {
     "Access-Control-Allow-Origin": allowed.includes(origin) ? origin : allowed[0] || "http://localhost:3000",
-    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type",
     "Access-Control-Allow-Private-Network": "true",
     "Access-Control-Max-Age": "600",
