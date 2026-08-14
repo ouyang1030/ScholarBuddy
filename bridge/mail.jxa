@@ -1,0 +1,42 @@
+function clean(value) {
+  return value === null || value === undefined ? "" : String(value);
+}
+
+function matchesAny(value, identifiers) {
+  const haystack = clean(value).toLowerCase();
+  return identifiers.some((item) => item.length >= 4 && haystack.includes(item));
+}
+
+function run(argv) {
+  const action = argv[0] || "scan";
+  const payload = argv[1] ? JSON.parse(argv[1]) : {};
+  if (action !== "scan") throw new Error(`Unsupported Mail action: ${action}`);
+
+  const Mail = Application("Mail");
+  const identifiers = (payload.identifiers || []).map((item) => clean(item).trim().toLowerCase()).filter(Boolean);
+  const since = new Date(Date.now() - Math.max(1, Number(payload.sinceDays) || 45) * 86400000);
+  const ceiling = Math.min(500, Math.max(20, Number(payload.limit) || 250));
+  const messages = Mail.inbox.messages();
+  const results = [];
+
+  for (let index = 0; index < messages.length && index < ceiling; index += 1) {
+    const message = messages[index];
+    try {
+      const receivedAt = message.dateReceived();
+      if (receivedAt < since) continue;
+      const subject = clean(message.subject());
+      const sender = clean(message.sender());
+      if (identifiers.length && !matchesAny(`${subject}\n${sender}`, identifiers)) continue;
+      results.push({
+        id: clean(message.messageId()) || clean(message.id()),
+        subject,
+        sender,
+        receivedAt: receivedAt.toISOString(),
+        body: clean(message.content()).slice(0, 30000),
+      });
+    } catch (_) { /* skip inaccessible messages */ }
+  }
+
+  results.sort((a, b) => a.receivedAt.localeCompare(b.receivedAt));
+  return JSON.stringify({ messages: results });
+}

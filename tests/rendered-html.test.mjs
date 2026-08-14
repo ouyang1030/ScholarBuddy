@@ -19,8 +19,8 @@ test("server-renders the Sports Research OS", async () => {
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
   const html = await response.text();
   assert.match(html, /WorkBuddy — Sports Research OS/i);
-  assert.match(html, /Today’s Research/i);
-  assert.match(html, /No tasks yet/i);
+  assert.match(html, /Move one thing forward/i);
+  assert.match(html, /Define one result worth finishing today/i);
   assert.match(html, /macOS Calendar \/ Live/i);
   assert.match(html, /Ready for a new focus session/i);
   assert.match(html, /Zotero \/ Live Library/i);
@@ -28,6 +28,8 @@ test("server-renders the Sports Research OS", async () => {
   assert.match(html, /No active project/i);
   assert.match(html, /Loading Kbase records/i);
   assert.match(html, /User Guide/i);
+  assert.match(html, /Manuscripts/i);
+  assert.match(html, /Library/i);
   assert.doesNotMatch(html, /codex-preview|Your site is taking shape/i);
 });
 

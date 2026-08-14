@@ -11,6 +11,7 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."
 const configFile = path.join(repoRoot, ".env.local");
 const tokenFile = path.join(repoRoot, "bridge", ".workbuddy-token");
 const calendarScript = path.join(repoRoot, "bridge", "calendar.jxa");
+const mailScript = path.join(repoRoot, "bridge", "mail.jxa");
 const execFileAsync = promisify(execFile);
 const MAX_BODY_BYTES = 250_000;
 const REQUEST_TIMEOUT_MS = 15_000;
@@ -140,11 +141,11 @@ async function searchZotero(config, query, limit = 5, signal) {
   return [...ranked.values()].sort((a, b) => b.score - a.score || a.item.title.localeCompare(b.item.title)).slice(0, limit).map((entry) => entry.item);
 }
 
-const recordCollections = new Set(["projects", "research-questions", "manuscripts", "research-debt", "experiments", "reviews", "operations", "reading-queue"]);
+const recordCollections = new Set(["projects", "research-questions", "manuscripts", "research-debt", "experiments", "reviews", "operations", "reading-queue", "submission-attempts", "submission-events"]);
 function recordRoot(config) { if (!config.OBSIDIAN_VAULT_PATH) throw new Error("OBSIDIAN_VAULT_PATH is not configured."); return path.join(config.OBSIDIAN_VAULT_PATH, "WorkBuddy"); }
 function safeCollection(value) { const collection = String(value || ""); if (!recordCollections.has(collection)) { const error = new Error("Unsupported WorkBuddy collection."); error.status = 422; throw error; } return collection; }
 function safeRecordId(value) { const id = String(value || "").trim(); if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(id)) { const error = new Error("Invalid WorkBuddy record id."); error.status = 422; throw error; } return id; }
-function newRecordId(collection) { const prefix = { projects: "PRJ", "research-questions": "RQ", manuscripts: "MS", "research-debt": "DEBT", experiments: "EXP", reviews: "REV", operations: "OPS", "reading-queue": "READ" }[collection] || "REC"; return `${prefix}-${randomUUID().slice(0, 12).toUpperCase()}`; }
+function newRecordId(collection) { const prefix = { projects: "PRJ", "research-questions": "RQ", manuscripts: "MS", "research-debt": "DEBT", experiments: "EXP", reviews: "REV", operations: "OPS", "reading-queue": "READ", "submission-attempts": "SUB", "submission-events": "SEV" }[collection] || "REC"; return `${prefix}-${randomUUID().slice(0, 12).toUpperCase()}`; }
 function serializeRecord(record) { const metadata = { ...record }; delete metadata.description; delete metadata.content; const lines = Object.entries(metadata).map(([key, value]) => `${key}: ${JSON.stringify(value ?? null)}`); const body = String(record.description || record.content || "").trim(); return `---\n${lines.join("\n")}\n---\n\n${body}${body ? "\n" : ""}`; }
 function parseRecord(text, fallbackId) { const match = text.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/); if (!match) return { id: fallbackId, title: fallbackId, description: text.trim() }; const record = {}; for (const line of match[1].split(/\r?\n/)) { const split = line.indexOf(":"); if (split < 1) continue; const key = line.slice(0, split).trim(); const raw = line.slice(split + 1).trim(); try { record[key] = JSON.parse(raw); } catch { record[key] = raw; } } return { ...record, id: fallbackId, description: match[2].trim() }; }
 
@@ -180,7 +181,8 @@ async function saveRecord(config, collectionValue, incoming) {
   let previous = {}; let exists = false;
   try { previous = parseRecord(await readFile(file, "utf8"), id); exists = true; } catch (error) { if (error?.code !== "ENOENT") throw error; }
   if (exists && incoming.updatedAt && incoming.updatedAt !== previous.updatedAt) { const error = new Error("This record changed after you opened it. Reload before saving."); error.status = 409; throw error; }
-  const record = { ...previous, ...incoming, id, collection, updatedAt: new Date().toISOString() };
+  const previousTime = new Date(previous.updatedAt || 0).getTime();
+  const record = { ...previous, ...incoming, id, collection, updatedAt: new Date(Math.max(Date.now(), Number.isFinite(previousTime) ? previousTime + 1 : 0)).toISOString() };
   record.title = requireText(record.title, "Record title", 1_000);
   if (!record.createdAt) record.createdAt = record.updatedAt;
   if (exists) await archiveVersion(config, collection, id, file);
@@ -191,6 +193,105 @@ async function saveRecord(config, collectionValue, incoming) {
 async function deleteRecord(config, collectionValue, idValue) {
   const collection = safeCollection(collectionValue); const id = safeRecordId(idValue); const file = path.join(recordRoot(config), collection, `${id}.md`);
   await archiveVersion(config, collection, id, file, "deleted"); await unlink(file); return { deleted: true, id };
+}
+
+const submissionStages = new Set(["Preparing", "Submitted", "Technical Check", "With Editor", "Under Review", "Reviews Complete", "Decision Pending", "Revision Required", "Revised Submission", "Accepted", "Rejected", "Withdrawn"]);
+const statusPatterns = [
+  ["Accepted", /\b(accept(?:ed|ance)|pleased to accept)\b/i],
+  ["Rejected", /\b(reject(?:ed|ion)|declin(?:e|ed))\b/i],
+  ["Revision Required", /\b(major revision|minor revision|revise and resubmit|revision (?:is )?required|invite you to revise)\b/i],
+  ["Reviews Complete", /\b(required reviews? (?:are )?complete|reviews? completed|all reviews? (?:have been )?received)\b/i],
+  ["Decision Pending", /\b(decision (?:in process|pending|being made)|awaiting (?:editor|decision))\b/i],
+  ["Under Review", /\b(under review|in peer review|reviewers? (?:assigned|invited)|sent (?:out )?for review)\b/i],
+  ["With Editor", /\b(with (?:the )?editor|editor assigned|handling editor|editorial assessment)\b/i],
+  ["Technical Check", /\b(technical check|quality check|initial checks?|submission checks?)\b/i],
+  ["Revised Submission", /\b(revised (?:manuscript|submission) (?:received|submitted)|revision submitted)\b/i],
+  ["Submitted", /\b(submission (?:received|confirmed|successful)|manuscript submitted|thank you for (?:your )?submission)\b/i],
+];
+
+function detectSubmissionStatus(value) {
+  const text = String(value || "").replace(/\s+/g, " ").slice(0, 30_000);
+  for (const [stage, pattern] of statusPatterns) if (pattern.test(text)) return stage;
+  return "";
+}
+
+function normalizeEmail(value = {}) {
+  return {
+    id: String(value.id || value.messageId || "").slice(0, 500),
+    subject: String(value.subject || "").slice(0, 2_000),
+    sender: String(value.sender || value.from || "").slice(0, 1_000),
+    receivedAt: new Date(value.receivedAt || value.date || Date.now()).toISOString(),
+    body: String(value.body || value.preview || "").slice(0, 30_000),
+  };
+}
+
+function submissionEmailCandidate(emailValue, attempts) {
+  const email = normalizeEmail(emailValue);
+  const haystack = `${email.subject}\n${email.sender}\n${email.body}`.toLowerCase();
+  const ranked = attempts.flatMap((attempt) => {
+    const submissionId = String(attempt.submissionId || "").trim();
+    const title = String(attempt.manuscriptTitle || attempt.title || "").trim();
+    const journal = String(attempt.journal || "").trim();
+    let score = 0;
+    if (submissionId && haystack.includes(submissionId.toLowerCase())) score += 8;
+    if (title.length >= 12 && haystack.includes(title.toLowerCase())) score += 4;
+    if (journal.length >= 4 && haystack.includes(journal.toLowerCase())) score += 2;
+    return score ? [{ attempt, score }] : [];
+  }).sort((a, b) => b.score - a.score);
+  const match = ranked[0];
+  const status = detectSubmissionStatus(`${email.subject}\n${email.body}`);
+  if (!match || !status) return null;
+  const confidence = match.score >= 8 ? "high" : match.score >= 4 ? "medium" : "low";
+  return { email, attemptId: match.attempt.id, manuscriptId: match.attempt.manuscriptId || "", status, rawStatus: email.subject, confidence, score: match.score };
+}
+
+async function addSubmissionEvent(config, incoming) {
+  const attemptId = safeRecordId(requireText(incoming.attemptId, "Submission attempt id", 100));
+  const stage = requireText(incoming.status, "Submission status", 100);
+  if (!submissionStages.has(stage)) { const error = new Error("Unsupported submission status."); error.status = 422; throw error; }
+  const eventDate = requireIsoDate(incoming.eventDate || new Date().toISOString(), "Submission event date").toISOString();
+  const attempts = await listRecords(config, "submission-attempts");
+  const attempt = attempts.find((item) => item.id === attemptId);
+  if (!attempt) { const error = new Error("Submission attempt was not found."); error.status = 404; throw error; }
+  const event = await saveRecord(config, "submission-events", {
+    ...incoming,
+    id: incoming.id,
+    title: incoming.title || `${stage} · ${eventDate.slice(0, 10)}`,
+    attemptId,
+    manuscriptId: attempt.manuscriptId || "",
+    eventDate,
+    status: stage,
+    source: incoming.source || "Manual",
+    confidence: incoming.confidence || "confirmed",
+  });
+  const existingStageDate = new Date(attempt.stageStartedAt || attempt.submittedAt || 0).getTime();
+  if (!Number.isFinite(existingStageDate) || new Date(eventDate).getTime() >= existingStageDate) {
+    await saveRecord(config, "submission-attempts", { ...attempt, status: stage, rawStatus: incoming.rawStatus || attempt.rawStatus || stage, stageStartedAt: eventDate, lastVerifiedAt: eventDate });
+  }
+  return event;
+}
+
+async function syncSubmissionEmails(config, suppliedEmails) {
+  const attempts = await listRecords(config, "submission-attempts");
+  if (!attempts.length) return { scanned: 0, updated: [], pending: [], ignored: 0 };
+  let emails = Array.isArray(suppliedEmails) ? suppliedEmails : null;
+  if (!emails) {
+    const identifiers = attempts.flatMap((attempt) => [attempt.submissionId, attempt.manuscriptTitle]).filter(Boolean).slice(0, 60);
+    emails = (await runMail("scan", { sinceDays: 45, limit: 250, identifiers })).messages || [];
+  }
+  const events = await listRecords(config, "submission-events");
+  const knownMessages = new Set(events.map((event) => event.emailMessageId).filter(Boolean));
+  const candidates = emails.map((email) => submissionEmailCandidate(email, attempts)).filter(Boolean).sort((a, b) => a.email.receivedAt.localeCompare(b.email.receivedAt));
+  const updated = []; const pending = [];
+  for (const candidate of candidates) {
+    if (candidate.email.id && knownMessages.has(candidate.email.id)) continue;
+    if (candidate.confidence !== "high") { pending.push(candidate); continue; }
+    const attempt = attempts.find((item) => item.id === candidate.attemptId);
+    if (attempt?.status === candidate.status && new Date(candidate.email.receivedAt) <= new Date(attempt.lastVerifiedAt || 0)) continue;
+    const event = await addSubmissionEvent(config, { attemptId: candidate.attemptId, status: candidate.status, rawStatus: candidate.rawStatus, eventDate: candidate.email.receivedAt, source: "Email", confidence: candidate.confidence, emailMessageId: candidate.email.id, description: `Detected from ${candidate.email.sender}: ${candidate.email.subject}` });
+    updated.push(event); if (candidate.email.id) knownMessages.add(candidate.email.id);
+  }
+  return { scanned: emails.length, updated, pending, ignored: Math.max(0, emails.length - candidates.length) };
 }
 
 async function walkMarkdown(root, current = root, files = [], ceiling = 2500, signal) {
@@ -262,6 +363,7 @@ async function bridgeStatus(config) {
   return status;
 }
 async function runCalendar(action, payload) { const { stdout } = await execFileAsync("/usr/bin/osascript", ["-l", "JavaScript", calendarScript, action, JSON.stringify(payload)], { timeout: 20_000, maxBuffer: 2_000_000 }); return JSON.parse(stdout.trim() || "{}"); }
+async function runMail(action, payload) { const { stdout } = await execFileAsync("/usr/bin/osascript", ["-l", "JavaScript", mailScript, action, JSON.stringify(payload)], { timeout: 30_000, maxBuffer: 4_000_000 }); return JSON.parse(stdout.trim() || "{}"); }
 function validateCalendar(payload, updating = false) { if (updating) requireText(payload.id, "Calendar event id", 300); requireText(payload.title, "Event title", 1000); const start = requireIsoDate(payload.start, "Event start"); const end = requireIsoDate(payload.end, "Event end"); if (end <= start) { const error = new Error("Event end must be after its start."); error.status = 422; throw error; } return payload; }
 
 async function saveAiNote(config, payload) {
@@ -286,6 +388,8 @@ async function handle(request, providedConfig) {
   if (url.pathname === "/workbench/state" && request.method === "GET") return json(origin, await workbenchState(config));
   if (url.pathname === "/workbench/record" && request.method === "POST") { const payload = await readJson(request); return json(origin, { record: await saveRecord(config, payload.collection, payload.record || {}) }, payload.record?.id ? 200 : 201); }
   if (url.pathname === "/workbench/record" && request.method === "DELETE") { const payload = await readJson(request); return json(origin, await deleteRecord(config, payload.collection, payload.id)); }
+  if (url.pathname === "/submissions/event" && request.method === "POST") return json(origin, { event: await addSubmissionEvent(config, await readJson(request)) }, 201);
+  if (url.pathname === "/submissions/email-sync" && request.method === "POST") { const payload = await readJson(request); return json(origin, await syncSubmissionEmails(config, payload.emails)); }
   if (url.pathname === "/obsidian/search" && request.method === "GET") return json(origin, { notes: await searchObsidian(config, url.searchParams.get("q") || "", 12, request.signal) });
   if (url.pathname === "/calendar/today" && request.method === "GET") { const requestedDate = url.searchParams.get("date") || new Date().toISOString().slice(0, 10); if (!/^\d{4}-\d{2}-\d{2}$/.test(requestedDate)) { const error = new Error("Calendar date must use YYYY-MM-DD."); error.status = 422; throw error; } const start = new Date(`${requestedDate}T00:00:00`); if (Number.isNaN(start.getTime())) { const error = new Error("Calendar date is invalid."); error.status = 422; throw error; } const end = new Date(start); end.setDate(end.getDate() + 1); return json(origin, await runCalendar("list", { start: start.toISOString(), end: end.toISOString() })); }
   if (url.pathname === "/calendar/event" && request.method === "POST") { const payload = await readJson(request); validateCalendar(payload, Boolean(payload.id)); return json(origin, await runCalendar(payload.id ? "update" : "create", payload), payload.id ? 200 : 201); }
@@ -339,4 +443,4 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   const initialConfig = await getConfig(); const port = Number(initialConfig.WORKBUDDY_BRIDGE_PORT || 32145); const server = createBridgeServer(Promise.resolve(initialConfig)); server.listen(port, "127.0.0.1", () => process.stdout.write(`WorkBuddy bridge ready at http://127.0.0.1:${port}\n`));
 }
 
-export { authorize, handle, invalidCitations, parseRecord, queryTerms, saveRecord };
+export { addSubmissionEvent, authorize, detectSubmissionStatus, handle, invalidCitations, parseRecord, queryTerms, saveRecord, submissionEmailCandidate, syncSubmissionEmails };

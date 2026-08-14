@@ -3,7 +3,7 @@ import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { authorize, handle, invalidCitations, parseRecord, saveRecord } from "../bridge/server.mjs";
+import { addSubmissionEvent, authorize, detectSubmissionStatus, handle, invalidCitations, parseRecord, saveRecord, submissionEmailCandidate, syncSubmissionEmails } from "../bridge/server.mjs";
 
 const allowedOrigin = "https://workbench.example";
 const bridgeToken = "test-token-with-at-least-thirty-two-characters";
@@ -84,4 +84,45 @@ test("calendar adapter uses interval overlap and preserves notes unless supplied
   assert.match(source, /endDate > start && startDate < end/);
   assert.match(source, /payload\.notes !== undefined/);
   assert.doesNotMatch(source, /startDate >= start && startDate < end/);
+});
+
+test("submission status detection normalizes publisher wording", () => {
+  assert.equal(detectSubmissionStatus("The required reviews are complete"), "Reviews Complete");
+  assert.equal(detectSubmissionStatus("Your manuscript is now under review"), "Under Review");
+  assert.equal(detectSubmissionStatus("We invite you to revise your manuscript"), "Revision Required");
+  assert.equal(detectSubmissionStatus("No workflow language here"), "");
+});
+
+test("submission email matching requires manuscript context and reports confidence", () => {
+  const attempts = [{ id: "SUB-one", manuscriptId: "MS-one", manuscriptTitle: "ACL workload in elite football", submissionId: "JSS-2026-0142", journal: "Journal of Sports Science" }];
+  const candidate = submissionEmailCandidate({ id: "mail-1", subject: "JSS-2026-0142 is now Under Review", sender: "editor@example.com", receivedAt: "2026-08-01T10:00:00Z" }, attempts);
+  assert.equal(candidate.attemptId, "SUB-one");
+  assert.equal(candidate.status, "Under Review");
+  assert.equal(candidate.confidence, "high");
+});
+
+test("submission events append history and advance the attempt", async () => {
+  const vault = await mkdtemp(path.join(os.tmpdir(), "workbuddy-submission-"));
+  try {
+    await saveRecord(config(vault), "manuscripts", { id: "MS-one", title: "Paper one" });
+    await saveRecord(config(vault), "submission-attempts", { id: "SUB-one", title: "Paper one at Journal A", manuscriptId: "MS-one", manuscriptTitle: "Paper one", journal: "Journal A", submissionId: "JA-101", status: "Submitted", submittedAt: "2026-07-01T00:00:00.000Z" });
+    const event = await addSubmissionEvent(config(vault), { attemptId: "SUB-one", status: "Under Review", eventDate: "2026-07-10T00:00:00.000Z", rawStatus: "Reviewers assigned" });
+    assert.equal(event.status, "Under Review");
+    const state = await (await handle(request("/workbench/state"), config(vault))).json();
+    assert.equal(state["submission-events"].length, 1);
+    assert.equal(state["submission-attempts"][0].status, "Under Review");
+    assert.equal(state["submission-attempts"][0].stageStartedAt, "2026-07-10T00:00:00.000Z");
+  } finally { await rm(vault, { recursive: true, force: true }); }
+});
+
+test("high-confidence email sync is idempotent", async () => {
+  const vault = await mkdtemp(path.join(os.tmpdir(), "workbuddy-email-sync-"));
+  try {
+    await saveRecord(config(vault), "submission-attempts", { id: "SUB-one", title: "Paper one", manuscriptId: "MS-one", manuscriptTitle: "Paper one", journal: "Journal A", submissionId: "JA-101", status: "Submitted" });
+    const emails = [{ id: "mail-101", subject: "JA-101 is now under review", sender: "editor@journal.test", receivedAt: "2026-08-01T10:00:00Z" }];
+    const first = await syncSubmissionEmails(config(vault), emails);
+    const second = await syncSubmissionEmails(config(vault), emails);
+    assert.equal(first.updated.length, 1);
+    assert.equal(second.updated.length, 0);
+  } finally { await rm(vault, { recursive: true, force: true }); }
 });
