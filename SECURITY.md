@@ -12,4 +12,4 @@ Security fixes target the latest release and the default branch.
 
 ## Security boundary
 
-The hosted UI is not trusted with local credentials. The Bridge must remain bound to loopback, require exact allowed origins and a paired bearer credential, and keep provider keys in ignored local configuration. A public deployment does not make a visitor's local data public.
+The hosted UI is not trusted with local credentials. The Bridge must remain bound to loopback, require exact allowed origins and a paired bearer credential, and keep provider keys in macOS Keychain or ignored local configuration. The local setup page requires direct loopback navigation and a short-lived same-origin setup session; it never returns stored keys to browser JavaScript. A public deployment does not make a visitor's local data public.

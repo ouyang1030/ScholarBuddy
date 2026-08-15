@@ -16,7 +16,14 @@ function run(argv) {
   const identifiers = (payload.identifiers || []).map((item) => clean(item).trim().toLowerCase()).filter(Boolean);
   const since = new Date(Date.now() - Math.max(1, Number(payload.sinceDays) || 45) * 86400000);
   const ceiling = Math.min(500, Math.max(20, Number(payload.limit) || 250));
-  const messages = Mail.inbox.messages();
+  // Let Mail filter by date instead of materialising the whole inbox and
+  // trusting its return order; fall back when the predicate is unsupported.
+  let messages;
+  try {
+    messages = Mail.inbox.messages.whose({ dateReceived: { _greaterThan: since } })();
+  } catch (_) {
+    messages = Mail.inbox.messages();
+  }
   const results = [];
 
   for (let index = 0; index < messages.length && index < ceiling; index += 1) {

@@ -1,10 +1,7 @@
-.submission-tracker { border: 1px solid var(--line); border-radius: 16px; background: white; padding: 26px; box-shadow: var(--shadow); }
-.tracker-toolbar { display: flex; justify-content: space-between; gap: 20px; align-items: center; }
-.tracker-toolbar h3 { margin: 5px 0 3px; font-size: 22px; letter-spacing: -.025em; }
-.tracker-toolbar p { margin: 0; color: #7d8982; font-size: 13px; }
+.submission-tracker { border: 1px solid var(--line); border-radius: 16px; background: white; padding: 20px; box-shadow: var(--shadow); }
+/* Same heading rhythm as the feedback and research-gap cards. */
+.tracker-toolbar { display: flex; justify-content: space-between; gap: 20px; align-items: center; margin-bottom: 12px; }
 .tracker-toolbar > span { display: flex; gap: 8px; }
-.auto-sync { min-height: 44px; padding: 0 10px; border: 1px solid #dce3dc; border-radius: 9px; display: flex; align-items: center; gap: 7px; color: #657169; font-size: 11px; white-space: nowrap; }
-.auto-sync input { accent-color: var(--lime-deep); }
 .tracker-message { margin: 18px 0 0; padding: 11px 13px; border-radius: 9px; background: #edf5e5; border: 1px solid #d3e2c5; color: #58713d; font-size: 12px; }
 .pending-email-updates { margin-top: 12px; padding: 16px; border: 1px solid #ead8bd; border-radius: 11px; background: #fff9ee; }
 .pending-email-updates > .label { color: #98703b; }
@@ -15,7 +12,7 @@
 .pending-email-updates p { margin: 0; color: #71675b; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pending-email-updates small { color: #998b7a; font-size: 10px; }
 .pending-email-updates article > span { display: flex; gap: 7px; flex: 0 0 auto; }
-.attempt-tabs { display: flex; gap: 8px; margin: 24px 0 14px; overflow-x: auto; }
+.attempt-tabs { display: flex; gap: 8px; margin: 0 0 14px; overflow-x: auto; }
 .attempt-tabs button { flex: 0 0 190px; min-height: 76px; border: 1px solid #dfe4dd; border-radius: 10px; background: #fafbf8; color: #445149; padding: 10px 12px; display: flex; flex-direction: column; align-items: flex-start; gap: 3px; text-align: left; }
 .attempt-tabs button.active { background: #202a27; border-color: #202a27; color: white; }
 .attempt-tabs span { color: #8c9690; font: 9px var(--font-geist-mono); letter-spacing: .1em; text-transform: uppercase; }
@@ -45,3 +42,61 @@
 .submission-timeline strong { font-size: 13px; }
 .submission-timeline p { margin: 0; color: #68746d; font-size: 12px; }
 .submission-timeline small { color: #929b96; font-size: 10px; }
+
+/* ── Summary view ─────────────────────────────────────── */
+.manuscript-summary { display: flex; flex-direction: column; gap: 16px; }
+
+/* KPI row */
+.summary-kpis { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.summary-kpi { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 20px 14px; text-align: center; }
+.summary-kpi small { color: #8b9690; font-size: 10px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+.summary-kpi strong { font-size: 1.8rem; font-weight: 800; color: #202a27; line-height: 1.1; }
+.summary-kpi > span { color: #8b9690; font-size: 10px; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Pipeline funnel */
+.summary-pipeline { padding: 22px; }
+.pipeline-funnel { display: flex; flex-direction: column; gap: 4px; margin-top: 16px; }
+.funnel-row-wrap { display: flex; flex-direction: column; }
+.funnel-bar { position: relative; width: 100%; display: flex; align-items: center; gap: 10px; min-height: 46px; padding: 0 14px 0 0; border: 1px solid #e8ece6; border-radius: 10px; background: #fafbf9; overflow: hidden; cursor: pointer; transition: border-color 0.15s, box-shadow 0.15s; }
+.funnel-bar:hover { border-color: var(--bar-color); box-shadow: 0 0 0 1px color-mix(in srgb, var(--bar-color) 20%, transparent); }
+.funnel-bar.expanded { border-color: var(--bar-color); box-shadow: 0 0 0 1px color-mix(in srgb, var(--bar-color) 25%, transparent); }
+.funnel-bar.empty { opacity: 0.5; cursor: default; }
+.funnel-bar.empty:hover { border-color: #e8ece6; box-shadow: none; }
+
+/* Colored left accent strip */
+.funnel-accent { flex: 0 0 4px; align-self: stretch; background: var(--bar-color); border-radius: 10px 0 0 10px; }
+
+/* Background fill bar (proportional) */
+.funnel-fill { position: absolute; inset: 0; width: var(--bar-fill, 0%); background: color-mix(in srgb, var(--bar-color) 8%, transparent); pointer-events: none; border-radius: 10px; transition: width 0.3s ease; }
+
+/* Stage icon */
+.funnel-icon { flex: 0 0 auto; width: 26px; text-align: center; font-size: 14px; color: var(--bar-color); position: relative; z-index: 1; }
+
+.funnel-label { flex: 1; font-size: 0.82rem; font-weight: 600; color: #445149; text-align: left; position: relative; z-index: 1; }
+.funnel-count { font-size: 1.1rem; font-weight: 800; color: var(--bar-color); min-width: 22px; text-align: right; position: relative; z-index: 1; }
+.funnel-chevron { font-size: 10px; color: #8b9690; position: relative; z-index: 1; }
+
+/* Expanded detail list */
+.funnel-detail { display: flex; flex-direction: column; gap: 3px; padding: 6px 0 8px 10px; animation: funnel-expand 0.15s ease-out; }
+@keyframes funnel-expand { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+
+.funnel-detail-item { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border: 1px solid #edf0ea; border-radius: 9px; background: #f8faf6; text-align: left; cursor: pointer; transition: background 0.12s, border-color 0.12s, transform 0.1s; }
+.funnel-detail-item:hover { background: #eef2ea; border-color: #d9dfd5; transform: translateX(3px); }
+
+.funnel-detail-left { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.funnel-detail-id { color: #8b9690; font: 10px/1 var(--font-geist-mono); letter-spacing: 0.08em; }
+.funnel-detail-item strong { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.funnel-detail-item .funnel-detail-left small { color: #8b9690; font-size: 10px; }
+
+.funnel-detail-right { flex: 0 0 72px; display: flex; flex-direction: column; align-items: flex-end; gap: 3px; }
+.funnel-detail-progress { width: 56px; height: 5px; border-radius: 3px; background: #e4e8e0; overflow: hidden; }
+.funnel-detail-progress-fill { display: block; height: 100%; border-radius: 3px; background: hsl(152 55% 48%); transition: width 0.3s ease; }
+.funnel-detail-right small { color: #8b9690; font-size: 10px; font-weight: 600; }
+
+.funnel-detail-arrow { flex: 0 0 auto; color: #c0c8c2; font-size: 14px; transition: color 0.12s, transform 0.12s; }
+.funnel-detail-item:hover .funnel-detail-arrow { color: #6b7770; transform: translateX(2px); }
+
+@media (max-width: 600px) {
+  .summary-kpis { grid-template-columns: 1fr; }
+  .funnel-detail-right { display: none; }
+}

@@ -1,501 +1,720 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { bridgeBaseUrl, bridgeFetch, bridgeHealthFetch } from "./lib/bridge-client";
-import type { Action, AiProvider, BridgeIssue, BridgeStatus, CalendarEvent, CollectionKey, FocusCalendarBlock, ModuleKey, RecordItem, SubmissionEmailCandidate, SubmissionSyncResult, WorkbenchState, WorkflowResult, ZoteroItem, ZoteroPassage } from "./types";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { bridgeFetch, bridgeHealthFetch, exchangeBridgePairingCode } from "./lib/bridge-client";
+import {
+  collectionLabels,
+  emptyState,
+  navItems,
+  quickActions,
+  submissionAlertKey,
+  submissionAlerts,
+} from "./lib/workbench";
+import type { SubmissionAlert } from "./lib/workbench";
+import type {
+  Action,
+  BridgeIssue,
+  BridgeStatus,
+  CollectionKey,
+  ModuleKey,
+  RecordItem,
+  SubmissionSyncResult,
+  WorkbenchState,
+} from "./types";
+import { PaperCelebration, type PaperMilestone } from "./components/Celebrations";
+import { SourceDot } from "./components/primitives";
+import { useOverlayFocus } from "./components/useOverlayFocus";
+import { RecordEditor, type EditorState } from "./components/drawers/RecordEditor";
+import { ActionDrawer } from "./components/drawers/ActionDrawer";
+import { ConnectionsDrawer } from "./components/drawers/ConnectionsDrawer";
+import { ContextDrawer } from "./components/drawers/ContextDrawer";
+import { GuideDrawer } from "./components/drawers/GuideDrawer";
+import { Dashboard } from "./components/modules/Dashboard";
+import { LibraryModule } from "./components/modules/LibraryModule";
+import { ManuscriptModule } from "./components/modules/ManuscriptModule";
+import { OperationsModule } from "./components/modules/OperationsModule";
+import { ProjectsModule } from "./components/modules/ProjectsModule";
+import type { DataProps } from "./lib/workbench";
 
-const emptyState: WorkbenchState = { projects: [], "research-questions": [], manuscripts: [], "research-debt": [], experiments: [], reviews: [], operations: [], "reading-queue": [], passages: [], "submission-attempts": [], "submission-events": [] };
-const aiProviders: { id: AiProvider; name: string; short: string; fallbackModel: string }[] = [
-  { id: "deepseek", name: "DeepSeek", short: "DS", fallbackModel: "V4 Flash" },
-  { id: "kimi", name: "Kimi", short: "KM", fallbackModel: "K3" },
-  { id: "openai", name: "ChatGPT / OpenAI", short: "AI", fallbackModel: "GPT-5.6 Terra" },
-  { id: "claude", name: "Claude", short: "CL", fallbackModel: "Sonnet 5" },
-  { id: "grok", name: "Grok", short: "GX", fallbackModel: "4.6" },
-  { id: "gemini", name: "Gemini", short: "GM", fallbackModel: "3.6 Flash" },
-];
-function isAiProvider(value: string | null): value is AiProvider { return aiProviders.some((provider) => provider.id === value); }
-const navItems: { key: ModuleKey; label: string; icon: string }[] = [
-  { key: "dashboard", label: "Today", icon: "⌂" }, { key: "projects", label: "Projects", icon: "▦" },
-  { key: "manuscript", label: "Manuscripts", icon: "¶" }, { key: "library", label: "Library", icon: "⌁" },
-  { key: "operations", label: "Operations", icon: "◷" },
-];
-const quickActions: Action[] = [
-  { label: "Ask research knowledge", meta: "Obsidian", tone: "mint", command: "@ask-knowledge" },
-  { label: "Find evidence for a claim", meta: "Zotero", tone: "blue", command: "@evidence-for-claim" },
-  { label: "Explain a result", meta: "Statistics", tone: "violet", command: "@result-explain" },
-  { label: "Review manuscript section", meta: "Reviewer", tone: "orange", command: "@reviewer-critique" },
-  { label: "Plan today’s research", meta: "Planning", tone: "mint", command: "@plan-today" },
-  { label: "Draft manuscript section", meta: "Writing", tone: "violet", command: "@write-section" },
-];
-const collectionLabels: Record<CollectionKey, string> = {
-  projects: "Project", "research-questions": "Research question", manuscripts: "Manuscript", "research-debt": "Research debt",
-  experiments: "Experiment", reviews: "Review item", operations: "PhD operation", "reading-queue": "Reading queue item",
-  passages: "Passage", "submission-attempts": "Submission attempt", "submission-events": "Submission event",
-};
+const READ_SUBMISSION_ALERTS_KEY = "workbuddy-read-submission-alerts-v1";
 
-const submissionStages = ["Preparing", "Submitted", "Technical Check", "With Editor", "Under Review", "Reviews Complete", "Decision Pending", "Revision Required", "Revised Submission", "Accepted", "Published", "Rejected", "Withdrawn"];
-
-function clampProgress(value: unknown) { return Math.max(0, Math.min(100, Number(value) || 0)); }
-function localDateKey(date: Date) { return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`; }
-function daysSince(value?: string) { if (!value) return 0; return Math.max(0, Math.floor((Date.now() - new Date(value).getTime()) / 86400000)); }
-function daysUntil(value?: string) { if (!value) return null; return Math.ceil((new Date(value).getTime() - Date.now()) / 86400000); }
-function shortDate(value?: string) { if (!value) return "Not set"; const date = new Date(value); return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric" }).format(date); }
-function timeLabel(iso: string) { return new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(iso)); }
-function calendarDisplayName(value: string) { return ({ "个人": "Personal", "工作": "Work", "家庭": "Family", "生日": "Birthdays", "中国节假日": "Chinese holidays" } as Record<string, string>)[value.trim()] || value; }
-function durationMinutes(start: string, end: string) { return Math.max(1, Math.round((new Date(end).getTime() - new Date(start).getTime()) / 60000)); }
-function recordContext(state: WorkbenchState) {
-  const project = state.projects.find((item) => item.active) || state.projects[0];
-  const rq = state["research-questions"].find((item) => item.status === "Active") || state["research-questions"][0];
-  return [project && `Project ${project.id}: ${project.title}`, rq && `Research question ${rq.id}: ${rq.title}`].filter(Boolean).join("\n");
-}
-
-function ProgressRing({ value }: { value: number }) {
-  const normalized = clampProgress(value);
-  return <div className="progress-ring" style={{ "--progress": `${normalized * 3.6}deg` } as React.CSSProperties}><div><strong>{normalized}</strong><span>%</span></div></div>;
-}
-function SourceDot({ tone = "green" }: { tone?: string }) { return <span className={`source-dot ${tone}`} aria-hidden="true" />; }
-function EmptyState({ title, detail, action, onAction }: { title: string; detail?: string; action?: string; onAction?: () => void }) {
-  return <div className="real-empty"><span>◇</span><div><strong>{title}</strong>{detail && <p>{detail}</p>}</div>{action && onAction && <button onClick={onAction}>{action} →</button>}</div>;
-}
-function MetaPill({ children, tone = "neutral" }: { children: React.ReactNode; tone?: string }) { return <span className={`status-pill ${tone}`}><i />{children}</span>; }
-
-type EditorState = { collection: CollectionKey; record?: Partial<RecordItem> } | null;
-function RecordEditor({ editor, state, onClose, onSave, onDelete }: { editor: NonNullable<EditorState>; state: WorkbenchState; onClose: () => void; onSave: (collection: CollectionKey, record: Partial<RecordItem>) => Promise<void>; onDelete: (collection: CollectionKey, id: string) => Promise<void> }) {
-  const [form, setForm] = useState<Partial<RecordItem>>({ status: "Active", progress: 0, ...editor.record });
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
-  const [confirmDelete, setConfirmDelete] = useState(false);
-  const set = (key: keyof RecordItem, value: string | number | boolean) => setForm((current) => ({ ...current, [key]: value }));
-  const save = async () => {
-    if (!String(form.title || "").trim()) { setError("Title is required."); return; }
-    setSaving(true); setError("");
-    try { await onSave(editor.collection, { ...form, title: String(form.title).trim(), progress: clampProgress(form.progress) }); onClose(); }
-    catch (saveError) { setError(saveError instanceof Error ? saveError.message : "Could not save this record."); }
-    finally { setSaving(false); }
-  };
-  const remove = async () => {
-    if (!form.id) return;
-    setSaving(true); setError("");
-    try { await onDelete(editor.collection, form.id); onClose(); }
-    catch (deleteError) { setError(deleteError instanceof Error ? deleteError.message : "Could not delete this record."); setSaving(false); }
-  };
-  const isSubmission = editor.collection === "submission-attempts" || editor.collection === "submission-events";
-  const showProgress = editor.collection !== "reading-queue" && !isSubmission;
-  const existing = Boolean(form.id);
-  const supportsPaperLink = ["reviews", "research-debt", "operations", "reading-queue"].includes(editor.collection);
-  return <div className="drawer-backdrop" onMouseDown={onClose}><aside className="action-drawer record-editor" role="dialog" aria-modal="true" tabIndex={-1} onMouseDown={(event) => event.stopPropagation()} aria-label={`Edit ${collectionLabels[editor.collection]}`}>
-    <div className="drawer-head"><button onClick={onClose}>×</button><span className="label">KBASE / {editor.collection.toUpperCase()}</span><span className="action-mark mint">✎</span></div>
-    <div className="drawer-title">{form.id && <span>{form.id}</span>}<h2>{existing ? `Edit ${collectionLabels[editor.collection]}` : `New ${collectionLabels[editor.collection]}`}</h2><p>Saved as a readable Markdown record in Kbase. Manual values remain authoritative until you change them.</p></div>
-    <div className="record-form">
-      <label className="wide"><span>Title</span><input autoFocus value={form.title || ""} onChange={(event) => set("title", event.target.value)} /></label>
-      <label className="wide"><span>Notes</span><textarea value={form.description || ""} onChange={(event) => set("description", event.target.value)} /></label>
-      <label><span>Status</span><select value={form.status || (isSubmission ? "Preparing" : "Active")} onChange={(event) => set("status", event.target.value)}>{isSubmission ? submissionStages.map((stage) => <option key={stage}>{stage}</option>) : <><option>Active</option><option>Planned</option><option>In progress</option><option>Blocked</option><option>Resolved</option><option>Completed</option><option>Archived</option></>}</select></label>
-      {showProgress && <label><span>Manual progress · {clampProgress(form.progress)}%</span><input type="range" min="0" max="100" value={clampProgress(form.progress)} onChange={(event) => set("progress", Number(event.target.value))} /></label>}
-      {editor.collection === "projects" && <><label><span>Phase</span><input value={form.phase || ""} onChange={(event) => set("phase", event.target.value)} placeholder="Literature, analysis, writing…" /></label><label><span>Keywords</span><input value={form.keywords || ""} onChange={(event) => set("keywords", event.target.value)} placeholder="Comma-separated retrieval terms" /></label><label className="checkbox-label"><input type="checkbox" checked={Boolean(form.active)} onChange={(event) => set("active", event.target.checked)} /><span>Active project</span></label></>}
-      {editor.collection === "research-questions" && <><label><span>Linked project</span><select value={form.linkedProject || ""} onChange={(event) => set("linkedProject", event.target.value)}><option value="">Not linked</option>{state.projects.map((project) => <option key={project.id} value={project.id}>{project.title}</option>)}</select></label><label><span>Keywords</span><input value={form.keywords || ""} onChange={(event) => set("keywords", event.target.value)} /></label></>}
-      {editor.collection === "manuscripts" && <><label><span>Linked project</span><select value={form.projectId || ""} onChange={(event) => { const project = state.projects.find((item) => item.id === event.target.value); set("projectId", event.target.value); set("projectTitle", project?.title || ""); }}><option value="">Not linked</option>{state.projects.map((project) => <option key={project.id} value={project.id}>{project.title}</option>)}</select></label><label><span>Paper stage</span><select value={form.stage || "Concept"} onChange={(event) => set("stage", event.target.value)}><option>Concept</option><option>Developing</option><option>Internal review</option><option>Ready to submit</option><option>Submitted</option><option>Revision</option><option>Accepted</option><option>Published</option>{form.stage === "Accepted / published" && <option>Accepted / published</option>}</select></label><label className="wide"><span>Next action</span><input value={form.nextAction || ""} onChange={(event) => set("nextAction", event.target.value)} placeholder="The one concrete move that advances this paper" /></label><label><span>Target journal</span><input value={form.journal || ""} onChange={(event) => set("journal", event.target.value)} /></label><label><span>Current words</span><input inputMode="numeric" value={form.wordCount || ""} onChange={(event) => set("wordCount", Number(event.target.value.replace(/\D/g, "")))} /></label><label><span>Target words</span><input inputMode="numeric" value={form.targetWords || ""} onChange={(event) => set("targetWords", Number(event.target.value.replace(/\D/g, "")))} /></label><label><span>Evidence coverage · {clampProgress(form.evidenceCoverage)}%</span><input type="range" min="0" max="100" value={clampProgress(form.evidenceCoverage)} onChange={(event) => set("evidenceCoverage", Number(event.target.value))} /></label></>}
-      {supportsPaperLink && <label><span>Linked paper</span><select value={form.manuscriptId || ""} onChange={(event) => { const manuscript = state.manuscripts.find((item) => item.id === event.target.value); set("manuscriptId", event.target.value); set("manuscriptTitle", manuscript?.title || ""); }}><option value="">Not linked</option>{state.manuscripts.map((manuscript) => <option key={manuscript.id} value={manuscript.id}>{manuscript.title}</option>)}</select></label>}
-      {editor.collection === "research-debt" && <><label><span>Severity</span><select value={form.severity || "Major"} onChange={(event) => set("severity", event.target.value)}><option>Critical</option><option>Major</option><option>Minor</option></select></label><label><span>Type</span><select value={form.type || "Evidence"} onChange={(event) => set("type", event.target.value)}><option>Evidence</option><option>Methods</option><option>Statistics</option><option>Writing</option><option>Reproducibility</option></select></label><label><span>Paper section</span><input value={form.manuscriptSection || ""} onChange={(event) => set("manuscriptSection", event.target.value)} placeholder="Methods, Results…" /></label><label><span>Due date</span><input type="date" value={form.dueDate || ""} onChange={(event) => set("dueDate", event.target.value)} /></label></>}
-      {editor.collection === "experiments" && <><label><span>Method</span><input value={form.method || ""} onChange={(event) => set("method", event.target.value)} /></label><label><span>Linked project</span><select value={form.linkedProject || ""} onChange={(event) => set("linkedProject", event.target.value)}><option value="">Not linked</option>{state.projects.map((project) => <option key={project.id} value={project.id}>{project.title}</option>)}</select></label></>}
-      {editor.collection === "reviews" && <><label><span>Severity</span><select value={form.severity || "Major"} onChange={(event) => set("severity", event.target.value)}><option>Major</option><option>Minor</option><option>Suggestion</option></select></label><label><span>Review round</span><select value={form.reviewRound || "Internal"} onChange={(event) => set("reviewRound", event.target.value)}><option>Internal</option><option>Supervisor</option><option>Co-author</option><option>R1</option><option>R2</option><option>R3</option></select></label><label><span>Source</span><input value={form.reviewSource || ""} onChange={(event) => set("reviewSource", event.target.value)} placeholder="Reviewer 2, supervisor…" /></label><label><span>Paper section</span><input value={form.manuscriptSection || ""} onChange={(event) => set("manuscriptSection", event.target.value)} placeholder="Methods, Results…" /></label><label className="wide"><span>Resolution note</span><textarea value={form.resolution || ""} onChange={(event) => set("resolution", event.target.value)} placeholder="What changed, or why no change was made" /></label></>}
-      {editor.collection === "operations" && <><label><span>Linked project</span><select value={form.projectId || ""} onChange={(event) => { const project = state.projects.find((item) => item.id === event.target.value); set("projectId", event.target.value); set("projectTitle", project?.title || ""); }}><option value="">Not linked</option>{state.projects.map((project) => <option key={project.id} value={project.id}>{project.title}</option>)}</select></label><label><span>Type</span><select value={form.type || "Submission"} onChange={(event) => set("type", event.target.value)}><option>Submission</option><option>Supervision</option><option>Commitment</option><option>Meeting</option><option>Deadline</option></select></label><label><span>Due date</span><input type="date" value={form.dueDate || ""} onChange={(event) => set("dueDate", event.target.value)} /></label></>}
-      {editor.collection === "submission-attempts" && <><label><span>Manuscript ID</span><input value={form.manuscriptId || ""} onChange={(event) => set("manuscriptId", event.target.value)} placeholder="MS-…" /></label><label><span>Manuscript title</span><input value={form.manuscriptTitle || ""} onChange={(event) => set("manuscriptTitle", event.target.value)} /></label><label><span>Journal</span><input value={form.journal || ""} onChange={(event) => set("journal", event.target.value)} /></label><label><span>Submission ID</span><input value={form.submissionId || ""} onChange={(event) => set("submissionId", event.target.value)} /></label><label className="wide"><span>Editorial Manager / ScholarOne URL</span><input type="url" value={form.portalUrl || ""} onChange={(event) => set("portalUrl", event.target.value)} placeholder="https://…" /></label><label><span>Corresponding author</span><input value={form.correspondingAuthor || ""} onChange={(event) => set("correspondingAuthor", event.target.value)} /></label><label><span>Author email</span><input type="email" value={form.correspondingEmail || ""} onChange={(event) => set("correspondingEmail", event.target.value)} /></label><label><span>Round</span><select value={form.round || "Initial"} onChange={(event) => set("round", event.target.value)}><option>Initial</option><option>R1</option><option>R2</option><option>R3</option></select></label><label><span>Submitted</span><input type="date" value={(form.submittedAt || "").slice(0, 10)} onChange={(event) => set("submittedAt", event.target.value)} /></label><label><span>Current stage since</span><input type="date" value={(form.stageStartedAt || "").slice(0, 10)} onChange={(event) => set("stageStartedAt", event.target.value)} /></label><label><span>Last verified</span><input type="date" value={(form.lastVerifiedAt || "").slice(0, 10)} onChange={(event) => set("lastVerifiedAt", event.target.value)} /></label><label><span>Revision deadline</span><input type="date" value={(form.dueDate || "").slice(0, 10)} onChange={(event) => set("dueDate", event.target.value)} /></label><label><span>Expected response</span><input type="date" value={(form.expectedResponseDate || "").slice(0, 10)} onChange={(event) => set("expectedResponseDate", event.target.value)} /></label><label><span>Next check</span><input type="date" value={(form.nextCheckDate || "").slice(0, 10)} onChange={(event) => set("nextCheckDate", event.target.value)} /></label><label><span>Follow-up due</span><input type="date" value={(form.followUpDue || "").slice(0, 10)} onChange={(event) => set("followUpDue", event.target.value)} /></label></>}
-      {editor.collection === "submission-events" && <><label><span>Submission attempt ID</span><input value={form.attemptId || ""} onChange={(event) => set("attemptId", event.target.value)} /></label><label><span>Event date</span><input type="date" value={(form.eventDate || "").slice(0, 10)} onChange={(event) => set("eventDate", event.target.value)} /></label><label><span>Source</span><select value={form.source || "Manual"} onChange={(event) => set("source", event.target.value)}><option>Manual</option><option>Email</option><option>Portal</option></select></label><label className="wide"><span>Original publisher status</span><input value={form.rawStatus || ""} onChange={(event) => set("rawStatus", event.target.value)} /></label></>}
-    </div>
-    {error && <div className="workflow-error"><span>!</span><p>{error}</p><button onClick={() => setError("")}>Dismiss</button></div>}
-    <div className="record-editor-footer">{form.id ? confirmDelete ? <span className="delete-confirm"><button onClick={remove}>Delete permanently</button><button onClick={() => setConfirmDelete(false)}>Keep</button></span> : <button className="delete-record" onClick={() => setConfirmDelete(true)}>Delete</button> : <span />}<span><button className="quiet-button" onClick={onClose}>Cancel</button><button className="primary-button" disabled={saving} onClick={save}>{saving ? "Saving…" : "Save to Kbase"}</button></span></div>
-  </aside></div>;
-}
-
-function CalendarPanel() {
-  const [events, setEvents] = useState<CalendarEvent[]>([]); const [calendars, setCalendars] = useState<string[]>([]);
-  const [loading, setLoading] = useState(true); const [error, setError] = useState(""); const [now, setNow] = useState(() => new Date());
-  const [edit, setEdit] = useState<CalendarEvent | "new" | null>(null); const [draft, setDraft] = useState({ title: "", time: "09:00", minutes: "60", calendar: "" }); const [deleteId, setDeleteId] = useState("");
-  const refresh = async () => { setLoading(true); setError(""); try { const response = await bridgeFetch(`/calendar/today?date=${localDateKey(new Date())}`, { signal: AbortSignal.timeout(20000) }); const body = await response.json(); if (!response.ok) throw new Error(body.error || "Calendar could not be loaded."); setEvents(body.events || []); setCalendars(body.calendars || []); } catch (e) { setError(e instanceof Error ? e.message : "Calendar could not be loaded."); } finally { setLoading(false); } };
-  useEffect(() => { const start = window.setTimeout(() => void refresh(), 0); const timer = window.setInterval(() => void refresh(), 60000); const clock = window.setInterval(() => setNow(new Date()), 1000); return () => { window.clearTimeout(start); window.clearInterval(timer); window.clearInterval(clock); }; }, []);
-  useEffect(() => { const sync = () => void refresh(); window.addEventListener("workbuddy-calendar-refresh", sync); return () => window.removeEventListener("workbuddy-calendar-refresh", sync); }, []);
-  const openEditor = (event?: CalendarEvent) => { setEdit(event || "new"); setDraft(event ? { title: event.title, time: timeLabel(event.start), minutes: String(durationMinutes(event.start, event.end)), calendar: event.calendar } : { title: "", time: timeLabel(new Date().toISOString()), minutes: "60", calendar: calendars[0] || "" }); };
-  const save = async () => { if (!draft.title.trim()) return; setLoading(true); try { const start = new Date(`${localDateKey(now)}T${draft.time}:00`); const minutes = Math.max(1, Number(draft.minutes) || 60); const existing = edit && typeof edit === "object" ? edit : null; const response = await bridgeFetch(`/calendar/event`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: existing?.id, title: draft.title.trim(), start: start.toISOString(), end: new Date(start.getTime() + minutes * 60000).toISOString(), calendar: existing ? undefined : draft.calendar }) }); const body = await response.json(); if (!response.ok) throw new Error(body.error); setEdit(null); await refresh(); } catch (e) { setError(e instanceof Error ? e.message : "Calendar event could not be saved."); setLoading(false); } };
-  const remove = async (id: string) => { setLoading(true); try { const response = await bridgeFetch(`/calendar/event`, { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) }); const body = await response.json(); if (!response.ok) throw new Error(body.error); setDeleteId(""); await refresh(); } catch (e) { setError(e instanceof Error ? e.message : "Calendar event could not be deleted."); setLoading(false); } };
-  return <article className="today-schedule card real-panel"><div className="section-heading"><div><span className="label">MACOS CALENDAR / LIVE</span><p>Today’s schedule</p></div><button className="mini-add" onClick={() => openEditor()}>＋ Event</button></div>
-    {edit && <section className="time-editor" aria-label={typeof edit === "object" ? "Edit calendar event" : "New calendar event"}>
-      <header><span><small>{typeof edit === "object" ? "EDIT EVENT" : "NEW EVENT"}</small><strong>{typeof edit === "object" ? "Update this calendar block" : "Add time to today"}</strong></span><button aria-label="Close calendar editor" onClick={() => setEdit(null)}>×</button></header>
-      <label className="time-title"><span>Event name</span><input autoFocus value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })} placeholder="What is this time for?" /></label>
-      <div className="time-editor-fields"><label><span>Starts</span><input type="time" value={draft.time} onChange={(e) => setDraft({ ...draft, time: e.target.value })} /></label><label><span>Duration</span><span className="duration-input"><input inputMode="numeric" value={draft.minutes} onChange={(e) => setDraft({ ...draft, minutes: e.target.value.replace(/\D/g, "") })} /><b>min</b></span></label><label><span>Calendar</span><select disabled={typeof edit === "object"} value={draft.calendar} onChange={(e) => setDraft({ ...draft, calendar: e.target.value })}>{calendars.map((name) => <option key={name} value={name}>{calendarDisplayName(name)}</option>)}</select></label></div>
-      <footer><span>{typeof edit === "object" ? `Saved in ${calendarDisplayName(draft.calendar)}` : "Saved directly to macOS Calendar"}</span><div><button onClick={() => setEdit(null)}>Cancel</button><button className="save-edit" disabled={!draft.title.trim()} onClick={save}>{typeof edit === "object" ? "Save changes" : "Add event"}</button></div></footer>
-    </section>}
-    {error && <div className="calendar-error"><span>!</span><p>{error}</p><button onClick={refresh}>Retry</button></div>}
-    <div className="schedule-list">{loading && !events.length ? <div className="schedule-loading"><span />Reading Calendar…</div> : !events.length && !error ? <EmptyState title="No events today" detail="Add an event here or in macOS Calendar." /> : events.map((event, index) => { const active = !event.allDay && now >= new Date(event.start) && now < new Date(event.end); return <div className={`${active ? "now" : ""} ${deleteId === event.id ? "confirming-delete" : ""}`} key={event.id}><time>{event.allDay ? "ALL DAY" : timeLabel(event.start)}</time><i className={["mint", "blue", "violet", "neutral"][index % 4]} style={event.color ? { background: event.color } : undefined} /><span><strong>{event.title}</strong><small>{calendarDisplayName(event.calendar)}</small></span>{deleteId === event.id ? <span className="schedule-confirm" aria-label={`Confirm deletion of ${event.title}`}><button onClick={() => setDeleteId("")}>Keep</button><button className="danger" disabled={loading} onClick={() => remove(event.id)}>Delete</button></span> : <span className="schedule-actions">{active && <b>NOW</b>}<button aria-label={`Edit ${event.title}`} title="Edit event" onClick={() => openEditor(event)}><span aria-hidden="true">✎</span></button><button aria-label={`Delete ${event.title}`} title="Delete event" onClick={() => setDeleteId(event.id)}><span aria-hidden="true">×</span></button></span>}</div>; })}</div>
-    <button className="wide-button" disabled={loading} onClick={refresh}>{loading ? "Syncing…" : "Refresh Calendar"}<span>↻</span></button>
-  </article>;
-}
-
-function CelebrationSky({ grand = false }: { grand?: boolean }) {
-  const colors = ["#f7d45c", "#ff6b78", "#6ee7ff", "#b7ed62", "#b98cff", "#ff9f43"];
-  const bursts = [
-    { x: "12%", y: "24%", delay: "0s", distance: "118px" }, { x: "31%", y: "15%", delay: ".55s", distance: "145px" },
-    { x: "52%", y: "28%", delay: "1.05s", distance: "132px" }, { x: "72%", y: "13%", delay: ".25s", distance: "154px" },
-    { x: "89%", y: "31%", delay: "1.35s", distance: "124px" }, { x: "22%", y: "57%", delay: "1.7s", distance: "138px" },
-    { x: "79%", y: "61%", delay: "2.05s", distance: "142px" },
-    ...(grand ? [{ x: "8%", y: "72%", delay: "2.45s", distance: "128px" }, { x: "94%", y: "73%", delay: ".85s", distance: "134px" }] : []),
-  ];
-  return <div className="celebration-sky" aria-hidden="true">{bursts.map((burst, burstIndex) => <span className="firework-burst" key={`${burst.x}-${burst.y}`} style={{ "--burst-x": burst.x, "--burst-y": burst.y, "--burst-delay": burst.delay } as React.CSSProperties}>{Array.from({ length: grand ? 24 : 18 }, (_, sparkIndex) => <i key={sparkIndex} style={{ "--spark-angle": `${sparkIndex * (grand ? 15 : 20)}deg`, "--spark-distance": burst.distance, "--spark-color": colors[(sparkIndex + burstIndex) % colors.length], "--spark-delay": `${(sparkIndex % 3) * .035}s` } as React.CSSProperties} />)}</span>)}</div>;
-}
-
-function FocusCelebration({ onClose }: { onClose: () => void }) {
-  return <div className="focus-celebration" role="status" aria-live="polite"><CelebrationSky /><section><span className="celebration-kicker">6 HOURS OF DEEP WORK</span><h2>Research moved forward today.</h2><p>Six focused hours. A serious day of scholarship—well done.</p><button onClick={onClose}>Keep going <b>→</b></button></section><button className="celebration-close" aria-label="Close celebration" onClick={onClose}>×</button></div>;
-}
-
-type PaperMilestone = { id: string; title: string; milestone: "Accepted" | "Published" };
-function PaperCelebration({ paper, onClose }: { paper: PaperMilestone; onClose: () => void }) {
-  return <div className="focus-celebration paper-celebration" role="dialog" aria-modal="true" aria-label={`${paper.title} ${paper.milestone}`}><CelebrationSky grand /><section><span className="celebration-kicker">PAPER {paper.milestone.toUpperCase()}</span><div className="celebration-languages" aria-label="热烈祝贺. Congratulations. Herzlichen Glückwunsch."><h2 style={{ "--language-index": 0 } as React.CSSProperties}>热烈祝贺</h2><h2 style={{ "--language-index": 1 } as React.CSSProperties}>Congratulations</h2><h2 style={{ "--language-index": 2 } as React.CSSProperties}>Herzlichen Glückwunsch</h2></div><p><strong>{paper.title}</strong><br />has been {paper.milestone.toLowerCase()}.</p><button onClick={onClose}>Celebrate this milestone <b>→</b></button></section><button className="celebration-close" aria-label="Close publication celebration" onClick={onClose}>×</button></div>;
-}
-
-function FocusPanel() {
-  const today = localDateKey(new Date());
-  const [now, setNow] = useState(() => new Date()); const [elapsed, setElapsed] = useState(0); const [startedAt, setStartedAt] = useState<number | null>(null); const [target, setTarget] = useState(""); const [focusDate, setFocusDate] = useState(today); const [pending, setPending] = useState<FocusCalendarBlock[]>([]); const [ready, setReady] = useState(false); const [syncing, setSyncing] = useState(false); const [calendarMessage, setCalendarMessage] = useState(""); const [celebrating, setCelebrating] = useState(false); const syncingRef = useRef(false); const celebratedRef = useRef(false); const celebrationTimerRef = useRef<number | null>(null);
-  useEffect(() => { const hydrate = window.setTimeout(() => { try { const saved = JSON.parse(window.localStorage.getItem("workbuddy-focus-en-v2") || window.localStorage.getItem("workbuddy-focus-en-v1") || "{}"); const savedDate = saved.date || today; if (savedDate === today) { setElapsed(Number(saved.elapsed) || 0); setStartedAt(Number(saved.startedAt) || null); setTarget(String(saved.target || "")); } setFocusDate(today); setPending(Array.isArray(saved.pending) ? saved.pending.filter((item: FocusCalendarBlock) => item?.id && item?.start && item?.end) : []); celebratedRef.current = window.localStorage.getItem("workbuddy-focus-celebrated-date") === today; } catch { /* new timer */ } setReady(true); }, 0); const clock = window.setInterval(() => setNow(new Date()), 1000); return () => { window.clearTimeout(hydrate); window.clearInterval(clock); }; }, [today]);
-  useEffect(() => () => { if (celebrationTimerRef.current) window.clearTimeout(celebrationTimerRef.current); }, []);
-  useEffect(() => { if (ready) window.localStorage.setItem("workbuddy-focus-en-v2", JSON.stringify({ date: focusDate, elapsed, startedAt, target, pending })); }, [elapsed, focusDate, pending, ready, startedAt, target]);
-  useEffect(() => { const start = (event: Event) => { const detail = (event as CustomEvent<{ target?: string }>).detail; if (detail?.target) setTarget(detail.target); setStartedAt((current) => current || Date.now()); }; window.addEventListener("workbuddy-start-focus", start); return () => window.removeEventListener("workbuddy-start-focus", start); }, []);
-  const syncPending = useCallback(async (blocks: FocusCalendarBlock[]) => { if (!blocks.length || syncingRef.current) return; syncingRef.current = true; setSyncing(true); let synced = 0; try { for (const block of blocks) { try { const minutes = Math.max(1, Math.round((new Date(block.end).getTime() - new Date(block.start).getTime()) / 60000)); const safeTarget = String(block.target || "Research").trim().slice(0, 180) || "Research"; const response = await bridgeFetch("/calendar/event", { method: "POST", headers: { "Content-Type": "application/json" }, signal: AbortSignal.timeout(20000), body: JSON.stringify({ title: `Focus ${minutes} min · ${safeTarget}`, start: block.start, end: block.end, externalId: block.id, notes: `ScholarBuddy focus session\nTarget: ${safeTarget}` }) }); const body = await response.json(); if (!response.ok) throw new Error(body.error || "Calendar sync failed."); setPending((items) => items.filter((item) => item.id !== block.id)); synced += 1; } catch { setCalendarMessage("Paused · Calendar sync pending"); break; } } if (synced) { setCalendarMessage("Paused · saved to Calendar"); window.dispatchEvent(new Event("workbuddy-calendar-refresh")); } } finally { syncingRef.current = false; setSyncing(false); } }, []);
-  useEffect(() => { if (ready && pending.length) void syncPending(pending); }, [pending, ready, syncPending]);
-  const currentDate = localDateKey(now); const dailyElapsed = !startedAt && currentDate !== focusDate ? 0 : elapsed;
-  const seconds = dailyElapsed + (startedAt ? Math.max(0, Math.floor((now.getTime() - startedAt) / 1000)) : 0); const running = startedAt !== null;
-  useEffect(() => {
-    if (!ready || !startedAt || focusDate === currentDate) return;
-    const midnight = new Date(now); midnight.setHours(0, 0, 0, 0);
-    const boundary = Math.max(startedAt + 1000, midnight.getTime());
-    const rollover = window.setTimeout(() => {
-      setPending((items) => [...items, { id: `focus-${crypto.randomUUID()}`, start: new Date(startedAt).toISOString(), end: new Date(boundary).toISOString(), target: target.trim() }]);
-      setElapsed(0); setFocusDate(currentDate); setStartedAt(midnight.getTime()); setCalendarMessage("New day · previous focus block queued for Calendar…");
-    }, 0);
-    return () => window.clearTimeout(rollover);
-  }, [currentDate, focusDate, now, ready, startedAt, target]);
-  useEffect(() => { if (!ready || focusDate !== currentDate || seconds < 21600 || celebratedRef.current) return; celebratedRef.current = true; window.localStorage.setItem("workbuddy-focus-celebrated-date", currentDate); window.setTimeout(() => setCelebrating(true), 0); celebrationTimerRef.current = window.setTimeout(() => setCelebrating(false), 8000); }, [currentDate, focusDate, ready, seconds]);
-  const label = `${String(Math.floor(seconds / 3600)).padStart(2, "0")}:${String(Math.floor((seconds % 3600) / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
-  const toggle = () => { if (startedAt) { const endedAt = Date.now(); const block: FocusCalendarBlock = { id: `focus-${crypto.randomUUID()}`, start: new Date(startedAt).toISOString(), end: new Date(Math.max(endedAt, startedAt + 1000)).toISOString(), target: target.trim() }; setElapsed(seconds); setStartedAt(null); setPending((items) => [...items, block]); setCalendarMessage("Paused · saving to Calendar…"); } else { const nextDate = localDateKey(new Date()); if (focusDate !== nextDate) { setElapsed(0); celebratedRef.current = window.localStorage.getItem("workbuddy-focus-celebrated-date") === nextDate; } setFocusDate(nextDate); setStartedAt(Date.now()); setCalendarMessage(""); } };
-  const statusText = running ? `Started at ${timeLabel(new Date(startedAt || now.getTime()).toISOString())}` : syncing ? "Paused · saving to Calendar…" : pending.length ? `Paused · ${pending.length} Calendar sync pending` : calendarMessage || (seconds ? "Paused · saved to Calendar" : "Ready for a new focus session");
-  return <><article className="focus-session card"><div className="focus-top"><span className="label">FOCUS SESSION</span><span className={running ? "live" : "paused"}><i />{running ? "Recording" : "Paused"}</span></div><label className="focus-object"><span>FOCUS TARGET</span><input value={target} onChange={(e) => setTarget(e.target.value)} placeholder="What are you focusing on?" /></label><h2>{label}</h2><p>{statusText}</p><div className={`focus-wave ${running ? "active" : ""}`} aria-hidden="true">{[6,10,16,23,31,19,28,39,24,34,45,27,38,49,30,41,46,33,40,29,21,14,8,5,3].map((height, index) => <i key={index} style={{ height, "--wave-index": index } as React.CSSProperties} />)}</div><div className="focus-actions"><button aria-label={running ? "Pause focus session" : seconds ? "Resume focus session" : "Start focus session"} title={running ? "Pause session" : seconds ? "Resume session" : "Start session"} aria-pressed={running} onClick={toggle}><span className={`focus-control-icon ${running ? "pause" : "play"}`} aria-hidden="true" /></button>{pending.length ? <button aria-label="Retry Calendar sync" title="Retry Calendar" disabled={syncing} onClick={() => void syncPending(pending)}><span className="focus-control-icon reset" aria-hidden="true">↻</span></button> : <button aria-label="Reset focus timer" title="Reset" disabled={!seconds || running} onClick={() => { setElapsed(0); setStartedAt(null); setCalendarMessage(""); }}><span className="focus-control-icon reset" aria-hidden="true">↻</span></button>}</div></article>{celebrating && <FocusCelebration onClose={() => setCelebrating(false)} />}</>;
-}
-
-function TaskPanel() {
-  const today = localDateKey(new Date());
-  const [tasks, setTasks] = useState<{ id: number; title: string; done: boolean; date: string }[]>([]); const [newTask, setNewTask] = useState(""); const [ready, setReady] = useState(false);
-  useEffect(() => { const timer = window.setTimeout(() => { try { const stored = JSON.parse(window.localStorage.getItem("workbuddy-daily-tasks-en-v3") || "[]"); setTasks(stored.map((task: { id: number; title: string; done: boolean; date?: string }) => ({ ...task, date: task.date || today }))); } catch { /* empty */ } setReady(true); }, 0); return () => window.clearTimeout(timer); }, [today]);
-  useEffect(() => { if (ready) window.localStorage.setItem("workbuddy-daily-tasks-en-v3", JSON.stringify(tasks)); }, [ready, tasks]);
-  const visibleTasks = tasks.filter((task) => task.date === today);
-  const add = () => { if (newTask.trim()) { setTasks((items) => [...items, { id: Date.now(), title: newTask.trim(), done: false, date: today }]); setNewTask(""); } };
-  const primary = visibleTasks.find((task) => !task.done);
-  return <article className="today-tasks card real-panel"><div className="section-heading"><div><span className="label">PRIMARY FOCUS</span><p>Your next concrete research move</p></div><span className="completion-count"><b>{visibleTasks.filter((task) => task.done).length}</b> / {visibleTasks.length}</span></div>{primary ? <section className="primary-task"><span>NEXT OUTPUT · 50 MIN</span><h2>{primary.title}</h2><p>Finish one visible research output, then record what changed before moving on.</p><button onClick={() => window.dispatchEvent(new CustomEvent("workbuddy-start-focus", { detail: { target: primary.title } }))}>Start focused work <b>▶</b></button></section> : <section className="primary-task empty"><span>START HERE</span><h2>Define one result worth finishing today.</h2><p>Keep it concrete: a revised paragraph, an analysed model, a figure, or a reviewed paper.</p></section>}<div className="task-capture"><input value={newTask} onChange={(e) => setNewTask(e.target.value)} onKeyDown={(e) => e.key === "Enter" && add()} placeholder="Add the next concrete output…" /><button onClick={add}>+</button></div><div className="daily-task-list">{visibleTasks.map((task) => <div className={task.done ? "done" : ""} key={task.id}><button className="task-check" onClick={() => setTasks((items) => items.map((item) => item.id === task.id ? { ...item, done: !item.done } : item))}>{task.done ? "✓" : ""}</button><input className="task-inline-input" value={task.title} onChange={(e) => setTasks((items) => items.map((item) => item.id === task.id ? { ...item, title: e.target.value } : item))} /><span className="task-actions"><button onClick={() => setTasks((items) => items.filter((item) => item.id !== task.id))}>×</button></span></div>)}</div></article>;
-}
-
-function LiteraturePanel({ state, saveRecord, compact = false, paper }: { state: WorkbenchState; saveRecord: (collection: CollectionKey, record: Partial<RecordItem>) => Promise<void>; compact?: boolean; paper?: RecordItem }) {
-  const activeProject = state.projects.find((item) => item.active) || state.projects[0]; const activeRQ = state["research-questions"].find((item) => item.status === "Active") || state["research-questions"][0];
-  const seed = [activeProject?.keywords, activeProject?.title, activeRQ?.keywords, activeRQ?.title].filter(Boolean).join(" ").slice(0, 240);
-  const [query, setQuery] = useState(""); const [items, setItems] = useState<ZoteroItem[]>([]); const [loading, setLoading] = useState(true); const [error, setError] = useState("");
-  const search = useCallback(async (value: string) => { setLoading(true); setError(""); try { const response = await bridgeFetch(`/zotero/search?q=${encodeURIComponent(value.trim())}`); const body = await response.json(); if (!response.ok) throw new Error(body.error || "Zotero search failed."); setItems(body.items || []); } catch (e) { setError(e instanceof Error ? e.message : "Zotero search failed."); } finally { setLoading(false); } }, []);
-  useEffect(() => { const timer = window.setTimeout(() => { const initial = seed || ""; setQuery(initial); void search(initial); }, 0); return () => window.clearTimeout(timer); }, [search, seed]);
-  const queued = new Set(state["reading-queue"].map((item) => item.zoteroKey));
-  return <article className={`${compact ? "literature-radar" : "literature-card"} card real-panel`}><div className="section-heading"><div><span className="label">ZOTERO / LIVE LIBRARY</span><p>{query ? "Recommendations for your current terms" : "Recently added literature"}</p></div><span className="source-chip"><SourceDot />Zotero</span></div>{paper && <p className="paper-link-note">Adding literature to <strong>{paper.title}</strong></p>}<div className="literature-search"><input value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => e.key === "Enter" && search(query)} placeholder="Search your Zotero library…" /><button onClick={() => search(query)}>Search</button></div>{error ? <div className="calendar-error"><span>!</span><p>Zotero is temporarily unavailable.</p><button onClick={() => search(query)}>Retry</button></div> : loading ? <div className="schedule-loading"><span />Searching Zotero…</div> : !items.length ? <EmptyState title="No matching records" /> : <div className="real-paper-list">{items.slice(0, compact ? 5 : 12).map((item) => <article key={item.key}><span className="zotero-year">{item.year || "—"}</span><div><strong>{item.title.replace(/<[^>]+>/g, "")}</strong><small>{item.creators.join(", ") || "No creators recorded"}</small><em>{item.doi ? `DOI ${item.doi}` : `Zotero item ${item.key}`}</em></div><span className="paper-buttons"><button onClick={() => { window.location.href = `zotero://select/library/items/${item.key}`; }}>Open</button><button className={queued.has(item.key) ? "queued" : ""} disabled={queued.has(item.key)} onClick={() => saveRecord("reading-queue", { id: `zotero-${item.key}`, title: item.title.replace(/<[^>]+>/g, ""), zoteroKey: item.key, creators: item.creators, year: item.year, doi: item.doi, status: "Queued", manuscriptId: paper?.id || "", manuscriptTitle: paper?.title || "" })}>{queued.has(item.key) ? "Queued" : paper ? "+ Attach" : "+ Queue"}</button></span></article>)}</div>}</article>;
-}
-
-const manuscriptSections = ["Unassigned", "Introduction", "Literature review", "Methods", "Results", "Discussion", "Conclusion"];
-
-function passageCitation(passage: ZoteroPassage) {
-  const authors = passage.citationAuthors.length ? passage.citationAuthors : passage.creators.map((name) => name.split(" ").at(-1) || name);
-  const author = authors.length > 2 ? `${authors[0]} et al.` : authors.length === 2 ? `${authors[0]} & ${authors[1]}` : authors[0] || "Unknown author";
-  const attribution = `(${author}, ${passage.year || "n.d."})`; const text = passage.text || passage.comment; const words = text.trim().split(/\s+/).filter(Boolean).length;
-  return words >= 40 ? `${text}\n\n${attribution}` : `“${text}” ${attribution}`;
-}
-
-function suggestedPassageSection(passage: ZoteroPassage) {
-  const tagged = [...passage.tags, passage.comment].join(" ").toLowerCase();
-  const explicit = manuscriptSections.slice(1).find((section) => tagged.includes(section.toLowerCase()));
-  if (explicit) return explicit;
-  const text = `${passage.text} ${passage.comment}`.toLowerCase();
-  if (/\b(in conclusion|we conclude|to conclude|conclusions?)\b/.test(text)) return "Conclusion";
-  if (/\b(participants?|sample|protocol|procedure|measured|measurement|collected|data collection|statistical analysis|regression|model training|methods?|methodology)\b/.test(text)) return "Methods";
-  if (/\b(results?|significant|confidence interval|odds ratio|effect size|increased|decreased|associated with)\b|\b\d+(?:\.\d+)?%\b/.test(text)) return "Results";
-  if (/\b(discussion|suggests?|indicates?|implications?|limitations?|future research|may explain)\b/.test(text)) return "Discussion";
-  if (/\b(systematic review|meta-analysis|previous studies|prior studies|existing literature)\b/.test(text)) return "Literature review";
-  if (/\b(background|aimed? to|purpose of|research gap|little is known|remains unclear)\b/.test(text)) return "Introduction";
-  return "Unassigned";
-}
-
-function PassageLibrary({ state, saveRecord, paper }: { state: WorkbenchState; saveRecord: (collection: CollectionKey, record: Partial<RecordItem>) => Promise<void>; paper?: RecordItem }) {
-  const [passages, setPassages] = useState<ZoteroPassage[]>([]); const [query, setQuery] = useState(""); const [filter, setFilter] = useState<"all" | "current" | "unused" | "used">("all");
-  const [display, setDisplay] = useState<"cards" | "list">("cards");
-  const [loading, setLoading] = useState(true); const [error, setError] = useState(""); const [copied, setCopied] = useState("");
-  const [paperIds, setPaperIds] = useState<Record<string, string>>({}); const [sections, setSections] = useState<Record<string, string>>({}); const [keywords, setKeywords] = useState<Record<string, string>>({});
-  const load = useCallback(async () => { setLoading(true); setError(""); try { const response = await bridgeFetch("/zotero/passages"); const body = await response.json(); if (!response.ok) throw new Error(body.error || "Passages could not be loaded."); setPassages(body.passages || []); } catch (loadError) { setError(loadError instanceof Error ? loadError.message : "Passages could not be loaded."); } finally { setLoading(false); } }, []);
-  useEffect(() => { const timer = window.setTimeout(() => void load(), 0); return () => window.clearTimeout(timer); }, [load]);
-  const savedByKey = useMemo(() => new Map(state.passages.map((item) => [item.annotationKey, item])), [state.passages]);
-  const visible = useMemo(() => passages.filter((passage) => {
-    const saved = savedByKey.get(passage.key); const text = [passage.text, passage.comment, passage.sourceTitle, passage.creators.join(" "), passage.year, passage.tags.join(" "), saved?.workbuddyKeywords].join(" ").toLowerCase();
-    if (query.trim() && !text.includes(query.trim().toLowerCase())) return false;
-    if (filter === "current") return Boolean(paper && saved?.manuscriptId === paper.id);
-    if (filter === "used") return saved?.status === "Used";
-    if (filter === "unused") return saved?.status !== "Used";
-    return true;
-  }), [filter, paper, passages, query, savedByKey]);
-  const link = async (passage: ZoteroPassage) => {
-    const existing = savedByKey.get(passage.key); const manuscriptId = paperIds[passage.key] || existing?.manuscriptId || paper?.id || state.manuscripts[0]?.id || ""; const manuscript = state.manuscripts.find((item) => item.id === manuscriptId);
-    await saveRecord("passages", { ...existing, id: `PASS-${passage.key}`, title: `Passage · ${passage.sourceTitle}`, annotationKey: passage.key, attachmentKey: passage.attachmentKey, zoteroKey: passage.zoteroItemKey, quote: passage.text, comment: passage.comment, pageLabel: passage.pageLabel, zoteroTags: passage.tags, sourceTitle: passage.sourceTitle, creators: passage.creators, year: passage.year, citationKey: passage.citationKey, zoteroUrl: passage.url, workbuddyKeywords: keywords[passage.key] ?? existing?.workbuddyKeywords ?? "", manuscriptId, manuscriptTitle: manuscript?.title || "", manuscriptSection: sections[passage.key] || existing?.manuscriptSection || suggestedPassageSection(passage), status: existing?.status || "Linked", linkedAt: existing?.linkedAt || new Date().toISOString() });
-  };
-  const markUsed = async (passage: ZoteroPassage) => { const existing = savedByKey.get(passage.key); if (!existing) return; await saveRecord("passages", { ...existing, status: "Used", usedAt: new Date().toISOString() }); };
-  return <section className="passage-library">
-    <div className="passage-toolbar card"><div><span className="label">ZOTERO HIGHLIGHTS / LIVE</span><h2>Passage Library</h2></div><button className="quiet-button passage-refresh" onClick={load}>Refresh</button><div className="passage-search"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search passage, note, source, author, or keyword…" /></div><div className="passage-toolbar-bottom"><div className="passage-filters"><button className={filter === "all" ? "active" : ""} onClick={() => setFilter("all")}>All</button>{paper && <button className={filter === "current" ? "active" : ""} onClick={() => setFilter("current")}>Current paper</button>}<button className={filter === "unused" ? "active" : ""} onClick={() => setFilter("unused")}>Unused</button><button className={filter === "used" ? "active" : ""} onClick={() => setFilter("used")}>Used</button></div><div className="passage-display" aria-label="Passage display"><button className={display === "cards" ? "active" : ""} onClick={() => setDisplay("cards")}>Cards</button><button className={display === "list" ? "active" : ""} onClick={() => setDisplay("list")}>List</button></div></div></div>
-    {error ? <div className="calendar-error"><span>!</span><p>Zotero passages are temporarily unavailable.</p><button onClick={load}>Retry</button></div> : loading ? <div className="schedule-loading"><span />Loading Zotero highlights…</div> : !visible.length ? <EmptyState title={query ? "No matching passages" : "No Zotero highlights yet"} /> : <div className={`passage-list ${display === "list" ? "list-view" : "card-view"}`}>{visible.map((passage) => { const saved = savedByKey.get(passage.key); const selectedPaper = paperIds[passage.key] || saved?.manuscriptId || paper?.id || state.manuscripts[0]?.id || ""; const selectedSection = sections[passage.key] || saved?.manuscriptSection || suggestedPassageSection(passage); return <article className="passage-card card" key={passage.key} style={{ "--passage-color": passage.color } as React.CSSProperties}><header><span className="passage-year-block"><b>{passage.year || "—"}</b><em className="passage-list-section">{selectedSection}</em></span><div><strong>{passage.sourceTitle}</strong><small>{[passage.creators.join(", "), passage.pageLabel && `p. ${passage.pageLabel}`].filter(Boolean).join(" · ")}</small></div>{saved && <MetaPill tone={saved.status === "Used" ? "lime" : "blue"}>{saved.status || "Linked"}</MetaPill>}</header><blockquote>{passage.text || passage.comment}</blockquote>{passage.comment && passage.text && <p className="passage-comment">{passage.comment}</p>}<div className="passage-tags">{passage.tags.map((tag) => <span key={tag}>{tag}</span>)}</div><div className="passage-organize"><label><span>Paper</span><select value={selectedPaper} onChange={(event) => setPaperIds((current) => ({ ...current, [passage.key]: event.target.value }))}><option value="">Not linked</option>{state.manuscripts.map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}</select></label><label><span>Section · auto suggested</span><select value={selectedSection} onChange={(event) => setSections((current) => ({ ...current, [passage.key]: event.target.value }))}>{manuscriptSections.map((section) => <option key={section}>{section}</option>)}</select></label><label><span>Keywords</span><input value={keywords[passage.key] ?? saved?.workbuddyKeywords ?? ""} onChange={(event) => setKeywords((current) => ({ ...current, [passage.key]: event.target.value }))} placeholder="e.g. validity, COD" /></label></div><footer><button onClick={() => { window.location.href = passage.url; }}>Open in Zotero</button><button onClick={async () => { await navigator.clipboard.writeText(passageCitation(passage)); setCopied(passage.key); window.setTimeout(() => setCopied(""), 1600); }}>{copied === passage.key ? "Copied" : "Copy Citation"}</button><button className="passage-link" disabled={!selectedPaper} onClick={() => link(passage)}>{saved ? "Update link" : "Link passage"}</button>{saved && saved.status !== "Used" && <button onClick={() => markUsed(passage)}>Mark used</button>}</footer></article>; })}</div>}
-  </section>;
-}
-
-function LinkedPassages({ paper, state }: { paper: RecordItem; state: WorkbenchState }) {
-  const records = state.passages.filter((item) => item.manuscriptId === paper.id);
-  return <section className="linked-passages card"><div className="section-heading"><div><span className="label">LINKED PASSAGES</span><p>Evidence placed in this paper</p></div><b>{records.length}</b></div>{!records.length ? <EmptyState title="No linked passages" detail="Open Library → Passage Library to connect Zotero highlights to this paper." /> : <div>{records.map((item) => <article key={item.id}><span style={{ background: item.status === "Used" ? "#aee65b" : "#d8e7cf" }} /><blockquote>{item.quote || item.comment}</blockquote><p>{[item.sourceTitle, item.year, item.pageLabel && `p. ${item.pageLabel}`, item.manuscriptSection].filter(Boolean).join(" · ")}</p><button onClick={() => { if (item.zoteroUrl) window.location.href = item.zoteroUrl; }}>Open</button></article>)}</div>}</section>;
-}
-
-type DataProps = { state: WorkbenchState; openEditor: (collection: CollectionKey, record?: Partial<RecordItem>) => void; saveRecord: (collection: CollectionKey, record: Partial<RecordItem>) => Promise<void>; runAction: (action: Action) => void };
-type SubmissionAlert = { attempt: RecordItem; tone: "critical" | "warning" | "quiet"; title: string; detail: string };
-function submissionAlerts(state: WorkbenchState): SubmissionAlert[] {
-  const alerts: SubmissionAlert[] = [];
-  for (const attempt of state["submission-attempts"]) {
-    if (["Accepted", "Rejected", "Withdrawn"].includes(attempt.status || "")) continue;
-    const revision = daysUntil(attempt.dueDate);
-    const followUp = daysUntil(attempt.followUpDue);
-    const expected = daysUntil(attempt.expectedResponseDate);
-    const nextCheck = daysUntil(attempt.nextCheckDate);
-    if (attempt.status === "Revision Required" && revision !== null && revision <= 14) alerts.push({ attempt, tone: revision < 0 ? "critical" : "warning", title: revision < 0 ? "Revision deadline has passed" : `Revision due in ${revision} days`, detail: `${attempt.journal || "Journal"} · ${attempt.round || "Current round"}` });
-    else if (followUp !== null && followUp <= 0) alerts.push({ attempt, tone: "warning", title: "Follow-up is due", detail: `${attempt.status || "Submission"} · ${daysSince(attempt.stageStartedAt || attempt.submittedAt)} days in stage` });
-    else if (expected !== null && expected < 0) alerts.push({ attempt, tone: "warning", title: "Expected response window passed", detail: `${attempt.status || "Submission"} · expected ${shortDate(attempt.expectedResponseDate)}` });
-    else if (nextCheck !== null && nextCheck <= 0) alerts.push({ attempt, tone: "quiet", title: "Status verification due", detail: `Last verified ${shortDate(attempt.lastVerifiedAt)}` });
-    else if (daysSince(attempt.lastVerifiedAt || attempt.submittedAt) >= 21) alerts.push({ attempt, tone: "quiet", title: "Submission has not been verified recently", detail: `${daysSince(attempt.lastVerifiedAt || attempt.submittedAt)} days since the last check` });
+function storedReadSubmissionAlertKeys() {
+  if (typeof window === "undefined") return [];
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(READ_SUBMISSION_ALERTS_KEY) || "[]");
+    return Array.isArray(stored)
+      ? stored.filter((item): item is string => typeof item === "string").slice(-300)
+      : [];
+  } catch {
+    return [];
   }
-  return alerts.slice(0, 5);
 }
 
-function SubmissionWatch({ state, onOpen }: { state: WorkbenchState; onOpen: () => void }) {
-  const alerts = submissionAlerts(state);
-  if (!alerts.length) return null;
-  return <section className="submission-watch card"><div><span className="label">SUBMISSION WATCH</span><strong>{alerts.length} item{alerts.length === 1 ? "" : "s"} need attention</strong></div><div className="submission-watch-list">{alerts.map((alert) => <button key={`${alert.attempt.id}-${alert.title}`} className={alert.tone} onClick={onOpen}><span>!</span><span><strong>{alert.title}</strong><small>{alert.attempt.manuscriptTitle || alert.attempt.title} · {alert.detail}</small></span><b>Review →</b></button>)}</div></section>;
-}
-
-type SubmissionTrackerProps = {
-  manuscript: RecordItem; state: WorkbenchState; openEditor: (collection: CollectionKey, record?: Partial<RecordItem>) => void;
-  addEvent: (record: Partial<RecordItem>) => Promise<void>; syncEmail: () => Promise<SubmissionSyncResult>;
-};
-function SubmissionTracker({ manuscript, state, openEditor, addEvent, syncEmail }: SubmissionTrackerProps) {
-  const attempts = state["submission-attempts"].filter((item) => item.manuscriptId === manuscript.id);
-  const [selectedId, setSelectedId] = useState(attempts[0]?.id || "");
-  const [addingEvent, setAddingEvent] = useState(false); const [syncing, setSyncing] = useState(false); const [message, setMessage] = useState("");
-  const [pendingCandidates, setPendingCandidates] = useState<SubmissionEmailCandidate[]>([]);
-  const [autoSync, setAutoSync] = useState(() => typeof window !== "undefined" && window.localStorage.getItem("workbuddy-submission-auto-sync") === "true");
-  const [eventForm, setEventForm] = useState({ status: "Submitted", eventDate: localDateKey(new Date()), rawStatus: "", description: "" });
-  const attempt = attempts.find((item) => item.id === selectedId) || attempts[0];
-  const events = state["submission-events"].filter((item) => item.attemptId === attempt?.id).sort((a, b) => String(b.eventDate || b.createdAt || "").localeCompare(String(a.eventDate || a.createdAt || "")));
-  const createAttempt = () => openEditor("submission-attempts", { title: `${manuscript.title} · ${manuscript.journal || "New submission"}`, manuscriptId: manuscript.id, manuscriptTitle: manuscript.title, journal: manuscript.journal, status: "Preparing", round: attempts.length ? `R${attempts.length}` : "Initial" });
-  const submitEvent = async () => { if (!attempt) return; setMessage(""); try { await addEvent({ ...eventForm, title: `${eventForm.status} · ${eventForm.eventDate}`, attemptId: attempt.id, manuscriptId: manuscript.id, source: "Manual", confidence: "confirmed" }); setAddingEvent(false); setEventForm({ status: "Submitted", eventDate: localDateKey(new Date()), rawStatus: "", description: "" }); } catch (error) { setMessage(error instanceof Error ? error.message : "Could not add the status event."); } };
-  const checkEmail = useCallback(async () => { setSyncing(true); setMessage(""); try { const result = await syncEmail(); setPendingCandidates(result.pending); setMessage(`${result.updated.length} status update${result.updated.length === 1 ? "" : "s"} added · ${result.pending.length} need confirmation · ${result.scanned} emails checked`); } catch (error) { setMessage(error instanceof Error ? error.message : "Mail could not be checked."); } finally { setSyncing(false); } }, [syncEmail]);
-  useEffect(() => { if (!autoSync || !attempts.length) return; const timer = window.setInterval(() => void checkEmail(), 15 * 60 * 1000); return () => window.clearInterval(timer); }, [autoSync, attempts.length, checkEmail]);
-  const toggleAutoSync = (enabled: boolean) => { setAutoSync(enabled); window.localStorage.setItem("workbuddy-submission-auto-sync", String(enabled)); if (enabled) void checkEmail(); };
-  return <section className="submission-tracker">
-    <div className="tracker-toolbar">
-      <div><span className="label">SUBMISSION TRACKER</span><h3>Publication journey</h3><p>Email-assisted tracking with a complete, auditable history.</p></div>
-      <span>
-        <label className="auto-sync"><input type="checkbox" checked={autoSync} onChange={(event) => toggleAutoSync(event.target.checked)} /><span>Auto-check every 15 min while open</span></label>
-        <button className="quiet-button" disabled={syncing || !attempts.length} onClick={checkEmail}>{syncing ? "Checking Mail…" : "Check email updates"}</button>
-        <button className="primary-button" onClick={createAttempt}>New submission</button>
-      </span>
-    </div>
-    {message && <div className="tracker-message">{message}</div>}
-    {pendingCandidates.length > 0 && <section className="pending-email-updates"><span className="label">NEEDS CONFIRMATION</span>{pendingCandidates.map((candidate) => <article key={`${candidate.email.id}-${candidate.status}`}><div><strong>{candidate.status}</strong><p>{candidate.email.subject}</p><small>{candidate.email.sender} · {shortDate(candidate.email.receivedAt)}</small></div><span><button className="quiet-button" onClick={() => setPendingCandidates((items) => items.filter((item) => item !== candidate))}>Ignore</button><button className="primary-button" onClick={async () => { await addEvent({ attemptId: candidate.attemptId, manuscriptId: candidate.manuscriptId, status: candidate.status, rawStatus: candidate.rawStatus, eventDate: candidate.email.receivedAt, source: "Email", confidence: "user-confirmed", emailMessageId: candidate.email.id, title: `${candidate.status} · ${candidate.email.receivedAt.slice(0, 10)}` }); setPendingCandidates((items) => items.filter((item) => item !== candidate)); }}>Confirm update</button></span></article>)}</section>}
-    {!attempts.length ? <EmptyState title="No submission attempts yet" /> : <>
-      <div className="attempt-tabs">{attempts.map((item, index) => <button className={item.id === attempt?.id ? "active" : ""} key={item.id} onClick={() => setSelectedId(item.id)}><span>Attempt {index + 1}</span><strong>{item.journal || "Journal not set"}</strong><small>{item.status || "Preparing"} · {item.round || "Initial"}</small></button>)}</div>
-      {attempt && <>
-        <article className="submission-status-card">
-          <div className="submission-stage"><span>CURRENT STAGE</span><h3>{attempt.status || "Preparing"}</h3><p>{daysSince(attempt.stageStartedAt || attempt.submittedAt)} days in this stage · verified {shortDate(attempt.lastVerifiedAt)}</p></div>
-          <div className="submission-facts"><span><small>Submission ID</small><strong>{attempt.submissionId || "Not assigned"}</strong></span><span><small>Journal</small><strong>{attempt.journal || "Not set"}</strong></span><span><small>Corresponding author</small><strong>{attempt.correspondingAuthor || "Not set"}</strong></span><span><small>Expected response</small><strong>{shortDate(attempt.expectedResponseDate)}</strong></span><span><small>Next check</small><strong>{shortDate(attempt.nextCheckDate)}</strong></span><span><small>Follow-up</small><strong>{shortDate(attempt.followUpDue)}</strong></span></div>
-          <div className="submission-actions"><button className="quiet-button" onClick={() => openEditor("submission-attempts", attempt)}>Edit details</button><button className="quiet-button" disabled={!attempt.portalUrl} onClick={() => { if (attempt.portalUrl && /^https?:\/\//i.test(attempt.portalUrl)) window.open(attempt.portalUrl, "_blank", "noopener,noreferrer"); }}>Open portal ↗</button><button className="primary-button" onClick={() => setAddingEvent((value) => !value)}>Add status</button></div>
-        </article>
-        {addingEvent && <div className="status-event-form"><label><span>New stage</span><select value={eventForm.status} onChange={(event) => setEventForm({ ...eventForm, status: event.target.value })}>{submissionStages.map((stage) => <option key={stage}>{stage}</option>)}</select></label><label><span>Date</span><input type="date" value={eventForm.eventDate} onChange={(event) => setEventForm({ ...eventForm, eventDate: event.target.value })} /></label><label><span>Publisher wording</span><input value={eventForm.rawStatus} onChange={(event) => setEventForm({ ...eventForm, rawStatus: event.target.value })} placeholder="Required Reviews Complete" /></label><label className="wide"><span>Note</span><input value={eventForm.description} onChange={(event) => setEventForm({ ...eventForm, description: event.target.value })} /></label><div><button className="quiet-button" onClick={() => setAddingEvent(false)}>Cancel</button><button className="primary-button" onClick={submitEvent}>Add to timeline</button></div></div>}
-        <section className="submission-timeline">
-          <div className="section-heading"><div><span className="label">STATUS HISTORY</span><p>{events.length} verified event{events.length === 1 ? "" : "s"}</p></div></div>
-          {!events.length ? <EmptyState title="No status history yet" detail="Add the initial submission event or check Mail for a matching confirmation." /> : events.map((event) => <article key={event.id}><i /><time>{shortDate(event.eventDate || event.createdAt)}</time><div><strong>{event.status}</strong><p>{event.rawStatus || event.description || "Confirmed status update"}</p><small>{event.source || "Manual"} · {event.confidence || "confirmed"}</small></div></article>)}
-        </section>
-      </>}
-    </>}
-  </section>;
-}
-
-function Dashboard({ state, openEditor, saveRecord, runAction, openContext, openManuscripts, paper }: DataProps & { openContext: () => void; openManuscripts: () => void; paper?: RecordItem }) {
-  const [now, setNow] = useState(() => new Date()); useEffect(() => { const timer = window.setInterval(() => setNow(new Date()), 1000); return () => window.clearInterval(timer); }, []);
-  const project = state.projects.find((item) => item.active) || state.projects[0]; const manuscript = paper || state.manuscripts[0]; const debts = state["research-debt"].filter((item) => !["Resolved", "Completed", "Archived"].includes(item.status || ""));
-  const date = new Intl.DateTimeFormat("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }).format(now);
-  return <><section className="daily-intro"><div><p className="eyebrow" suppressHydrationWarning><span className="live-time-dot" />{date}</p><h1>Move one thing forward.</h1><p>Choose the next concrete output, work without switching tools, and leave a clear handoff for tomorrow.</p></div><div className="daily-intro-actions"><button className="quiet-button" onClick={openContext}>◇ View real context</button><button className="primary-button" onClick={() => runAction(quickActions[4])}>Plan today with AI <b>✦</b></button></div></section><SubmissionWatch state={state} onOpen={openManuscripts} />
-    <section className="daily-command-grid"><TaskPanel /><CalendarPanel /><FocusPanel /></section>
-    <section className="real-summary-grid"><article className="card real-summary"><div className="section-heading"><div><span className="label">ACTIVE PROJECT</span><p>Research anchor</p></div>{project && <button className="quiet-button" onClick={() => openEditor("projects", project)}>Edit</button>}</div>{project ? <><h2>{project.title}</h2><p>{project.description || "No project description yet."}</p><div className="manual-progress"><span>Manual progress</span><b>{clampProgress(project.progress)}%</b><i><em style={{ width: `${clampProgress(project.progress)}%` }} /></i></div></> : <EmptyState title="No active project" action="Create project" onAction={() => openEditor("projects")} />}</article>
-      <article className="card real-summary"><div className="section-heading"><div><span className="label">CURRENT PAPER</span><p>Writing progress</p></div>{manuscript && <button className="quiet-button" onClick={openManuscripts}>Open paper</button>}</div>{manuscript ? <><h2>{manuscript.title}</h2><p>{manuscript.nextAction || `${manuscript.journal || "No target journal set"} · ${(manuscript.wordCount || 0).toLocaleString()} / ${(manuscript.targetWords || 0).toLocaleString()} words`}</p><div className="manual-progress"><span>Writing progress</span><b>{clampProgress(manuscript.progress)}%</b><i><em style={{ width: `${clampProgress(manuscript.progress)}%` }} /></i></div></> : <EmptyState title="No paper context" action="Create paper" onAction={() => openEditor("manuscripts", { stage: "Concept" })} />}</article></section>
-    <section className="daily-lower-grid"><LiteraturePanel state={state} saveRecord={saveRecord} compact /><article className="research-debt card real-panel"><div className="section-heading"><div><span className="label">RESEARCH DEBT / KBASE</span><p>Open items to clear</p></div><button className="mini-add" onClick={() => openEditor("research-debt")}>＋ Debt</button></div>{!debts.length ? <EmptyState title="No open research debt" detail="Add evidence, methods, statistics, writing, or reproducibility debt as it appears." /> : <div className="real-record-list">{debts.slice(0, 6).map((item) => <button key={item.id} onClick={() => openEditor("research-debt", item)}><span className={`severity-mark ${(item.severity || "minor").toLowerCase()}`}>!</span><span><strong>{item.title}</strong><small>{item.type || "Unclassified"} · {item.linkedObject || "No link"}</small></span><b>{item.severity || "Minor"}</b></button>)}</div>}</article></section>
-  </>;
-}
-
-function RecordModule({ collection, title, eyebrow, description, state, openEditor }: { collection: CollectionKey; title: React.ReactNode; eyebrow: string; description: string; state: WorkbenchState; openEditor: (collection: CollectionKey, record?: Partial<RecordItem>) => void }) {
-  const records = state[collection]; return <><section className="page-intro compact"><div><p className="eyebrow">{eyebrow}</p><h1>{title}</h1><p>{description}</p></div><button className="primary-button" onClick={() => openEditor(collection)}>New {collectionLabels[collection]} <b>+</b></button></section><section className="record-board">{!records.length ? <EmptyState title={`No ${collectionLabels[collection].toLowerCase()} yet`} /> : records.map((item) => <article className="record-card card" key={item.id}><div><span className="object-id">{item.id}</span><MetaPill tone={item.status === "Completed" || item.status === "Resolved" ? "lime" : item.status === "Blocked" ? "orange" : "blue"}>{item.status || "Unspecified"}</MetaPill></div><h2>{item.title}</h2><p>{item.description || "No notes yet."}</p><div className="record-meta">{item.manuscriptTitle && <span>Paper <b>{item.manuscriptTitle}</b></span>}{item.projectTitle && <span>Project <b>{item.projectTitle}</b></span>}{item.phase && <span>Phase <b>{item.phase}</b></span>}{item.method && <span>Method <b>{item.method}</b></span>}{item.journal && <span>Journal <b>{item.journal}</b></span>}{item.type && <span>Type <b>{item.type}</b></span>}{item.dueDate && <span>Due <b>{item.dueDate}</b></span>}</div><div className="manual-progress"><span>Manual progress</span><b>{clampProgress(item.progress)}%</b><i><em style={{ width: `${clampProgress(item.progress)}%` }} /></i></div><button onClick={() => openEditor(collection, item)}>Edit record →</button></article>)}</section></>;
-}
-
-function PaperWorkList({ collection, title, detail, paper, state, openEditor }: { collection: "reviews" | "research-debt"; title: string; detail: string; paper: RecordItem; state: WorkbenchState; openEditor: (collection: CollectionKey, record?: Partial<RecordItem>) => void }) {
-  const records = state[collection].filter((item) => item.manuscriptId === paper.id);
-  const defaults = { manuscriptId: paper.id, manuscriptTitle: paper.title, projectId: paper.projectId || "", projectTitle: paper.projectTitle || "", status: "Active" };
-  return <section className="paper-work-list card"><div className="section-heading"><div><span className="label">{collection === "reviews" ? "FEEDBACK" : "RESEARCH GAPS"}</span><p>{title}</p><small>{detail}</small></div><button className="quiet-button" onClick={() => openEditor(collection, defaults)}>Add {collection === "reviews" ? "feedback" : "gap"}</button></div>{!records.length ? <EmptyState title={collection === "reviews" ? "No feedback yet" : "No open gaps"} /> : <div className="real-record-list">{records.map((item) => <button key={item.id} onClick={() => openEditor(collection, item)}><span className={`severity-mark ${(item.severity || "minor").toLowerCase()}`}>!</span><span><strong>{item.title}</strong><small>{[item.reviewRound, item.reviewSource, item.manuscriptSection, item.type].filter(Boolean).join(" · ") || "No section recorded"}</small></span><b>{item.status || "Active"}</b></button>)}</div>}</section>;
-}
-
-function ManuscriptModule({ state, openEditor, addEvent, syncEmail, selectedId, onSelect }: Pick<DataProps, "state" | "openEditor"> & { addEvent: (record: Partial<RecordItem>) => Promise<void>; syncEmail: () => Promise<SubmissionSyncResult>; selectedId: string; onSelect: (id: string) => void }) {
-  const records = state.manuscripts; const [view, setView] = useState<"develop" | "review" | "submission">("develop");
-  const selected = records.find((item) => item.id === selectedId) || records[0];
-  if (!records.length) return <><section className="page-intro compact"><div><p className="eyebrow">PAPER WORKSPACE</p><h1>Start a <em>paper.</em></h1><p>Create a paper before the first draft, then keep evidence, feedback, revision, and submission work together.</p></div><button className="primary-button" onClick={() => openEditor("manuscripts", { stage: "Concept" })}>New paper <b>+</b></button></section><EmptyState title="No papers yet" /></>;
-  if (!selected) return null;
-  const openDebts = state["research-debt"].filter((item) => item.manuscriptId === selected.id && !["Resolved", "Completed", "Archived"].includes(item.status || "")).length;
-  const openReviews = state.reviews.filter((item) => item.manuscriptId === selected.id && !["Resolved", "Completed", "Archived"].includes(item.status || "")).length;
-  return <><section className="page-intro compact manuscript-page-title"><div><p className="eyebrow">PAPER WORKSPACE</p><h1>One paper, <em>one context.</em></h1><p>Develop the draft, resolve feedback, and track every submission round without leaving this paper.</p></div><button className="primary-button" onClick={() => openEditor("manuscripts", { projectId: selected.projectId || "", projectTitle: selected.projectTitle || "", stage: "Concept" })}>New paper <b>+</b></button></section><div className="manuscript-selector">{records.map((item) => <button className={item.id === selected.id ? "active" : ""} key={item.id} onClick={() => onSelect(item.id)}><span>{item.id}</span><strong>{item.title}</strong><small>{item.stage || item.status || "Concept"} · {item.journal || "Journal not set"}</small></button>)}</div><article className="paper-context card"><div><span className="label">CURRENT PAPER</span><h2>{selected.title}</h2><p>{selected.projectTitle || "No linked project"} · {selected.journal || "No target journal"}</p></div><div className="paper-context-meta"><span><small>Stage</small><strong>{selected.stage || selected.status || "Concept"}</strong></span><span><small>Next action</small><strong>{selected.nextAction || "Set the next concrete action"}</strong></span><span><small>Open work</small><strong>{openDebts} gaps · {openReviews} feedback</strong></span></div><button className="quiet-button" onClick={() => openEditor("manuscripts", selected)}>Edit paper</button></article><div className="module-tabs workflow-tabs"><button className={view === "develop" ? "active" : ""} onClick={() => setView("develop")}>Develop</button><button className={view === "review" ? "active" : ""} onClick={() => setView("review")}>Review & revise</button><button className={view === "submission" ? "active" : ""} onClick={() => setView("submission")}>Submission</button></div>{view === "develop" && <><article className="manuscript-overview card manuscript-focus"><div className="manuscript-main"><div><h2>Draft & evidence</h2><p>{(selected.wordCount || 0).toLocaleString()} / {(selected.targetWords || 0).toLocaleString()} words · Evidence coverage {clampProgress(selected.evidenceCoverage)}%</p></div><ProgressRing value={selected.progress || 0} /></div><p className="record-description">{selected.description || "Add the paper purpose, design, and current writing context."}</p><div className="coverage-row"><span>Writing progress <b>{clampProgress(selected.progress)}%</b></span><span>Evidence coverage <b>{clampProgress(selected.evidenceCoverage)}%</b></span></div></article><LinkedPassages paper={selected} state={state} /><PaperWorkList collection="research-debt" title="Open research gaps" detail="Gaps block progress until they are resolved or deliberately accepted." paper={selected} state={state} openEditor={openEditor} /></>}{view === "review" && <><PaperWorkList collection="reviews" title="Feedback to resolve" detail="Keep internal, supervisor, co-author, and journal rounds with this paper." paper={selected} state={state} openEditor={openEditor} /><PaperWorkList collection="research-debt" title="Linked research gaps" detail="Use a gap when feedback requires new evidence, analysis, or writing work." paper={selected} state={state} openEditor={openEditor} /></>}{view === "submission" && <SubmissionTracker manuscript={selected} state={state} openEditor={openEditor} addEvent={addEvent} syncEmail={syncEmail} />}</>;
-}
-
-function ProjectPortfolio({ state, openEditor }: Pick<DataProps, "state" | "openEditor">) {
-  const projects = state.projects;
-  return <><section className="page-intro compact"><div><p className="eyebrow">PROJECT PORTFOLIO</p><h1>Research <em>projects.</em></h1><p>Questions, experiments, and papers stay inside the project that gives them meaning.</p></div><button className="primary-button" onClick={() => openEditor("projects")}>New Project <b>+</b></button></section>{!projects.length ? <section className="record-board"><EmptyState title="No project yet" /></section> : <section className="project-flow-board">{projects.map((project) => {
-    const questions = state["research-questions"].filter((item) => item.linkedProject === project.id || item.projectId === project.id || item.projectTitle === project.title);
-    const experiments = state.experiments.filter((item) => item.linkedProject === project.id || item.projectId === project.id || item.projectTitle === project.title);
-    const papers = state.manuscripts.filter((item) => item.projectId === project.id || item.projectTitle === project.title);
-    const flow = [
-      { key: "questions", label: "Questions", items: questions, collection: "research-questions" as CollectionKey, empty: "No questions", defaults: { linkedProject: project.id } },
-      { key: "experiments", label: "Experiments", items: experiments, collection: "experiments" as CollectionKey, empty: "No experiments", defaults: { linkedProject: project.id } },
-      { key: "papers", label: "Papers", items: papers, collection: "manuscripts" as CollectionKey, empty: "No papers", defaults: { projectId: project.id, projectTitle: project.title, stage: "Concept" } },
-    ];
-    return <article className="project-flow-card card" key={project.id}><header><div><span className="object-id">{project.id}</span><h2>{project.title}</h2><p>{project.description || "No project notes yet."}</p></div><span><MetaPill tone={project.active ? "lime" : "blue"}>{project.active ? "Active" : project.status || "Planned"}</MetaPill><button className="quiet-button" onClick={() => openEditor("projects", project)}>Edit project</button></span></header><div className="project-flow-meta">{project.phase && <span>Phase <b>{project.phase}</b></span>}<span>Progress <b>{clampProgress(project.progress)}%</b></span><span>Outputs <b>{questions.length + experiments.length + papers.length}</b></span></div><div className="project-flow-columns">{flow.map((group, index) => <section key={group.key}><div className="project-flow-heading"><span><small>0{index + 1}</small><strong>{group.label}</strong><b>{group.items.length}</b></span><button aria-label={`Add ${group.label.slice(0, -1).toLowerCase()} to ${project.title}`} onClick={() => openEditor(group.collection, group.defaults)}>＋</button></div>{!group.items.length ? <p className="project-flow-empty">{group.empty}</p> : <div className="project-flow-items">{group.items.slice(0, 4).map((item) => <button key={item.id} onClick={() => openEditor(group.collection, item)}><span>{item.title}</span><small>{group.key === "papers" ? item.stage || item.status || "Concept" : item.status || "Active"}</small></button>)}</div>}</section>)}</div></article>;
-  })}</section>}</>;
-}
-
-function ProjectsModule({ state, openEditor }: Pick<DataProps, "state" | "openEditor">) {
-  const [tab, setTab] = useState<"projects" | "research-questions" | "experiments">("projects");
-  const config = tab === "research-questions" ? { title: <>Research <em>questions.</em></>, eyebrow: "QUESTION MAP", description: "Keep questions connected to the project that gives them meaning." } : { title: <>Data & <em>experiments.</em></>, eyebrow: "EXPERIMENT REGISTER", description: "Track methods, reproducible runs, outcomes, and blockers." };
-  return <><div className="module-tabs"><button className={tab === "projects" ? "active" : ""} onClick={() => setTab("projects")}>Projects</button><button className={tab === "research-questions" ? "active" : ""} onClick={() => setTab("research-questions")}>Questions</button><button className={tab === "experiments" ? "active" : ""} onClick={() => setTab("experiments")}>Experiments</button></div>{tab === "projects" ? <ProjectPortfolio state={state} openEditor={openEditor} /> : <RecordModule collection={tab} title={config.title} eyebrow={config.eyebrow} description={config.description} state={state} openEditor={openEditor} />}</>;
-}
-
-function LibraryModule({ state, saveRecord, openEditor, paper }: Pick<DataProps, "state" | "saveRecord" | "openEditor"> & { paper?: RecordItem }) {
-  const [tab, setTab] = useState<"literature" | "queue" | "passages">("literature"); const queued = state["reading-queue"];
-  const description = tab === "passages" ? (paper ? `Turn Zotero highlights into evidence for ${paper.title}.` : "Search and organize highlighted passages before placing them in a manuscript.") : tab === "queue" ? "Keep the papers worth reading next in one deliberate queue." : (paper ? `Attach evidence to ${paper.title} while you build its argument.` : "Find relevant evidence in your live Zotero library.");
-  return <><div className="module-tabs library-tabs"><button className={tab === "literature" ? "active" : ""} onClick={() => setTab("literature")}>Literature</button><button className={tab === "queue" ? "active" : ""} onClick={() => setTab("queue")}>Reading queue</button><button className={tab === "passages" ? "active" : ""} onClick={() => setTab("passages")}>Passage Library</button></div><section className="page-intro compact"><div><p className="eyebrow">ZOTERO + KBASE</p><h1>Research <em>library.</em></h1><p>{description}</p></div>{tab === "queue" && <button className="primary-button" onClick={() => openEditor("reading-queue", paper ? { manuscriptId: paper.id, manuscriptTitle: paper.title } : undefined)}>Add reading item <b>+</b></button>}</section>{tab === "literature" && <LiteraturePanel state={state} saveRecord={saveRecord} paper={paper} />}{tab === "passages" && <PassageLibrary state={state} saveRecord={saveRecord} paper={paper} />}{tab === "queue" && <section className="editable-section card reading-queue-section"><div className="section-heading"><div><span className="label">READING QUEUE</span><p>{queued.length ? `${queued.length} saved paper${queued.length === 1 ? "" : "s"}` : "Saved papers"}</p></div></div>{!queued.length ? <EmptyState title="No saved papers yet" /> : <div className="real-record-list">{queued.map((item) => <button key={item.id} onClick={() => openEditor("reading-queue", item)}><span className="zotero-year">{item.year || "—"}</span><span><strong>{item.title}</strong><small>{[item.manuscriptTitle, item.creators?.join(", ") || item.doi || "Saved literature"].filter(Boolean).join(" · ")}</small></span><b>{item.status || "Queued"}</b></button>)}</div>}</section>}</>;
-}
-
-function OperationsModule({ state, openEditor, paper }: Pick<DataProps, "state" | "openEditor"> & { paper?: RecordItem }) {
-  return <><section className="page-intro compact"><div><p className="eyebrow">DEADLINES + COMMITMENTS</p><h1>PhD <em>operations.</em></h1><p>{paper ? `Operational work can be linked to the current paper: ${paper.title}.` : "Track supervision, meetings, submissions, and administrative deadlines."}</p></div><button className="primary-button" onClick={() => openEditor("operations", paper ? { manuscriptId: paper.id, manuscriptTitle: paper.title, projectId: paper.projectId || "", projectTitle: paper.projectTitle || "" } : undefined)}>New operation <b>+</b></button></section><section className="record-board">{!state.operations.length ? <EmptyState title="No operations yet" /> : state.operations.map((item) => <article className="record-card card" key={item.id}><div><span className="object-id">{item.id}</span><MetaPill tone={item.status === "Completed" || item.status === "Resolved" ? "lime" : item.status === "Blocked" ? "orange" : "blue"}>{item.status || "Active"}</MetaPill></div><h2>{item.title}</h2><p>{item.description || "No operational notes yet."}</p><div className="record-meta">{item.manuscriptTitle && <span>Paper <b>{item.manuscriptTitle}</b></span>}{item.projectTitle && <span>Project <b>{item.projectTitle}</b></span>}{item.dueDate && <span>Due <b>{shortDate(item.dueDate)}</b></span>}</div><button onClick={() => openEditor("operations", item)}>Edit operation →</button></article>)}</section></>;
-}
-
-function ContextDrawer({ state, status, onClose }: { state: WorkbenchState; status: BridgeStatus | null; onClose: () => void }) {
-  const project = state.projects.find((item) => item.active) || state.projects[0]; const rq = state["research-questions"].find((item) => item.status === "Active") || state["research-questions"][0];
-  return <div className="drawer-backdrop" onMouseDown={onClose}><aside className="action-drawer context-drawer" onMouseDown={(e) => e.stopPropagation()}><div className="drawer-head"><button onClick={onClose}>×</button><span className="label">REAL CONTEXT</span><span className="action-mark mint">◇</span></div><div className="drawer-title"><span>KBASE + ZOTERO</span><h2>What ScholarBuddy can use now</h2><p>No completeness score is invented. These are the actual connected sources and current records.</p></div><div className="context-groups"><section><div><span>PROJECT FRAME</span><b>{state.projects.length + state["research-questions"].length} records</b></div>{project ? <p><i className="checked">✓</i><span><strong>{project.title}</strong><small>{project.id} · {project.active ? "active" : "first available"}</small></span></p> : <p><i className="warning">!</i><span><strong>No project</strong><small>Create one in Projects</small></span></p>}{rq ? <p><i className="checked">✓</i><span><strong>{rq.title}</strong><small>{rq.id}</small></span></p> : <p><i className="warning">!</i><span><strong>No research question</strong><small>Create one in Research Map</small></span></p>}</section><section><div><span>CONNECTED SOURCES</span><b>Live status</b></div><p><i className={status?.zotero.connected ? "checked" : "warning"}>{status?.zotero.connected ? "✓" : "!"}</i><span><strong>Zotero</strong><small>{status?.zotero.connected ? `Desktop ${status.zotero.version}` : "Offline"}</small></span></p><p><i className={status?.obsidian.connected ? "checked" : "warning"}>{status?.obsidian.connected ? "✓" : "!"}</i><span><strong>Obsidian · {status?.obsidian.vault || "Kbase"}</strong><small>{status?.obsidian.connected ? `${Object.values(state).flat().length} ScholarBuddy records` : "Offline"}</small></span></p></section></div><div className="drawer-footer"><span className="small-note">Context is assembled at workflow run time</span><button className="primary-button" onClick={onClose}>Done</button></div></aside></div>;
-}
-
-function ActionDrawer({ action, state, onClose, openConnections }: { action: Action; state: WorkbenchState; onClose: () => void; openConnections: () => void }) {
-  const [running, setRunning] = useState(false); const [provider, setProvider] = useState<AiProvider>(() => { const saved = typeof window === "undefined" ? null : window.localStorage.getItem("workbuddy-ai-provider"); return isAiProvider(saved) ? saved : "deepseek"; });
-  const [input, setInput] = useState(action.label); const [sources, setSources] = useState({ kbase: true, zotero: true, obsidian: true }); const [result, setResult] = useState<WorkflowResult | null>(null); const [error, setError] = useState(""); const [savedPath, setSavedPath] = useState(""); const controller = useRef<AbortController | null>(null);
-  const activeProvider = aiProviders.find((item) => item.id === provider) || aiProviders[0];
-  useEffect(() => () => controller.current?.abort(), []);
-  const run = async () => { if (!input.trim()) return; controller.current?.abort(); const active = new AbortController(); controller.current = active; setRunning(true); setError(""); setResult(null); try { const response = await bridgeFetch(`/ai/run`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ provider, input, command: action.command, sources, projectContext: sources.kbase ? recordContext(state) : "" }), signal: AbortSignal.any([active.signal, AbortSignal.timeout(125_000)]) }); const body = await response.json(); if (!response.ok) throw new Error(body.error || "Workflow failed."); setResult(body); } catch (e) { if (!active.signal.aborted) setError(e instanceof DOMException && e.name === "TimeoutError" ? "The AI workflow timed out." : e instanceof TypeError ? "The local bridge is unreachable or local access is blocked." : e instanceof Error ? e.message : "Workflow failed."); } finally { if (!active.signal.aborted) setRunning(false); } };
-  const save = async () => { if (!result) return; try { const evidence = [...result.manifest.zotero.map((item) => `- [${item.id}] ${item.title} — Zotero ${item.key}${item.doi ? ` — DOI ${item.doi}` : ""}`), ...result.manifest.obsidian.map((item) => `- [${item.id}] ${item.title} — ${item.path}`)].join("\n") || "- No external evidence retrieved."; const response = await bridgeFetch(`/obsidian/note`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: `${action.command} ${localDateKey(new Date())}`, content: `---\nworkbuddyGenerated: true\nprovider: ${result.provider}\nmodel: ${result.model}\ncreatedAt: ${new Date().toISOString()}\n---\n\n# ${action.label}\n\n${result.output}\n\n## Evidence manifest\n\n${evidence}\n` }) }); const body = await response.json(); if (!response.ok) throw new Error(body.error); setSavedPath(body.path); } catch (e) { setError(e instanceof Error ? e.message : "Could not save to Obsidian."); } };
-  return <div className="drawer-backdrop" onMouseDown={onClose}><aside className="action-drawer" role="dialog" aria-modal="true" aria-label={action.label} tabIndex={-1} onMouseDown={(e) => e.stopPropagation()}><div className="drawer-head"><button onClick={onClose}>×</button><span className="label">STRUCTURED AI WORKFLOW</span><span className={`action-mark ${action.tone}`}>✦</span></div><div className="drawer-title"><span>{action.command}</span><h2>{action.label}</h2><p>Selected sources must be retrieved successfully before the model runs.</p></div><div className="provider-switch">{aiProviders.map((item) => <button key={item.id} className={provider === item.id ? "active" : ""} onClick={() => { setProvider(item.id); window.localStorage.setItem("workbuddy-ai-provider", item.id); }}><span>{item.short}</span><b>{item.name}</b><small>{item.fallbackModel}</small></button>)}</div><div className="drawer-section"><div className="drawer-section-title"><span>01</span><strong>Task input</strong><b>Required</b></div><textarea value={input} onChange={(e) => setInput(e.target.value)} /></div><div className="drawer-section"><div className="drawer-section-title"><span>02</span><strong>Live sources</strong><b className="ready">Verified before AI</b></div><div className="drawer-sources"><label><input type="checkbox" checked={sources.kbase} onChange={(e) => setSources({ ...sources, kbase: e.target.checked })} /><span>Kbase project frame</span><b>{Object.values(state).flat().length} records</b></label><label><input type="checkbox" checked={sources.obsidian} onChange={(e) => setSources({ ...sources, obsidian: e.target.checked })} /><span>Obsidian notes</span><b>Live search</b></label><label><input type="checkbox" checked={sources.zotero} onChange={(e) => setSources({ ...sources, zotero: e.target.checked })} /><span>Zotero literature</span><b>Live search</b></label></div></div>{error && <div className="workflow-error"><span>!</span><p>{error}</p><button onClick={openConnections}>Connections</button></div>}{result && <section className="workflow-result"><div className="workflow-result-head"><span><b>{aiProviders.find((item) => item.id === result.provider)?.name || result.provider}</b><small>{result.model} · Zotero {result.retrieval.zotero.status} · Obsidian {result.retrieval.obsidian.status}</small></span><button onClick={save}>{savedPath ? "Saved ✓" : "Save with evidence"}</button></div>{result.invalidCitations.length > 0 && <div className="citation-warning">Unverified citation IDs: {result.invalidCitations.join(", ")}</div>}<pre>{result.output}</pre><details className="evidence-manifest"><summary>Evidence manifest · {result.manifest.zotero.length + result.manifest.obsidian.length} sources</summary>{result.manifest.zotero.map((item) => <p key={item.id}><b>[{item.id}]</b> {item.title} · Zotero {item.key}</p>)}{result.manifest.obsidian.map((item) => <p key={item.id}><b>[{item.id}]</b> {item.title} · {item.path}</p>)}</details></section>}<div className="drawer-footer"><div><SourceDot /><span><strong>Traceable-source workflow</strong><small>{activeProvider.name} · {activeProvider.fallbackModel}</small></span></div><button className="primary-button" disabled={running || !input.trim()} onClick={run}>{running ? "Working…" : result ? "Run again" : "Run workflow"}</button></div></aside></div>;
-}
-
-function ConnectionsDrawer({ status, issue, refresh, onClose }: { status: BridgeStatus | null; issue: BridgeIssue; refresh: () => Promise<BridgeStatus | null>; onClose: () => void }) {
-  const [token, setToken] = useState(""); const [pairingError, setPairingError] = useState(""); const [pairing, setPairing] = useState(false);
-  const connection = (connected?: boolean) => <b className={`connection-state ${connected ? "connected" : "missing"}`}>{connected ? "Connected" : "Setup needed"}</b>;
-  const pair = async () => {
-    const clean = token.trim(); if (!clean) { setPairingError("Paste the temporary code from the local pairing page."); return; }
-    setPairingError(""); setPairing(true);
-    try {
-      const response = await fetch(`${bridgeBaseUrl()}/pair/exchange`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code: clean }), signal: AbortSignal.timeout(5000) });
-      const body = await response.json() as { token?: string; error?: string };
-      if (!response.ok || !body.token) throw new Error(body.error || "That pairing code is invalid or expired.");
-      window.localStorage.setItem("workbuddy-bridge-token", body.token);
-      const connected = await refresh();
-      if (!connected) { window.localStorage.removeItem("workbuddy-bridge-token"); throw new Error("The bridge returned a token that could not be verified."); }
-      setToken("");
-    } catch (error) { setPairingError(error instanceof Error ? error.message : "Pairing failed."); }
-    finally { setPairing(false); }
-  };
-  const issueCopy = issue === "unreachable"
-    ? { title: "This browser cannot reach the Mac Bridge", detail: "Open ScholarBuddy in Safari or Chrome on this Mac. Embedded browsers may not expose local Mac services." }
-    : issue === "origin"
-      ? { title: "This site is not allowed by the Bridge", detail: "The Bridge is running, but its allowed-site list needs this ScholarBuddy address." }
-      : issue === "error"
-        ? { title: "Bridge check failed", detail: "The Bridge replied, but the health check could not be completed." }
-        : { title: "Bridge pairing required", detail: "The local service is reachable after this browser is paired." };
-  const aiConnections = aiProviders.map((item) => { const providerStatus = status?.[item.id]; return <article key={item.id}><span className={`connection-logo ${item.id}`}>{item.short}</span><div><strong>{item.name} API</strong><small>{providerStatus?.model || item.fallbackModel}</small></div>{connection(providerStatus?.configured)}</article>; });
-  return <div className="drawer-backdrop" onMouseDown={onClose}><aside className="action-drawer connections-drawer" role="dialog" aria-modal="true" aria-label="Connections" tabIndex={-1} onMouseDown={(e) => e.stopPropagation()}><div className="drawer-head"><button onClick={onClose}>×</button><span className="label">CONNECTIONS</span><span className="action-mark mint">⌁</span></div><div className="drawer-title"><span>LOCAL RESEARCH BRIDGE</span><h2>Real tools, private context.</h2><p>A short-lived pairing code prevents other websites from using your local research systems.</p></div>{!status && <div className="pairing-card"><b>Pair this browser</b><p>Open the local pairing page, copy its temporary code, then paste it below within five minutes.</p>{issue === "unreachable" && <div className="bridge-help"><strong>Mac Bridge is running</strong><span>The current browser cannot access its local address. Use Safari or Chrome on this Mac and allow Local Network access if prompted.</span></div>}<button onClick={() => window.open(`${bridgeBaseUrl()}/pair`, "_blank", "noopener,noreferrer")}>Open local pairing page</button><label><span>Temporary pairing code</span><input type="password" autoComplete="off" value={token} onChange={(event) => setToken(event.target.value)} placeholder="Paste temporary code" /></label><button className="primary-button" disabled={pairing} onClick={pair}>{pairing ? "Testing…" : "Pair bridge"}</button>{pairingError && <small className="pairing-error">{pairingError}</small>}</div>}<div className={`bridge-banner ${status ? "online" : "offline"}`}><span>{status ? "✓" : "!"}</span><div><strong>{status ? "Research bridge is paired" : issueCopy.title}</strong><small>{status ? "Listening only on this Mac" : issueCopy.detail}</small></div><button onClick={() => void refresh()}>Test again</button></div><div className="connection-list">{aiConnections}<article><span className="connection-logo calendar">C</span><div><strong>macOS Calendar</strong><small>Today · read + write</small></div>{connection(status?.calendar.connected)}</article><article><span className="connection-logo zotero">Z</span><div><strong>Zotero Desktop</strong><small>{status?.zotero.version || "Local API"}</small></div>{connection(status?.zotero.connected)}</article><article><span className="connection-logo obsidian">O</span><div><strong>Obsidian · {status?.obsidian.vault || "Kbase"}</strong><small>Markdown records</small></div>{connection(status?.obsidian.connected)}</article></div></aside></div>;
-}
-
-function GuideDrawer({ onClose, openConnections }: { onClose: () => void; openConnections: () => void }) {
-  const modules = [
-    ["Today", "Choose one concrete output, start a focus session, see today’s schedule, and respond only to submission alerts that need attention."],
-    ["Projects", "Manage projects, research questions, and experiments together instead of switching between separate modules."],
-    ["Manuscripts", "Track writing, submission history, reviewer feedback, and research gaps in one manuscript workspace."],
-    ["Library", "Search Zotero highlights in card or list view, use suggested manuscript sections, and copy passages with APA 7 in-text citations."],
-    ["Operations", "Track supervision, meetings, submissions, commitments, and administrative deadlines."],
-  ];
-  return <div className="drawer-backdrop" onMouseDown={onClose}><aside className="action-drawer guide-drawer" onMouseDown={(event) => event.stopPropagation()} aria-label="ScholarBuddy user guide">
-    <div className="drawer-head"><button onClick={onClose}>×</button><span className="label">USER GUIDE</span><span className="action-mark mint">?</span></div>
-    <div className="drawer-title"><span>SCHOLARBUDDY / SPORTS RESEARCH OS</span><h2>How to use your workbench</h2><p>A practical guide to the daily workflow, real data sources, editing, and AI tools.</p></div>
-    <nav className="guide-jump" aria-label="Guide sections"><a href="#guide-start">Start here</a><a href="#guide-daily">Daily routine</a><a href="#guide-modules">Modules</a><a href="#guide-passages">Passages</a><a href="#guide-milestones">Focus & milestones</a><a href="#guide-ai">AI</a><a href="#guide-storage">Data</a><a href="#guide-help">Help</a></nav>
-    <section className="guide-section" id="guide-start"><span className="guide-number">01</span><div><h3>Start here</h3><ol className="guide-steps"><li><b>Define today’s output.</b><span>Add one concrete result on Today and start focused work immediately.</span></li><li><b>Create the research frame.</b><span>In Projects, add the active project, its questions, and related experiments.</span></li><li><b>Add the manuscript.</b><span>Track writing first, then create a separate submission attempt for each journal.</span></li><li><b>Connect sources when useful.</b><span>Zotero, Obsidian, Calendar, AI, and Mail enrich the workflow but no longer block Today.</span></li></ol><button className="quiet-button" onClick={() => { onClose(); openConnections(); }}>Open Connections →</button></div></section>
-    <section className="guide-section" id="guide-daily"><span className="guide-number">02</span><div><h3>A simple daily routine</h3><div className="guide-routine"><p><b>1 · Decide</b><span>Choose one visible result worth finishing today.</span></p><p><b>2 · Focus</b><span>Start the linked timer; its waveform moves while the session is active.</span></p><p><b>3 · Pause</b><span>Pause to finish a focus block and save its real start and end time to macOS Calendar.</span></p><p><b>4 · Record</b><span>Update the current project or paper with what actually changed.</span></p><p><b>5 · Watch</b><span>Handle a submission alert only when Today says attention is needed.</span></p><p><b>6 · Continue</b><span>Leave the next concrete output ready for tomorrow.</span></p></div></div></section>
-    <section className="guide-section" id="guide-modules"><span className="guide-number">03</span><div><h3>What each module is for</h3><div className="guide-module-list">{modules.map(([name, description]) => <article key={name}><b>{name}</b><p>{description}</p></article>)}</div><div className="guide-callout"><b>Editing rule</b><p>Use New to create a record. Open an existing card or row to edit it. Progress is manual and remains authoritative until you change it. Delete requires a second confirmation.</p></div></div></section>
-    <section className="guide-section" id="guide-passages"><span className="guide-number">04</span><div><h3>Using Passage Library</h3><ol className="guide-steps"><li><b>Highlight in Zotero.</b><span>Keep the original passage and any annotation note in Zotero; ScholarBuddy reads them live without replacing the source.</span></li><li><b>Search and filter.</b><span>Search passage text, notes, sources, authors, Zotero tags, or ScholarBuddy keywords. Filter by current paper and usage state.</span></li><li><b>Choose a view.</b><span>Cards expose all organization controls. List keeps the passage prominent, places Section below the year, and shows three compact actions.</span></li><li><b>Confirm the Section.</b><span>ScholarBuddy first reads Zotero tags and comments, then suggests a section from the text. Uncertain passages remain Unassigned; you can always correct the selection.</span></li><li><b>Link and write.</b><span>Link the passage to a paper and section. It then appears in Manuscripts → Develop. Copy Citation produces an APA 7 author–year in-text citation without a page locator.</span></li></ol><div className="guide-callout"><b>Source of truth</b><p>Zotero remains authoritative for passage text, source, authors, year, and page. Kbase stores only the paper link, chosen section, ScholarBuddy keywords, and usage state.</p></div></div></section>
-    <section className="guide-section" id="guide-milestones"><span className="guide-number">05</span><div><h3>Focus sessions and research milestones</h3><ol className="guide-steps"><li><b>Daily focus total.</b><span>Pause and resume as often as needed; Today keeps one cumulative total for the current day.</span></li><li><b>Calendar record.</b><span>Each completed focus block is saved to macOS Calendar when you pause. If Calendar is unavailable, use Retry Calendar after reconnecting the Bridge.</span></li><li><b>Six-hour celebration.</b><span>At six cumulative hours, an eight-second fireworks celebration appears once for that day.</span></li><li><b>Accepted and Published.</b><span>Set the paper stage in Manuscripts or record the status in Submission Tracker. Each milestone receives its own multilingual celebration once per paper.</span></li><li><b>Accessible motion.</b><span>Close a celebration at any time or press Esc. ScholarBuddy follows the device’s Reduce Motion preference.</span></li></ol><div className="guide-callout"><b>Milestones stay distinct</b><p>Accepted means the journal has accepted the paper. Published means the paper is available as a publication. Record both stages so the publication journey remains accurate.</p></div></div></section>
-    <section className="guide-section" id="guide-ai"><span className="guide-number">06</span><div><h3>Using AI workflows</h3><ol className="guide-steps"><li><b>Open the workflow menu.</b><span>Use the top search bar or press <kbd>⌘ K</kbd>.</span></li><li><b>Choose a structured task.</b><span>Examples include finding evidence, explaining a result, reviewing a section, and drafting text.</span></li><li><b>Select the model.</b><span>Choose DeepSeek, Kimi, ChatGPT/OpenAI, Claude, Grok, or Gemini inside the workflow panel.</span></li><li><b>Check sources.</b><span>Keep Zotero and Obsidian enabled when the task needs evidence or project context.</span></li><li><b>Review before saving.</b><span>AI output is a draft. Check claims and citations, then save useful results to Obsidian.</span></li></ol><div className="guide-callout warning"><b>Important</b><p>ScholarBuddy reports missing context instead of inventing it. AI output still requires your scientific judgment and source verification.</p></div></div></section>
-    <section className="guide-section" id="guide-storage"><span className="guide-number">07</span><div><h3>Where your data lives</h3><div className="guide-data"><p><b>Research records</b><span>Readable Markdown files in Obsidian → Kbase → ScholarBuddy.</span></p><p><b>Tasks and daily focus total</b><span>Stored locally in this browser on this device.</span></p><p><b>Focus blocks and schedule</b><span>Completed focus blocks and schedule events are written to macOS Calendar through the local Bridge.</span></p><p><b>Celebration history</b><span>Stored locally so daily and paper milestones do not replay after a refresh.</span></p><p><b>Literature and passages</b><span>Papers, highlights, and notes are read live from Zotero Desktop. Reading selections and passage links, sections, keywords, and usage state are saved as readable Kbase records.</span></p><p><b>Hosted access</b><span>ScholarBuddy is available at scholarbuddy.tech. The link alone grants no access unless the Site is explicitly shared with that visitor or published publicly.</span></p><p><b>AI credentials</b><span>Kept by the local bridge on this Mac, never entered into the hosted page.</span></p></div></div></section>
-    <section className="guide-section" id="guide-help"><span className="guide-number">08</span><div><h3>Quick troubleshooting</h3><div className="guide-help"><p><b>“Bridge unreachable”</b><span>Open ScholarBuddy in Safari or Chrome on this Mac, allow Local Network access if prompted, then open Connections and use Test again. Embedded browsers may not expose Mac-local services.</span></p><p><b>“Pairing required”</b><span>Open the local pairing page from Connections, paste its token, and choose Pair bridge. The token is saved only in that browser.</span></p><p><b>Calendar sync pending</b><span>Reconnect the Bridge, confirm Calendar permission for your terminal runtime, then choose Retry Calendar.</span></p><p><b>No Zotero literature</b><span>Keep Zotero Desktop open, clear overly narrow search terms, or add project keywords.</span></p><p><b>Dashboard looks empty</b><span>This is expected until you create real project, manuscript, or research-debt records.</span></p><p><b>AI lacks context</b><span>Create an Active project and research question, then add clear descriptions and retrieval keywords.</span></p></div></div></section>
-    <div className="drawer-footer guide-footer"><span className="small-note">Press ⌘ K anytime to run an AI workflow</span><button className="primary-button" onClick={onClose}>Done</button></div>
-  </aside></div>;
+function storeReadSubmissionAlertKeys(keys: string[]) {
+  try {
+    window.localStorage.setItem(READ_SUBMISSION_ALERTS_KEY, JSON.stringify(keys));
+  } catch {
+    // The in-memory read state still gives immediate feedback when storage is unavailable.
+  }
 }
 
 export default function Home() {
-  const [active, setActive] = useState<ModuleKey>("dashboard"); const [state, setState] = useState<WorkbenchState>(emptyState); const [loading, setLoading] = useState(true); const [dataError, setDataError] = useState("");
-  const [editor, setEditor] = useState<EditorState>(null); const [action, setAction] = useState<Action | null>(null); const [status, setStatus] = useState<BridgeStatus | null>(null); const [bridgeIssue, setBridgeIssue] = useState<BridgeIssue>(null); const [contextOpen, setContextOpen] = useState(false); const [connectionsOpen, setConnectionsOpen] = useState(false); const [guideOpen, setGuideOpen] = useState(false); const [mobileNav, setMobileNav] = useState(false); const [commandOpen, setCommandOpen] = useState(false); const [query, setQuery] = useState(""); const [toast, setToast] = useState(""); const [paperContextId, setPaperContextId] = useState(""); const [paperCelebration, setPaperCelebration] = useState<PaperMilestone | null>(null); const paperCelebrationTimerRef = useRef<number | null>(null);
-  const loadState = async () => { setLoading(true); setDataError(""); try { const response = await bridgeFetch(`/workbench/state`); const body = await response.json(); if (!response.ok) throw new Error(body.error); setState({ ...emptyState, ...body }); } catch (e) { setDataError(e instanceof Error ? e.message : "Kbase data could not be loaded."); } finally { setLoading(false); } };
-  const loadStatus = async (): Promise<BridgeStatus | null> => {
+  const [active, setActive] = useState<ModuleKey>("dashboard");
+  const [state, setState] = useState<WorkbenchState>(emptyState);
+  const [loading, setLoading] = useState(true);
+  const [dataError, setDataError] = useState("");
+  const bridgeIssueRef = useRef<BridgeIssue>(null);
+  const offlineTicksRef = useRef(0);
+  const [editor, setEditor] = useState<EditorState>(null);
+  const [action, setAction] = useState<Action | null>(null);
+  const [status, setStatus] = useState<BridgeStatus | null>(null);
+  const [bridgeIssue, setBridgeIssue] = useState<BridgeIssue>(null);
+  const [contextOpen, setContextOpen] = useState(false);
+  const [connectionsOpen, setConnectionsOpen] = useState(false);
+  const [guideOpen, setGuideOpen] = useState(false);
+  const [mobileNav, setMobileNav] = useState(false);
+  const [commandOpen, setCommandOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [toast, setToast] = useState("");
+  const [paperContextId, setPaperContextId] = useState("");
+  const [manuscriptInitialView, setManuscriptInitialView] = useState<"develop" | "submission">(
+    "develop",
+  );
+  const [readSubmissionAlertKeys, setReadSubmissionAlertKeys] = useState<string[]>(
+    storedReadSubmissionAlertKeys,
+  );
+  const [paperCelebration, setPaperCelebration] = useState<PaperMilestone | null>(null);
+  const paperCelebrationTimerRef = useRef<number | null>(null);
+  const loadState = async () => {
+    setLoading(true);
+    setDataError("");
+    try {
+      const response = await bridgeFetch(`/workbench/state`);
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error);
+      const nextState = { ...emptyState, ...body } as WorkbenchState;
+      const activeAlertKeys = new Set(
+        submissionAlerts(nextState).map((alert) => submissionAlertKey(alert)),
+      );
+      setState(nextState);
+      setReadSubmissionAlertKeys((current) => {
+        const next = current.filter((key) => activeAlertKeys.has(key));
+        if (next.length === current.length) return current;
+        storeReadSubmissionAlertKeys(next);
+        return next;
+      });
+    } catch (e) {
+      setDataError(e instanceof Error ? e.message : "Obsidian data could not be loaded.");
+    } finally {
+      setLoading(false);
+    }
+  };
+  const loadStatus = async (fresh = false): Promise<BridgeStatus | null> => {
     try {
       const health = await bridgeHealthFetch();
-      if (!health.ok) { setStatus(null); setBridgeIssue(health.status === 401 ? "pairing" : health.status === 403 ? "origin" : "error"); return null; }
+      if (!health.ok) {
+        setStatus(null);
+        bridgeIssueRef.current =
+          health.status === 401 ? "pairing" : health.status === 403 ? "origin" : "error";
+        setBridgeIssue(bridgeIssueRef.current);
+        return null;
+      }
+      bridgeIssueRef.current = null;
       setBridgeIssue(null);
-    } catch { setStatus(null); setBridgeIssue("unreachable"); return null; }
+    } catch {
+      setStatus(null);
+      bridgeIssueRef.current = "unreachable";
+      setBridgeIssue("unreachable");
+      return null;
+    }
     try {
-      const response = await bridgeFetch("/status", { signal: AbortSignal.timeout(45_000) });
-      if (!response.ok) { setStatus(null); setBridgeIssue("error"); return null; }
-      const body = await response.json() as BridgeStatus; setStatus(body); return body;
-    } catch { setStatus(null); setBridgeIssue("error"); return null; }
+      const response = await bridgeFetch(`/status${fresh ? "?fresh=1" : ""}`, {
+        signal: AbortSignal.timeout(45_000),
+      });
+      if (!response.ok) {
+        setStatus(null);
+        setBridgeIssue("error");
+        return null;
+      }
+      const body = (await response.json()) as BridgeStatus;
+      setStatus(body);
+      return body;
+    } catch {
+      setStatus(null);
+      setBridgeIssue("error");
+      return null;
+    }
   };
-  useEffect(() => { const refreshAll = async () => { await Promise.all([loadStatus(), loadState()]); }; const start = window.setTimeout(() => { void refreshAll(); }, 0); const timer = window.setInterval(() => { void refreshAll(); }, 60000); return () => { window.clearTimeout(start); window.clearInterval(timer); }; }, []);
-  useEffect(() => { const onKey = (event: KeyboardEvent) => { if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") { event.preventDefault(); setCommandOpen(true); } if (event.key === "Escape") { setCommandOpen(false); setEditor(null); setAction(null); setContextOpen(false); setConnectionsOpen(false); setGuideOpen(false); setPaperCelebration(null); if (paperCelebrationTimerRef.current) window.clearTimeout(paperCelebrationTimerRef.current); } }; window.addEventListener("keydown", onKey); return () => window.removeEventListener("keydown", onKey); }, []);
-  useEffect(() => () => { if (paperCelebrationTimerRef.current) window.clearTimeout(paperCelebrationTimerRef.current); }, []);
-  useEffect(() => { const requirePairing = () => setToast("Local research sources are offline — Today remains available."); window.addEventListener("workbuddy-pairing-required", requirePairing); return () => window.removeEventListener("workbuddy-pairing-required", requirePairing); }, []);
   useEffect(() => {
-    const open = Boolean(editor || action || contextOpen || connectionsOpen || guideOpen || commandOpen || paperCelebration); if (!open) return;
-    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null; const shell = document.querySelector<HTMLElement>(".main-shell"); const sidebar = document.querySelector<HTMLElement>(".sidebar"); if (shell) shell.inert = true; if (sidebar) sidebar.inert = true;
-    const frame = window.requestAnimationFrame(() => { const dialog = document.querySelector<HTMLElement>(".paper-celebration, .action-drawer, .command-palette"); if (!dialog) return; dialog.setAttribute("role", "dialog"); dialog.setAttribute("aria-modal", "true"); if (!dialog.hasAttribute("aria-label") && !dialog.hasAttribute("aria-labelledby")) dialog.setAttribute("aria-label", "ScholarBuddy panel"); dialog.tabIndex = -1; const autofocus = dialog.querySelector<HTMLElement>("[autofocus], button, input, textarea, select, [href]"); (autofocus || dialog).focus(); });
-    const trap = (event: KeyboardEvent) => { if (event.key !== "Tab") return; const dialog = document.querySelector<HTMLElement>(".paper-celebration, .action-drawer, .command-palette"); if (!dialog) return; const focusable = [...dialog.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [href], [tabindex]:not([tabindex="-1"])')].filter((item) => !item.hidden); if (!focusable.length) { event.preventDefault(); dialog.focus(); return; } const first = focusable[0]; const last = focusable[focusable.length - 1]; if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); } else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); } };
-    document.addEventListener("keydown", trap); return () => { window.cancelAnimationFrame(frame); document.removeEventListener("keydown", trap); if (shell) shell.inert = false; if (sidebar) sidebar.inert = false; previous?.focus(); };
-  }, [action, commandOpen, connectionsOpen, contextOpen, editor, guideOpen, paperCelebration]);
-  useEffect(() => { if (!toast) return; const timer = window.setTimeout(() => setToast(""), 2400); return () => window.clearTimeout(timer); }, [toast]);
-  const showPaperCelebration = (paper: { id?: string; title?: string }, milestone: "Accepted" | "Published") => { const id = String(paper.id || "").trim(); const title = String(paper.title || "Untitled manuscript").trim(); if (!id) return; let celebrated: string[] = []; try { const stored = JSON.parse(window.localStorage.getItem("workbuddy-paper-celebrations-v1") || "[]"); if (Array.isArray(stored)) celebrated = stored.filter((item): item is string => typeof item === "string"); } catch { /* replace malformed local celebration history */ } const key = `${id}:${milestone.toLowerCase()}`; if (celebrated.includes(key)) return; window.localStorage.setItem("workbuddy-paper-celebrations-v1", JSON.stringify([...new Set([...celebrated, key])].slice(-300))); if (paperCelebrationTimerRef.current) window.clearTimeout(paperCelebrationTimerRef.current); setPaperCelebration({ id, title, milestone }); paperCelebrationTimerRef.current = window.setTimeout(() => setPaperCelebration(null), 10000); };
-  const saveRecord = async (collection: CollectionKey, record: Partial<RecordItem>) => { const previous = record.id ? state[collection].find((item) => item.id === record.id) : undefined; const response = await bridgeFetch(`/workbench/record`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ collection, record }) }); const body = await response.json(); if (!response.ok) throw new Error(body.error || "Record could not be saved."); const saved = body.record as RecordItem; await loadState(); setToast(`${collectionLabels[collection]} saved to Kbase`); if (collection === "manuscripts" && (saved.stage === "Accepted" || saved.stage === "Published") && previous?.stage !== saved.stage) showPaperCelebration(saved, saved.stage); if (collection === "submission-attempts" && (saved.status === "Accepted" || saved.status === "Published") && previous?.status !== saved.status) { const manuscript = state.manuscripts.find((item) => item.id === saved.manuscriptId); showPaperCelebration(manuscript || { id: saved.manuscriptId || saved.id, title: saved.manuscriptTitle || saved.title }, saved.status); } };
-  const deleteRecord = async (collection: CollectionKey, id: string) => { const response = await bridgeFetch(`/workbench/record`, { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ collection, id }) }); const body = await response.json(); if (!response.ok) throw new Error(body.error || "Record could not be deleted."); await loadState(); setToast(`${collectionLabels[collection]} deleted`); };
-  const addSubmissionEvent = async (record: Partial<RecordItem>) => { const response = await bridgeFetch(`/submissions/event`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(record) }); const body = await response.json(); if (!response.ok) throw new Error(body.error || "Submission event could not be saved."); await loadState(); setToast("Submission timeline updated"); const event = body.event as RecordItem; if (event.status === "Accepted" || event.status === "Published") { const manuscript = state.manuscripts.find((item) => item.id === event.manuscriptId); showPaperCelebration(manuscript || { id: event.manuscriptId || record.manuscriptId, title: record.manuscriptTitle || "Paper milestone" }, event.status); } };
-  const syncSubmissionEmail = async () => { const response = await bridgeFetch(`/submissions/email-sync`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}", signal: AbortSignal.timeout(40000) }); const body = await response.json(); if (!response.ok) throw new Error(body.error || "Mail could not be checked."); await loadState(); for (const event of (body.updated || []) as RecordItem[]) { if (event.status !== "Accepted" && event.status !== "Published") continue; const manuscript = state.manuscripts.find((item) => item.id === event.manuscriptId); showPaperCelebration(manuscript || { id: event.manuscriptId, title: event.manuscriptTitle || "Paper milestone" }, event.status); } return body as SubmissionSyncResult; };
-  const openEditor = (collection: CollectionKey, record?: Partial<RecordItem>) => setEditor({ collection, record }); const activeLabel = navItems.find((item) => item.key === active)?.label || "Today";
-  const activePaper = state.manuscripts.find((item) => item.id === paperContextId) || state.manuscripts[0];
-  const openPaper = (id = activePaper?.id || "") => { if (id) setPaperContextId(id); setActive("manuscript"); };
-  const manuscriptAttention = submissionAlerts(state).length + state.reviews.filter((item) => item.status !== "Resolved").length + state["research-debt"].filter((item) => item.status !== "Resolved").length;
-  const badges: Partial<Record<ModuleKey, number>> = { manuscript: manuscriptAttention || state.manuscripts.length, operations: state.operations.filter((item) => !["Resolved", "Completed", "Archived"].includes(item.status || "")).length, projects: state.projects.length, library: state["reading-queue"].length };
-  const commands = useMemo(() => quickActions.filter((item) => `${item.label} ${item.meta} ${item.command}`.toLowerCase().includes(query.toLowerCase())), [query]);
+    const syncReadAlerts = (event: StorageEvent) => {
+      if (event.key === READ_SUBMISSION_ALERTS_KEY) {
+        setReadSubmissionAlertKeys(storedReadSubmissionAlertKeys());
+      }
+    };
+    window.addEventListener("storage", syncReadAlerts);
+    return () => window.removeEventListener("storage", syncReadAlerts);
+  }, []);
+  useEffect(() => {
+    const parameters = new URLSearchParams(window.location.hash.slice(1));
+    const code = parameters.get("bridge-pair");
+    if (!code) return;
+    parameters.delete("bridge-pair");
+    const remaining = parameters.toString();
+    window.history.replaceState(
+      null,
+      "",
+      `${window.location.pathname}${window.location.search}${remaining ? `#${remaining}` : ""}`,
+    );
+    void exchangeBridgePairingCode(code)
+      .then(async () => {
+        const connected = await loadStatus();
+        if (!connected) throw new Error("Pairing could not be verified.");
+        await loadState();
+        setConnectionsOpen(false);
+        setToast("This browser is connected to your Mac Bridge");
+      })
+      .catch(() => {
+        setConnectionsOpen(true);
+        setToast("Automatic pairing failed — open Connections to try again");
+      });
+  }, []);
+  // Records change with every save, but /status probes each provider and spawns
+  // osascript, so it polls far less often. While the Bridge is unreachable both
+  // back off instead of firing 20-second timeouts every minute.
+  useEffect(() => {
+    const start = window.setTimeout(() => {
+      void loadStatus();
+      void loadState();
+    }, 0);
+    const stateTimer = window.setInterval(() => {
+      if (bridgeIssueRef.current === "unreachable" && offlineTicksRef.current++ % 5 !== 0) return;
+      void loadState();
+    }, 60_000);
+    const statusTimer = window.setInterval(() => {
+      void loadStatus();
+    }, 300_000);
+    return () => {
+      window.clearTimeout(start);
+      window.clearInterval(stateTimer);
+      window.clearInterval(statusTimer);
+    };
+  }, []);
+  // A thought that has to wait for navigation is a thought that gets lost, so
+  // capture is reachable from every module: switch to Today, then let the panel
+  // take focus once React has committed the module change.
+  const openCapture = (target: "journal" | "idea") => {
+    setActive("dashboard");
+    setCommandOpen(false);
+    setMobileNav(false);
+    window.setTimeout(
+      () =>
+        window.dispatchEvent(new CustomEvent("workbuddy-capture-focus", { detail: { target } })),
+      0,
+    );
+  };
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setCommandOpen(true);
+      }
+      if ((event.metaKey || event.ctrlKey) && !event.shiftKey && event.key.toLowerCase() === "j") {
+        event.preventDefault();
+        openCapture("journal");
+      }
+      if ((event.metaKey || event.ctrlKey) && !event.shiftKey && event.key.toLowerCase() === "i") {
+        event.preventDefault();
+        openCapture("idea");
+      }
+      if (event.key === "Escape") {
+        setCommandOpen(false);
+        setEditor(null);
+        setAction(null);
+        setContextOpen(false);
+        setConnectionsOpen(false);
+        setGuideOpen(false);
+        setPaperCelebration(null);
+        if (paperCelebrationTimerRef.current) window.clearTimeout(paperCelebrationTimerRef.current);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+  useEffect(
+    () => () => {
+      if (paperCelebrationTimerRef.current) window.clearTimeout(paperCelebrationTimerRef.current);
+    },
+    [],
+  );
+  useEffect(() => {
+    const requirePairing = () =>
+      setToast("Local research sources are offline — Today remains available.");
+    window.addEventListener("workbuddy-pairing-required", requirePairing);
+    return () => window.removeEventListener("workbuddy-pairing-required", requirePairing);
+  }, []);
+  // Overlays may stack (the AI drawer opens Connections without closing itself),
+  // so the topmost one is chosen by stacking order and gets the ref.
+  const overlayRef = useRef<HTMLElement | null>(null);
+  const topOverlay = paperCelebration
+    ? "celebration"
+    : commandOpen
+      ? "command"
+      : guideOpen
+        ? "guide"
+        : connectionsOpen
+          ? "connections"
+          : contextOpen
+            ? "context"
+            : action
+              ? "action"
+              : editor
+                ? "editor"
+                : "";
+  useOverlayFocus(overlayRef, topOverlay);
+  useEffect(() => {
+    if (!toast) return;
+    const timer = window.setTimeout(() => setToast(""), 2400);
+    return () => window.clearTimeout(timer);
+  }, [toast]);
+  const showPaperCelebration = (
+    paper: { id?: string; title?: string; journal?: string },
+    milestone: "Accepted" | "Published",
+  ) => {
+    const id = String(paper.id || "").trim();
+    const title = String(paper.title || "Untitled manuscript").trim();
+    const journal = String(paper.journal || "").trim();
+    if (!id) return;
+    let celebrated: string[] = [];
+    try {
+      const stored = JSON.parse(
+        window.localStorage.getItem("workbuddy-paper-celebrations-v1") || "[]",
+      );
+      if (Array.isArray(stored))
+        celebrated = stored.filter((item): item is string => typeof item === "string");
+    } catch {
+      /* replace malformed local celebration history */
+    }
+    const key = `${id}:${milestone.toLowerCase()}`;
+    if (celebrated.includes(key)) return;
+    window.localStorage.setItem(
+      "workbuddy-paper-celebrations-v1",
+      JSON.stringify([...new Set([...celebrated, key])].slice(-300)),
+    );
+    if (paperCelebrationTimerRef.current) window.clearTimeout(paperCelebrationTimerRef.current);
+    setPaperCelebration({ id, title, milestone, journal: journal || undefined });
+    paperCelebrationTimerRef.current = window.setTimeout(() => setPaperCelebration(null), 10000);
+  };
+  const saveRecord = async (collection: CollectionKey, record: Partial<RecordItem>) => {
+    const previous = record.id
+      ? state[collection].find((item) => item.id === record.id)
+      : undefined;
+    const response = await bridgeFetch(`/workbench/record`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ collection, record }),
+    });
+    const body = await response.json();
+    if (!response.ok) throw new Error(body.error || "Record could not be saved.");
+    const saved = body.record as RecordItem;
+    // The record the Bridge wrote is authoritative, so put it into view before the
+    // full reload: a reload that fails must not leave the card showing stale values
+    // under a "saved" toast.
+    setState((current) => ({
+      ...current,
+      [collection]: current[collection].some((item) => item.id === saved.id)
+        ? current[collection].map((item) => (item.id === saved.id ? saved : item))
+        : [saved, ...current[collection]],
+    }));
+    await loadState();
+    setToast(`${collectionLabels[collection]} saved to Obsidian`);
+    if (
+      collection === "manuscripts" &&
+      (saved.stage === "Accepted" || saved.stage === "Published") &&
+      previous?.stage !== saved.stage
+    )
+      showPaperCelebration(saved, saved.stage);
+    if (
+      collection === "submission-attempts" &&
+      (saved.status === "Accepted" || saved.status === "Published") &&
+      previous?.status !== saved.status
+    ) {
+      const manuscript = state.manuscripts.find((item) => item.id === saved.manuscriptId);
+      showPaperCelebration(
+        {
+          id: saved.manuscriptId || saved.id,
+          title: saved.manuscriptTitle || manuscript?.title || saved.title,
+          journal: saved.journal || manuscript?.journal,
+        },
+        saved.status,
+      );
+    }
+    return saved;
+  };
+  const deleteRecord = async (collection: CollectionKey, id: string) => {
+    const response = await bridgeFetch(`/workbench/record`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ collection, id }),
+    });
+    const body = await response.json();
+    if (!response.ok) throw new Error(body.error || "Record could not be deleted.");
+    await loadState();
+    setToast(`${collectionLabels[collection]} deleted`);
+  };
+  const addSubmissionEvent = async (record: Partial<RecordItem>) => {
+    const response = await bridgeFetch(`/submissions/event`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(record),
+    });
+    const body = await response.json();
+    if (!response.ok) throw new Error(body.error || "Submission event could not be saved.");
+    await loadState();
+    setToast("Submission timeline updated");
+    const event = body.event as RecordItem;
+    if (event.status === "Accepted" || event.status === "Published") {
+      const manuscript = state.manuscripts.find((item) => item.id === event.manuscriptId);
+      showPaperCelebration(
+        manuscript || {
+          id: event.manuscriptId || record.manuscriptId,
+          title: record.manuscriptTitle || "Paper milestone",
+        },
+        event.status,
+      );
+    }
+  };
+  const syncSubmissionEmail = async () => {
+    const response = await bridgeFetch(`/submissions/email-sync`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+      signal: AbortSignal.timeout(40000),
+    });
+    const body = await response.json();
+    if (!response.ok) throw new Error(body.error || "Mail could not be checked.");
+    await loadState();
+    for (const event of (body.updated || []) as RecordItem[]) {
+      if (event.status !== "Accepted" && event.status !== "Published") continue;
+      const manuscript = state.manuscripts.find((item) => item.id === event.manuscriptId);
+      showPaperCelebration(
+        manuscript || { id: event.manuscriptId, title: event.manuscriptTitle || "Paper milestone" },
+        event.status,
+      );
+    }
+    return body as SubmissionSyncResult;
+  };
+  const openEditor = (collection: CollectionKey, record?: Partial<RecordItem>) =>
+    setEditor({ collection, record });
+  const activeLabel = navItems.find((item) => item.key === active)?.label || "Today";
+  const activePaper =
+    state.manuscripts.find((item) => item.id === paperContextId) || state.manuscripts[0];
+  const openPaper = (
+    id = activePaper?.id || "",
+    initialView: "develop" | "submission" = "develop",
+  ) => {
+    if (id) setPaperContextId(id);
+    setManuscriptInitialView(initialView);
+    setActive("manuscript");
+  };
+  const allSubmissionAlerts = submissionAlerts(state);
+  const visibleSubmissionAlerts = allSubmissionAlerts.filter(
+    (alert) => !readSubmissionAlertKeys.includes(submissionAlertKey(alert)),
+  );
+  const openSubmissionAlert = (alert: SubmissionAlert) => {
+    const key = submissionAlertKey(alert);
+    setReadSubmissionAlertKeys((current) => {
+      if (current.includes(key)) return current;
+      const next = [...current, key].slice(-300);
+      storeReadSubmissionAlertKeys(next);
+      return next;
+    });
+    openPaper(alert.attempt.manuscriptId || "", "submission");
+  };
+  const manuscriptAttention =
+    visibleSubmissionAlerts.length +
+    state.reviews.filter((item) => item.status !== "Resolved").length +
+    state["research-debt"].filter((item) => item.status !== "Resolved").length;
+  const badges: Partial<Record<ModuleKey, number>> = {
+    manuscript: manuscriptAttention || state.manuscripts.length,
+    operations: state.operations.filter(
+      (item) => !["Resolved", "Completed", "Archived"].includes(item.status || ""),
+    ).length,
+    projects: state.projects.length,
+    library: state["reading-queue"].length,
+  };
+  const commands = useMemo(
+    () =>
+      quickActions.filter((item) =>
+        `${item.label} ${item.meta} ${item.command}`.toLowerCase().includes(query.toLowerCase()),
+      ),
+    [query],
+  );
   const props: DataProps = { state, openEditor, saveRecord, runAction: setAction };
-  return <div className="app-shell">{paperCelebration && <PaperCelebration paper={paperCelebration} onClose={() => { setPaperCelebration(null); if (paperCelebrationTimerRef.current) window.clearTimeout(paperCelebrationTimerRef.current); }} />}<aside className={`sidebar ${mobileNav ? "mobile-open" : ""}`}><div className="brand"><span className="brand-mark"><i /><b /></span><span><strong>SCHOLARBUDDY</strong><small>SPORTS RESEARCH OS</small></span><button className="mobile-close" onClick={() => setMobileNav(false)}>×</button></div><nav><span className="nav-label">RESEARCH WORKBENCH</span>{navItems.map((item) => <button key={item.key} className={active === item.key ? "active" : ""} onClick={() => { setActive(item.key); setMobileNav(false); window.scrollTo({ top: 0, behavior: "smooth" }); }}><span className="nav-icon">{item.icon}</span><span>{item.label}</span>{Boolean(badges[item.key]) && <b>{badges[item.key]}</b>}</button>)}</nav><div className="sidebar-bottom"><button onClick={() => { setGuideOpen(true); setMobileNav(false); }}><span className="nav-icon">?</span><span>User Guide</span></button><button onClick={() => setConnectionsOpen(true)}><span className="nav-icon">⚙</span><span>Connections</span></button><div className={`sync-status ${status ? "" : "offline"}`}><span className="sync-orbit"><i /><b /></span><span><strong>Research systems</strong><small><SourceDot tone={status ? "green" : "orange"} />{status ? "Local bridge connected" : bridgeIssue === "unreachable" ? "Bridge unreachable · open in a Mac browser" : bridgeIssue === "pairing" ? "Bridge pairing required" : bridgeIssue === "origin" ? "Bridge origin blocked" : "Bridge offline · Today still works"}</small></span></div></div></aside><div className="main-shell"><header className="topbar"><div className="breadcrumb"><button className="mobile-menu" onClick={() => setMobileNav(true)}>☰</button><span>Research Workbench</span><b>/</b><strong>{activeLabel}</strong></div><button className="command-trigger" onClick={() => setCommandOpen(true)}><span>⌕</span><span>Search or run an AI assist…</span><kbd>⌘ K</kbd></button><div className="top-actions"><button className="icon-button" onClick={() => { void loadStatus().then(() => loadState()); setToast("Refreshing real data"); }}>↻</button><button className="context-button" onClick={() => setContextOpen(true)}><span className="context-diamond">◇</span><span><small>CONTEXT</small><strong>{Object.values(state).flat().length} real records</strong></span></button><button className="profile-button" onClick={() => setConnectionsOpen(true)}>DR</button></div></header><main className="content">{dataError && <div className="data-banner compact-banner"><span>!</span><p>{dataError} Today’s local focus tools remain available.</p><button onClick={loadState}>Retry</button></div>}{loading && !Object.values(state).flat().length && <div className="loading-bar"><i />Loading Kbase records…</div>}{active === "dashboard" && <Dashboard {...props} openContext={() => setContextOpen(true)} openManuscripts={() => openPaper()} paper={activePaper} />}{active === "projects" && <ProjectsModule state={state} openEditor={openEditor} />}{active === "manuscript" && <ManuscriptModule state={state} openEditor={openEditor} addEvent={addSubmissionEvent} syncEmail={syncSubmissionEmail} selectedId={activePaper?.id || ""} onSelect={setPaperContextId} />}{active === "library" && <LibraryModule state={state} saveRecord={saveRecord} openEditor={openEditor} paper={activePaper} />}{active === "operations" && <OperationsModule state={state} openEditor={openEditor} paper={activePaper} />}</main></div>{editor && <RecordEditor key={`${editor.collection}-${editor.record?.id || "new"}`} editor={editor} state={state} onClose={() => setEditor(null)} onSave={saveRecord} onDelete={deleteRecord} />}{action && <ActionDrawer action={action} state={state} onClose={() => setAction(null)} openConnections={() => setConnectionsOpen(true)} />}{contextOpen && <ContextDrawer state={state} status={status} onClose={() => setContextOpen(false)} />}{connectionsOpen && <ConnectionsDrawer status={status} issue={bridgeIssue} refresh={loadStatus} onClose={() => setConnectionsOpen(false)} />}{guideOpen && <GuideDrawer onClose={() => setGuideOpen(false)} openConnections={() => setConnectionsOpen(true)} />}{commandOpen && <div className="command-backdrop" onMouseDown={() => setCommandOpen(false)}><div className="command-palette" onMouseDown={(e) => e.stopPropagation()}><div className="command-search"><span>⌕</span><input autoFocus value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search AI assists…" /><kbd>ESC</kbd></div><div className="command-results"><span className="label">CONTEXTUAL AI ASSISTS</span>{commands.map((item) => <button key={item.command} onClick={() => { setAction(item); setCommandOpen(false); setQuery(""); }}><span className={`action-mark ${item.tone}`}>✦</span><span><strong>{item.label}</strong><small>{item.command}</small></span><b>{item.meta}</b></button>)}</div></div></div>}{toast && <div className="toast"><span>✓</span>{toast}</div>}</div>;
+  return (
+    <div className="app-shell">
+      {paperCelebration && (
+        <PaperCelebration
+          ref={topOverlay === "celebration" ? overlayRef : undefined}
+          paper={paperCelebration}
+          onClose={() => {
+            setPaperCelebration(null);
+            if (paperCelebrationTimerRef.current)
+              window.clearTimeout(paperCelebrationTimerRef.current);
+          }}
+        />
+      )}
+      <aside className={`sidebar ${mobileNav ? "mobile-open" : ""}`}>
+        <div className="brand">
+          <span className="brand-mark">
+            <i />
+            <b />
+          </span>
+          <span>
+            <strong>SCHOLARBUDDY</strong>
+            <small>SPORTS RESEARCH OS</small>
+          </span>
+          <button className="mobile-close" onClick={() => setMobileNav(false)}>
+            ×
+          </button>
+        </div>
+        <nav>
+          <span className="nav-label">RESEARCH WORKBENCH</span>
+          {navItems.map((item) => (
+            <button
+              key={item.key}
+              className={active === item.key ? "active" : ""}
+              onClick={() => {
+                if (item.key === "manuscript") setManuscriptInitialView("develop");
+                setActive(item.key);
+                setMobileNav(false);
+                window.scrollTo({ top: 0, behavior: "smooth" });
+              }}
+            >
+              <span className="nav-icon">{item.icon}</span>
+              <span>{item.label}</span>
+              {Boolean(badges[item.key]) && <b>{badges[item.key]}</b>}
+            </button>
+          ))}
+        </nav>
+        <div className="sidebar-bottom">
+          <button
+            onClick={() => {
+              setGuideOpen(true);
+              setMobileNav(false);
+            }}
+          >
+            <span className="nav-icon">?</span>
+            <span>User Guide</span>
+          </button>
+          <button onClick={() => setConnectionsOpen(true)}>
+            <span className="nav-icon">⚙</span>
+            <span>Connections</span>
+          </button>
+          <div className={`sync-status ${status ? "" : "offline"}`}>
+            <span className="sync-orbit">
+              <i />
+              <b />
+            </span>
+            <span>
+              <strong>Research systems</strong>
+              <small>
+                <SourceDot tone={status ? "green" : "orange"} />
+                {status
+                  ? "Local bridge connected"
+                  : bridgeIssue === "unreachable"
+                    ? "Bridge unreachable · open in a Mac browser"
+                    : bridgeIssue === "pairing"
+                      ? "Bridge pairing required"
+                      : bridgeIssue === "origin"
+                        ? "Bridge origin blocked"
+                        : "Bridge offline · Today still works"}
+              </small>
+            </span>
+          </div>
+        </div>
+      </aside>
+      <div className="main-shell">
+        <header className="topbar">
+          <div className="breadcrumb">
+            <button className="mobile-menu" onClick={() => setMobileNav(true)}>
+              ☰
+            </button>
+            <span>Research Workbench</span>
+            <b>/</b>
+            <strong>{activeLabel}</strong>
+          </div>
+          <button className="command-trigger" onClick={() => setCommandOpen(true)}>
+            <span>⌕</span>
+            <span>Search or run an AI assist…</span>
+            <kbd>⌘ K</kbd>
+          </button>
+          <div className="top-actions">
+            <button
+              className="icon-button"
+              onClick={() => {
+                void loadStatus(true).then(() => loadState());
+                setToast("Refreshing real data");
+              }}
+            >
+              ↻
+            </button>
+            <button className="context-button" onClick={() => setContextOpen(true)}>
+              <span className="context-diamond">◇</span>
+              <span>
+                <small>CONTEXT</small>
+                <strong>{Object.values(state).flat().length} real records</strong>
+              </span>
+            </button>
+            <button className="profile-button" onClick={() => setConnectionsOpen(true)}>
+              DR
+            </button>
+          </div>
+        </header>
+        <main className="content">
+          {dataError && (
+            <div className="data-banner compact-banner">
+              <span>!</span>
+              <p>{dataError} Today’s local focus tools remain available.</p>
+              <button onClick={loadState}>Retry</button>
+            </div>
+          )}
+          {loading && !Object.values(state).flat().length && (
+            <div className="loading-bar">
+              <i />
+              Loading Obsidian records…
+            </div>
+          )}
+          {active === "dashboard" && (
+            <Dashboard
+              {...props}
+              openContext={() => setContextOpen(true)}
+              openManuscripts={() => openPaper()}
+              submissionAlerts={visibleSubmissionAlerts}
+              openSubmissionAlert={openSubmissionAlert}
+              paper={activePaper}
+            />
+          )}
+          {active === "projects" && <ProjectsModule state={state} openEditor={openEditor} />}
+          {active === "manuscript" && (
+            <ManuscriptModule
+              state={state}
+              openEditor={openEditor}
+              addEvent={addSubmissionEvent}
+              syncEmail={syncSubmissionEmail}
+              selectedId={activePaper?.id || ""}
+              onSelect={setPaperContextId}
+              initialView={manuscriptInitialView}
+            />
+          )}
+          {active === "library" && (
+            <LibraryModule
+              state={state}
+              saveRecord={saveRecord}
+              openEditor={openEditor}
+              paper={activePaper}
+            />
+          )}
+          {active === "operations" && (
+            <OperationsModule state={state} openEditor={openEditor} paper={activePaper} />
+          )}
+        </main>
+      </div>
+      {editor && (
+        <RecordEditor
+          ref={topOverlay === "editor" ? overlayRef : undefined}
+          key={`${editor.collection}-${editor.record?.id || "new"}`}
+          editor={editor}
+          state={state}
+          onClose={() => setEditor(null)}
+          onSave={saveRecord}
+          onDelete={deleteRecord}
+        />
+      )}
+      {action && (
+        <ActionDrawer
+          ref={topOverlay === "action" ? overlayRef : undefined}
+          action={action}
+          state={state}
+          paper={activePaper}
+          saveRecord={saveRecord}
+          onClose={() => setAction(null)}
+          openConnections={() => setConnectionsOpen(true)}
+        />
+      )}
+      {contextOpen && (
+        <ContextDrawer
+          ref={topOverlay === "context" ? overlayRef : undefined}
+          state={state}
+          status={status}
+          onClose={() => setContextOpen(false)}
+        />
+      )}
+      {connectionsOpen && (
+        <ConnectionsDrawer
+          ref={topOverlay === "connections" ? overlayRef : undefined}
+          status={status}
+          issue={bridgeIssue}
+          refresh={() => loadStatus(true)}
+          onClose={() => setConnectionsOpen(false)}
+        />
+      )}
+      {guideOpen && (
+        <GuideDrawer
+          ref={topOverlay === "guide" ? overlayRef : undefined}
+          onClose={() => setGuideOpen(false)}
+          openConnections={() => setConnectionsOpen(true)}
+        />
+      )}
+      {commandOpen && (
+        <div className="command-backdrop" onMouseDown={() => setCommandOpen(false)}>
+          <div
+            ref={topOverlay === "command" ? (overlayRef as React.Ref<HTMLDivElement>) : undefined}
+            className="command-palette"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Contextual AI assists"
+            tabIndex={-1}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <div className="command-search">
+              <span>⌕</span>
+              <input
+                autoFocus
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search AI assists…"
+              />
+              <kbd>ESC</kbd>
+            </div>
+            <div className="command-results">
+              <span className="label">CONTEXTUAL AI ASSISTS</span>
+              {commands.map((item) => (
+                <button
+                  key={item.command}
+                  onClick={() => {
+                    setAction(item);
+                    setCommandOpen(false);
+                    setQuery("");
+                  }}
+                >
+                  <span className={`action-mark ${item.tone}`}>✦</span>
+                  <span>
+                    <strong>{item.label}</strong>
+                    <small>{item.command}</small>
+                  </span>
+                  <b>{item.meta}</b>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+      {toast && (
+        <div className="toast">
+          <span>✓</span>
+          {toast}
+        </div>
+      )}
+    </div>
+  );
 }

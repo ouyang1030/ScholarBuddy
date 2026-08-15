@@ -39,9 +39,18 @@ function calendarEvents(calendar, start, end) {
   });
 }
 
+function matchingEvents(calendar, predicate) {
+  try {
+    return calendar.events.whose(predicate)();
+  } catch (_) {
+    return calendar.events();
+  }
+}
+
 function findEvent(calendars, uid) {
+  if (!uid) return null;
   for (const calendar of calendars) {
-    for (const event of calendar.events()) {
+    for (const event of matchingEvents(calendar, { uid: { _equals: uid } })) {
       try {
         if (clean(event.uid()) === uid) return { calendar, event };
       } catch (_) { /* continue */ }
@@ -58,7 +67,7 @@ function findEventByExternalId(calendars, externalId) {
   const marker = externalMarker(externalId);
   if (!marker) return null;
   for (const calendar of calendars) {
-    for (const event of calendar.events()) {
+    for (const event of matchingEvents(calendar, { description: { _contains: marker } })) {
       try {
         if (clean(event.description()).includes(marker)) return { calendar, event };
       } catch (_) { /* continue */ }
@@ -123,14 +132,11 @@ function run(argv) {
   if (action === "update") {
     const newStart = new Date(payload.start);
     const newEnd = new Date(payload.end);
-    const currentStart = match.event.startDate();
     const currentEnd = match.event.endDate();
     if (newStart >= currentEnd) {
+      // Move the end out first: Calendar rejects a transient start > end.
       match.event.endDate = newEnd;
       match.event.startDate = newStart;
-    } else if (newEnd <= currentStart) {
-      match.event.startDate = newStart;
-      match.event.endDate = newEnd;
     } else {
       match.event.startDate = newStart;
       match.event.endDate = newEnd;

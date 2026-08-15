@@ -62,9 +62,3 @@ next-env.d.ts
 *.db
 *.sqlite
 *.sqlite3
-
-# unused starter and superseded public assets
-/public/file.svg
-/public/globe.svg
-/public/window.svg
-/public/og-v1.png

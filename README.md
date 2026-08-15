@@ -1,6 +1,6 @@
 # ScholarBuddy — Sports Research OS
 
-ScholarBuddy is a local-first research workbench for sports analytics and other evidence-heavy research. The hosted interface organizes projects, manuscripts, reading, reviews, submissions, and daily focus. A loopback-only Bridge keeps Obsidian, Zotero, macOS Calendar, and macOS Mail on the researcher's own computer.
+ScholarBuddy is a local-first research workbench for sports analytics and other evidence-heavy research. The hosted interface organizes projects, manuscripts, reading, reviews, submissions, the daily research log, captured ideas, and daily focus. A loopback-only Bridge keeps Obsidian, Zotero, macOS Calendar, and macOS Mail on the researcher's own computer.
 
 ## Architecture
 
@@ -36,7 +36,14 @@ npm install
 npm run setup
 ```
 
-Edit the generated `.env.local`:
+On macOS, setup installs the per-user background Bridge and opens a private page at `http://127.0.0.1:32145/setup`. Use it to:
+
+- Store optional AI credentials in macOS Keychain.
+- Choose an Obsidian vault with the system folder picker.
+- Detect Zotero Desktop and request Calendar permission.
+- Return to ScholarBuddy and pair the same browser automatically.
+
+The setup page is loopback-only, uses a short-lived setup session, and never returns a saved API key to browser JavaScript. Advanced users and other operating systems can edit the generated `.env.local` directly:
 
 - Set `OBSIDIAN_VAULT_PATH` to an absolute vault path.
 - Add any optional AI provider credentials.
@@ -44,14 +51,14 @@ Edit the generated `.env.local`:
 - Keep local development origins in `WORKBUDDY_ORIGINS`.
 - After deployment, add every exact public origin. Wildcards are rejected.
 
-Start the interface and Bridge in separate terminals:
+For local development, start the interface and Bridge in separate terminals:
 
 ```bash
 npm run dev
 npm run bridge
 ```
 
-Open ScholarBuddy → Connections → Open local pairing page. Copy the one-time code and redeem it within five minutes. The resulting private token is stored only in that browser origin.
+Open ScholarBuddy → Connections → Configure this Mac for guided setup. Manual pairing remains available from the local pairing page; its code expires after five minutes. The resulting private token is stored only in that browser origin.
 
 ## macOS background service
 
@@ -85,12 +92,13 @@ Publishing source code, making a Site public, and connecting a custom domain are
 - CORS accepts only exact configured HTTP(S) origins; wildcard origins are ignored.
 - Browser requests require a high-entropy bearer credential.
 - Pairing pages expose a one-time code, not the long-lived credential.
-- API keys remain in ignored local configuration and are never sent to the hosted UI.
+- On macOS, API keys are stored in Keychain. `.env.local` remains a supported fallback for developers and other systems. Keys are never sent to the hosted UI.
 - Obsidian writes use constrained collections, validated record identifiers, atomic writes, and version archives.
+- Research log entries and captured ideas are ordinary Obsidian records under the same constraints. Text typed into the Today capture boxes is held in that browser only until the record reaches the vault.
 - Selected Zotero and Obsidian context is sent to the configured AI provider only when the user runs an AI workflow.
 - AI request and token limits are process-local safeguards and reset when the Bridge restarts; they are not billing controls.
 - Submission email auto-check runs only while the Submission Tracker page is open. Acceptance, rejection, withdrawal, and publication always require confirmation.
-- Record history is retained as readable Markdown under `WorkBuddy/.history`; it can be reviewed and pruned manually if a long-running vault grows unusually large.
+- Record history is retained as readable Markdown under `ScholarBuddy/.history`; it can be reviewed and pruned manually if a long-running vault grows unusually large.
 
 See [PRIVACY.md](PRIVACY.md) and [SECURITY.md](SECURITY.md) before sharing a deployment.
 
@@ -109,4 +117,6 @@ Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) and [CODE_OF_
 
 ## License
 
-Apache License 2.0. See [LICENSE](LICENSE).
+Copyright 2026 Jiangyan Yang.
+
+Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE).

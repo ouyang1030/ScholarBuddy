@@ -1,0 +1,18 @@
+node_modules
+dist
+.next
+.vinext
+.wrangler
+.openai
+public
+package-lock.json
+tsconfig.tsbuildinfo
+
+# Stylesheets stay one rule per line. That reads well for CSS, keeps rule-level
+# diffs precise, and avoids quadrupling globals.css. The JSX/TS files are the
+# ones that were unreadable.
+*.css
+
+# JXA is JavaScript, but osascript owns the extension and Prettier cannot infer
+# a parser for it.
+*.jxa
