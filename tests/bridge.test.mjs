@@ -3,7 +3,7 @@ import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { addSubmissionEvent, authorize, detectSubmissionStatus, handle, invalidCitations, parseRecord, saveRecord, submissionEmailCandidate, syncSubmissionEmails } from "../bridge/server.mjs";
+import { addSubmissionEvent, authorize, detectSubmissionStatus, handle, invalidCitations, normalizeZoteroPassage, parseRecord, saveRecord, submissionEmailCandidate, syncSubmissionEmails } from "../bridge/server.mjs";
 
 const allowedOrigin = "https://workbench.example";
 const bridgeToken = "test-token-with-at-least-thirty-two-characters";
@@ -77,6 +77,19 @@ test("Kbase saves atomically, detects stale updates, and archives history", asyn
 test("citation validation identifies references missing from the evidence manifest", () => {
   const manifest = { zotero: [{ id: "Z1" }], obsidian: [{ id: "O1" }] };
   assert.deepEqual(invalidCitations("Supported [Z1] [O1], invented [Z9] and [O7].", manifest), ["Z9", "O7"]);
+});
+
+test("Zotero annotations become source-aware passages without changing the highlight", () => {
+  const passage = normalizeZoteroPassage(
+    { data: { key: "ANN1", parentItem: "PDF1", annotationText: "A useful result.", annotationComment: "Use in discussion", annotationPageLabel: "12", annotationColor: "#ffd400", tags: [{ tag: "validity" }], dateModified: "2026-08-15T10:00:00Z" } },
+    { data: { key: "PDF1", parentItem: "ITEM1", title: "Full text" } },
+    { data: { key: "ITEM1", title: "Measurement validity", creators: [{ firstName: "Ada", lastName: "Lovelace" }], date: "2025", extra: "Citation Key: lovelace2025" } },
+  );
+  assert.equal(passage.text, "A useful result.");
+  assert.equal(passage.sourceTitle, "Measurement validity");
+  assert.equal(passage.citationKey, "lovelace2025");
+  assert.deepEqual(passage.tags, ["validity"]);
+  assert.match(passage.url, /^zotero:\/\/open-pdf\/library\/items\/PDF1\?/);
 });
 
 test("calendar adapter uses interval overlap and preserves notes unless supplied", async () => {

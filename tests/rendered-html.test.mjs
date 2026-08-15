@@ -92,6 +92,11 @@ test("client routes all bridge calls through pairing auth and keeps daily and so
   assert.match(source, /aria-label=\{running \? "Pause focus session"/);
   assert.match(source, /aria-label="Reset focus timer"/);
   assert.match(source, /bridgeHealthFetch/);
+  assert.match(source, /Passage Library/);
+  assert.match(source, /\/zotero\/passages/);
+  assert.match(source, /annotationKey/);
+  assert.match(source, /Copy with citation/);
+  assert.match(source, /LinkedPassages/);
   assert.match(source, /workbuddy-bridge-url/);
   assert.match(source, /Bridge unreachable · open in a Mac browser/);
   assert.match(css, /\.record-board > \.real-empty \{ grid-column: 1 \/ -1; \}/);
@@ -110,4 +115,7 @@ test("client routes all bridge calls through pairing auth and keeps daily and so
   assert.match(css, /\.focus-control-icon\.reset \{[^}]*font-size: 21px/);
   assert.match(css, /\.schedule-list > div\.confirming-delete \{ grid-template-columns: 48px 17px minmax\(0,1fr\) 128px;/);
   assert.match(css, /\.debt-table \{[^}]*overflow-x: auto/);
+  assert.match(css, /\.passage-list \{[^}]*repeat\(2/);
+  assert.match(css, /\.passage-organize \{/);
+  assert.match(css, /\.linked-passages \{/);
 });

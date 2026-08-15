@@ -127,6 +127,56 @@ function normalizeZoteroItem(item) {
   return { key: data.key || item?.key || "", title: data.title || "Untitled item", creators: (data.creators || []).map(creatorName).filter(Boolean), year: String(data.date || "").match(/\d{4}/)?.[0] || "", itemType: data.itemType || "", doi: data.DOI || "", url: data.url || (data.key ? `zotero://select/library/items/${data.key}` : "") };
 }
 
+function citationKey(data = {}) {
+  if (data.citationKey) return data.citationKey;
+  return String(data.extra || "").match(/^Citation Key:\s*(.+)$/im)?.[1]?.trim() || "";
+}
+
+export function normalizeZoteroPassage(annotation, attachment, source) {
+  const note = annotation?.data || annotation || {};
+  const file = attachment?.data || attachment || {};
+  const item = source?.data || source || {};
+  const pageLabel = note.annotationPageLabel || "";
+  return {
+    key: note.key || annotation?.key || "",
+    attachmentKey: file.key || note.parentItem || "",
+    zoteroItemKey: item.key || file.parentItem || "",
+    text: note.annotationText || "",
+    comment: note.annotationComment || "",
+    pageLabel,
+    tags: (note.tags || []).map((tag) => typeof tag === "string" ? tag : tag.tag).filter(Boolean),
+    color: note.annotationColor || "#ffd400",
+    sourceTitle: item.title || file.title || "Untitled source",
+    creators: (item.creators || []).map(creatorName).filter(Boolean),
+    year: String(item.date || "").match(/\d{4}/)?.[0] || "",
+    citationKey: citationKey(item),
+    dateModified: note.dateModified || "",
+    url: `zotero://open-pdf/library/items/${file.key || note.parentItem || ""}?${new URLSearchParams({ ...(pageLabel ? { page: pageLabel } : {}), annotation: note.key || annotation?.key || "" })}`,
+  };
+}
+
+async function zoteroItemsByKey(config, keys, signal) {
+  const items = await Promise.all(keys.map(async (key) => {
+    const response = await zoteroRequest(config, `/api/users/0/items/${key}`, signal);
+    return response.json();
+  }));
+  return new Map(items.map((item) => [item?.data?.key || item?.key, item]));
+}
+
+async function listZoteroPassages(config, signal) {
+  const params = new URLSearchParams({ itemType: "annotation", limit: "250", format: "json", sort: "dateModified", direction: "desc" });
+  const response = await zoteroRequest(config, `/api/users/0/items?${params}`, signal);
+  const annotations = (await response.json()).filter((item) => item?.data?.annotationText || item?.data?.annotationComment);
+  const attachmentKeys = [...new Set(annotations.map((item) => item.data.parentItem).filter(Boolean))];
+  const attachments = await zoteroItemsByKey(config, attachmentKeys, signal);
+  const sourceKeys = [...new Set([...attachments.values()].map((item) => item?.data?.parentItem).filter(Boolean))];
+  const sources = await zoteroItemsByKey(config, sourceKeys, signal);
+  return annotations.map((annotation) => {
+    const attachment = attachments.get(annotation.data.parentItem);
+    return normalizeZoteroPassage(annotation, attachment, sources.get(attachment?.data?.parentItem));
+  });
+}
+
 async function searchZotero(config, query, limit = 5, signal) {
   const cleanQuery = String(query || "").trim().slice(0, 160);
   const terms = queryTerms(cleanQuery).slice(0, 5);
@@ -141,11 +191,11 @@ async function searchZotero(config, query, limit = 5, signal) {
   return [...ranked.values()].sort((a, b) => b.score - a.score || a.item.title.localeCompare(b.item.title)).slice(0, limit).map((entry) => entry.item);
 }
 
-const recordCollections = new Set(["projects", "research-questions", "manuscripts", "research-debt", "experiments", "reviews", "operations", "reading-queue", "submission-attempts", "submission-events"]);
+const recordCollections = new Set(["projects", "research-questions", "manuscripts", "research-debt", "experiments", "reviews", "operations", "reading-queue", "passages", "submission-attempts", "submission-events"]);
 function recordRoot(config) { if (!config.OBSIDIAN_VAULT_PATH) throw new Error("OBSIDIAN_VAULT_PATH is not configured."); return path.join(config.OBSIDIAN_VAULT_PATH, "WorkBuddy"); }
 function safeCollection(value) { const collection = String(value || ""); if (!recordCollections.has(collection)) { const error = new Error("Unsupported WorkBuddy collection."); error.status = 422; throw error; } return collection; }
 function safeRecordId(value) { const id = String(value || "").trim(); if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(id)) { const error = new Error("Invalid WorkBuddy record id."); error.status = 422; throw error; } return id; }
-function newRecordId(collection) { const prefix = { projects: "PRJ", "research-questions": "RQ", manuscripts: "MS", "research-debt": "DEBT", experiments: "EXP", reviews: "REV", operations: "OPS", "reading-queue": "READ", "submission-attempts": "SUB", "submission-events": "SEV" }[collection] || "REC"; return `${prefix}-${randomUUID().slice(0, 12).toUpperCase()}`; }
+function newRecordId(collection) { const prefix = { projects: "PRJ", "research-questions": "RQ", manuscripts: "MS", "research-debt": "DEBT", experiments: "EXP", reviews: "REV", operations: "OPS", "reading-queue": "READ", passages: "PASS", "submission-attempts": "SUB", "submission-events": "SEV" }[collection] || "REC"; return `${prefix}-${randomUUID().slice(0, 12).toUpperCase()}`; }
 function serializeRecord(record) { const metadata = { ...record }; delete metadata.description; delete metadata.content; const lines = Object.entries(metadata).map(([key, value]) => `${key}: ${JSON.stringify(value ?? null)}`); const body = String(record.description || record.content || "").trim(); return `---\n${lines.join("\n")}\n---\n\n${body}${body ? "\n" : ""}`; }
 function parseRecord(text, fallbackId) { const match = text.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/); if (!match) return { id: fallbackId, title: fallbackId, description: text.trim() }; const record = {}; for (const line of match[1].split(/\r?\n/)) { const split = line.indexOf(":"); if (split < 1) continue; const key = line.slice(0, split).trim(); const raw = line.slice(split + 1).trim(); try { record[key] = JSON.parse(raw); } catch { record[key] = raw; } } return { ...record, id: fallbackId, description: match[2].trim() }; }
 
@@ -386,6 +436,7 @@ async function handle(request, providedConfig) {
   const origin = auth.origin;
   if (url.pathname === "/health" && request.method === "GET") return json(origin, await bridgeStatus(config));
   if (url.pathname === "/zotero/search" && request.method === "GET") return json(origin, { items: await searchZotero(config, url.searchParams.get("q") || "", 12, request.signal) });
+  if (url.pathname === "/zotero/passages" && request.method === "GET") return json(origin, { passages: await listZoteroPassages(config, request.signal) });
   if (url.pathname === "/workbench/state" && request.method === "GET") return json(origin, await workbenchState(config));
   if (url.pathname === "/workbench/record" && request.method === "POST") { const payload = await readJson(request); return json(origin, { record: await saveRecord(config, payload.collection, payload.record || {}) }, payload.record?.id ? 200 : 201); }
   if (url.pathname === "/workbench/record" && request.method === "DELETE") { const payload = await readJson(request); return json(origin, await deleteRecord(config, payload.collection, payload.id)); }

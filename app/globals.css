@@ -1226,6 +1226,45 @@ body { font-size: 17px; line-height: 1.5; }
 .editable-section { margin-top: 22px; padding: 24px; }
 .editable-section > .section-heading { margin-bottom: 18px; }
 .reading-queue-section .real-empty { min-height: 118px; }
+.library-tabs { margin-bottom: 32px; }
+.passage-library { display: grid; gap: 18px; }
+.passage-toolbar { padding: 24px; display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 18px 24px; border: 1px solid #dce3db; border-radius: 15px; background: #fff; }
+.passage-toolbar h2 { margin: 7px 0 5px; color: #27342d; font-size: 24px; }
+.passage-toolbar p { margin: 0; color: #78847d; font-size: 13px; line-height: 1.55; }
+.passage-search { grid-column: 1 / -1; min-height: 48px; padding: 0 15px; display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 10px; border: 1px solid #d5dcd4; border-radius: 10px; background: #fafcf9; color: #829078; }
+.passage-search:focus-within { border-color: #82a55d; box-shadow: 0 0 0 3px rgba(112,153,67,.09); }
+.passage-search input { min-width: 0; border: 0; outline: 0; background: transparent; color: #344039; font: 14px inherit; }
+.passage-filters { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 8px; }
+.passage-filters button { padding: 8px 12px; border: 1px solid #d6ded3; border-radius: 999px; background: #f8faf7; color: #647268; font-size: 12px; font-weight: 750; }
+.passage-filters button.active { border-color: #26332c; background: #26332c; color: #fff; }
+.passage-list { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 16px; }
+.passage-card { position: relative; min-width: 0; padding: 22px; overflow: hidden; border: 1px solid #dde4dc; border-radius: 14px; background: #fff; }
+.passage-card::before { content: ""; position: absolute; inset: 0 auto 0 0; width: 4px; background: var(--passage-color); }
+.passage-card header { display: grid; grid-template-columns: 38px minmax(0,1fr) auto; gap: 11px; align-items: start; }
+.passage-card header > span:first-child { color: #74816f; font: 12px var(--font-geist-mono); }
+.passage-card header strong { display: block; color: #35423b; font-size: 14px; line-height: 1.4; }
+.passage-card header small { display: block; margin-top: 5px; color: #859087; font-size: 12px; line-height: 1.45; }
+.passage-card blockquote { margin: 20px 0 0; color: #28352e; font: 500 17px/1.65 Georgia, serif; }
+.passage-comment { margin: 12px 0 0; padding: 11px 13px; border-radius: 8px; background: #f1f5ee; color: #66736a; font-size: 12px; line-height: 1.55; }
+.passage-tags { min-height: 12px; margin-top: 14px; display: flex; flex-wrap: wrap; gap: 6px; }
+.passage-tags span { padding: 4px 7px; border-radius: 5px; background: #eef4e9; color: #5e744c; font-size: 10px; font-weight: 750; }
+.passage-organize { margin-top: 18px; padding-top: 17px; display: grid; grid-template-columns: 1fr 1fr; gap: 12px; border-top: 1px solid #e4e9e2; }
+.passage-organize label { display: grid; gap: 6px; color: #78847c; font-size: 11px; font-weight: 750; }
+.passage-organize label:last-child { grid-column: 1 / -1; }
+.passage-organize select, .passage-organize input { width: 100%; min-width: 0; min-height: 40px; padding: 8px 10px; border: 1px solid #d7ded5; border-radius: 8px; outline: 0; background: #fafcf9; color: #3b4841; font: 12px inherit; }
+.passage-card footer { margin-top: 16px; display: flex; flex-wrap: wrap; gap: 7px; }
+.passage-card footer button { min-height: 36px; padding: 7px 10px; border: 1px solid #d3dcd0; border-radius: 7px; background: #f8faf7; color: #53635a; font-size: 11px; font-weight: 750; }
+.passage-card footer button.passage-link { border-color: #9ac86b; background: #adf05d; color: #1f2c24; }
+.passage-card footer button:disabled { opacity: .45; }
+.linked-passages { margin-top: 18px; padding: 24px; }
+.linked-passages > .section-heading { margin-bottom: 16px; }
+.linked-passages > .section-heading > b { color: #738168; font: 13px var(--font-geist-mono); }
+.linked-passages > div:last-child { display: grid; gap: 8px; }
+.linked-passages article { padding: 13px 14px; display: grid; grid-template-columns: 4px minmax(0,1fr) auto; gap: 8px 12px; align-items: start; border: 1px solid #e0e6df; border-radius: 9px; background: #fafcf9; }
+.linked-passages article > span { grid-row: 1 / 3; width: 4px; height: 100%; min-height: 42px; border-radius: 4px; }
+.linked-passages blockquote { margin: 0; color: #3b4841; font: 14px/1.55 Georgia, serif; }
+.linked-passages article p { grid-column: 2; margin: 0; color: #839087; font-size: 11px; }
+.linked-passages article button { grid-column: 3; grid-row: 1 / 3; align-self: center; padding: 7px 9px; border: 1px solid #d6ddd4; border-radius: 7px; background: #fff; color: #5e6c63; font-size: 11px; font-weight: 750; }
 .debt-table { display: grid; border: 1px solid #e0e5df; border-radius: 10px; overflow-x: auto; overflow-y: hidden; }
 .debt-table > button { min-width: 650px; }
 .debt-table > button { width: 100%; padding: 13px 14px; display: grid; grid-template-columns: 12px minmax(220px,1fr) 110px 120px auto; align-items: center; gap: 10px; border: 0; border-bottom: 1px solid #e7ebe6; background: #fff; color: #56625b; text-align: left; font-size: 11px; }
@@ -1329,6 +1368,7 @@ small { font-size: 13px !important; line-height: 1.45; }
 
 @media (max-width: 950px) {
   .record-board, .real-summary-grid { grid-template-columns: repeat(2, minmax(0,1fr)); }
+  .passage-list { grid-template-columns: 1fr; }
   .project-flow-columns { grid-template-columns: 1fr; }
   .project-flow-columns > section { min-height: 0; border-right: 0; border-bottom: 1px solid #dfe5de; }
   .project-flow-columns > section:last-child { border-bottom: 0; }
@@ -1338,6 +1378,12 @@ small { font-size: 13px !important; line-height: 1.45; }
   .real-empty { grid-template-columns: 34px 1fr; }
   .real-empty button { grid-column: 2; width: max-content; }
   .record-form, .record-board, .real-summary-grid { grid-template-columns: 1fr; }
+  .passage-toolbar { padding: 18px; grid-template-columns: 1fr; }
+  .passage-toolbar > button { justify-self: start; }
+  .passage-organize { grid-template-columns: 1fr; }
+  .passage-organize label:last-child { grid-column: 1; }
+  .passage-card header { grid-template-columns: 32px minmax(0,1fr); }
+  .passage-card header .status-pill { grid-column: 2; justify-self: start; }
   .real-summary { padding: 18px; }
   .real-summary .real-empty { min-height: 132px; margin-top: 14px; }
   .editable-section { padding: 18px; }
