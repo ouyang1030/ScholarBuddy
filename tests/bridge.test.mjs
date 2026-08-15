@@ -3,7 +3,7 @@ import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { addSubmissionEvent, authorize, detectSubmissionStatus, handle, invalidCitations, normalizeZoteroPassage, parseRecord, saveRecord, submissionEmailCandidate, syncSubmissionEmails } from "../bridge/server.mjs";
+import { addSubmissionEvent, authorize, detectSubmissionStatus, handle, invalidCitations, issuePairingCode, modelConfig, modelRequest, modelResponse, normalizeZoteroPassage, parseRecord, saveRecord, submissionEmailCandidate, syncSubmissionEmails } from "../bridge/server.mjs";
 
 const allowedOrigin = "https://workbench.example";
 const bridgeToken = "test-token-with-at-least-thirty-two-characters";
@@ -24,6 +24,38 @@ test("bridge rejects hostile origins and missing pairing tokens before routing",
   assert.deepEqual(authorize(new Request("http://127.0.0.1/health", { headers: { Origin: "https://attacker.example", Authorization: `Bearer ${bridgeToken}` } }), settings), { ok: false, status: 403, origin: "", code: "origin_denied" });
   assert.equal(authorize(new Request("http://127.0.0.1/health", { headers: { Origin: allowedOrigin } }), settings).status, 401);
   assert.equal(authorize(new Request("http://127.0.0.1/health", { headers: { Origin: allowedOrigin, Authorization: `Bearer ${bridgeToken}` } }), settings).ok, true);
+  assert.equal(authorize(new Request("http://127.0.0.1/health", { headers: { Origin: allowedOrigin, Authorization: `Bearer ${bridgeToken}` } }), { ...settings, WORKBUDDY_ORIGINS: "*" }).status, 403);
+  assert.equal(authorize(new Request("http://127.0.0.1/health", { headers: { Origin: allowedOrigin, Authorization: `Bearer ${bridgeToken}` } }), { ...settings, WORKBUDDY_ORIGINS: `${allowedOrigin}/path` }).status, 403);
+});
+
+test("pairing exchanges one-time codes without exposing the permanent token", async () => {
+  const settings = config("/tmp/unused");
+  const page = await handle(new Request("http://127.0.0.1:32145/pair"), settings);
+  const pageHtml = await page.text();
+  assert.equal(page.status, 200);
+  assert.doesNotMatch(pageHtml, new RegExp(bridgeToken));
+  assert.match(pageHtml, /expires in five minutes/i);
+
+  const code = issuePairingCode(bridgeToken);
+  const exchange = () => new Request("http://127.0.0.1:32145/pair/exchange", {
+    method: "POST",
+    headers: { Origin: allowedOrigin, "Content-Type": "application/json" },
+    body: JSON.stringify({ code }),
+  });
+  const first = await handle(exchange(), settings);
+  assert.equal(first.status, 200);
+  assert.deepEqual(await first.json(), { token: bridgeToken });
+
+  const replay = await handle(exchange(), settings);
+  assert.equal(replay.status, 401);
+  assert.equal((await replay.json()).code, "pairing_code_invalid");
+
+  const hostile = await handle(new Request("http://127.0.0.1:32145/pair/exchange", {
+    method: "POST",
+    headers: { Origin: "https://attacker.example", "Content-Type": "application/json" },
+    body: JSON.stringify({ code: issuePairingCode(bridgeToken) }),
+  }), settings);
+  assert.equal(hostile.status, 403);
 });
 
 test("write routes reject simple text/plain requests", async () => {
@@ -44,6 +76,48 @@ test("AI workflow stops before model execution when a selected source fails", as
     assert.equal(body.code, "retrieval_failed");
     assert.equal(body.retrieval.zotero.status, "error");
   } finally { await rm(vault, { recursive: true, force: true }); }
+});
+
+test("AI providers use their native request and response formats", () => {
+  const providers = {
+    openai: { key: "OPENAI_API_KEY", adapter: "responses", url: "https://api.openai.com/v1/responses", model: "gpt-5.6-terra" },
+    claude: { key: "ANTHROPIC_API_KEY", adapter: "anthropic-messages", url: "https://api.anthropic.com/v1/messages", model: "claude-sonnet-5" },
+    grok: { key: "XAI_API_KEY", adapter: "responses", url: "https://api.x.ai/v1/responses", model: "grok-4.6" },
+    gemini: { key: "GEMINI_API_KEY", adapter: "gemini-generate-content", url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent", model: "gemini-3.6-flash" },
+  };
+  for (const [provider, expected] of Object.entries(providers)) {
+    const target = modelConfig({ [expected.key]: `${provider}-secret` }, provider);
+    const request = modelRequest(target, "system rule", "user task", 777);
+    const payload = JSON.parse(request.init.body);
+    assert.equal(target.adapter, expected.adapter);
+    assert.equal(target.model, expected.model);
+    assert.equal(request.url, expected.url);
+    assert.equal(payload.model || target.model, expected.model);
+    assert.equal(request.init.method, "POST");
+  }
+
+  const openai = modelConfig({ OPENAI_API_KEY: "secret" }, "openai");
+  const openaiRequest = modelRequest(openai, "system rule", "user task", 777);
+  assert.equal(openaiRequest.init.headers.Authorization, "Bearer secret");
+  assert.deepEqual(JSON.parse(openaiRequest.init.body), { model: "gpt-5.6-terra", instructions: "system rule", input: "user task", max_output_tokens: 777 });
+  assert.deepEqual(modelResponse(openai, { output: [{ content: [{ type: "output_text", text: "OpenAI result" }] }], usage: { total_tokens: 12 } }), { output: "OpenAI result", usage: { total_tokens: 12 } });
+
+  const claude = modelConfig({ ANTHROPIC_API_KEY: "secret" }, "claude");
+  const claudeRequest = modelRequest(claude, "system rule", "user task", 777);
+  assert.equal(claudeRequest.init.headers["x-api-key"], "secret");
+  assert.equal(claudeRequest.init.headers["anthropic-version"], "2023-06-01");
+  assert.deepEqual(JSON.parse(claudeRequest.init.body).messages, [{ role: "user", content: "user task" }]);
+  assert.deepEqual(modelResponse(claude, { content: [{ type: "text", text: "Claude result" }], usage: { input_tokens: 4, output_tokens: 5 } }), { output: "Claude result", usage: { input_tokens: 4, output_tokens: 5, total_tokens: 9 } });
+
+  const grok = modelConfig({ XAI_API_KEY: "secret" }, "grok");
+  assert.equal(modelRequest(grok, "system rule", "user task", 777).init.headers.Authorization, "Bearer secret");
+  assert.equal(modelResponse(grok, { output: [{ content: [{ type: "output_text", text: "Grok result" }] }] }).output, "Grok result");
+
+  const gemini = modelConfig({ GEMINI_API_KEY: "secret" }, "gemini");
+  const geminiRequest = modelRequest(gemini, "system rule", "user task", 777);
+  assert.equal(geminiRequest.init.headers["x-goog-api-key"], "secret");
+  assert.deepEqual(JSON.parse(geminiRequest.init.body).systemInstruction, { parts: [{ text: "system rule" }] });
+  assert.deepEqual(modelResponse(gemini, { candidates: [{ content: { parts: [{ text: "Gemini result" }] } }], usageMetadata: { totalTokenCount: 11 } }), { output: "Gemini result", usage: { totalTokenCount: 11, total_tokens: 11 } });
 });
 
 test("AI notes never overwrite a prior save", async () => {

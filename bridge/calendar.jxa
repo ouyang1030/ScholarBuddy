@@ -100,7 +100,7 @@ function run(argv) {
     const calendar = writableCalendar(calendars, payload.calendar);
     if (!calendar) throw new Error("No writable calendar is available.");
     const marker = externalMarker(payload.externalId);
-    const notes = payload.notes === undefined ? "Created by WorkBuddy" : clean(payload.notes);
+    const notes = payload.notes === undefined ? "Created by ScholarBuddy" : clean(payload.notes);
     const event = Calendar.Event({
       summary: payload.title,
       startDate: new Date(payload.start),

@@ -724,7 +724,7 @@ kbd, .key-hint { font-family: var(--font-geist-mono); font-size: 12px; color: #7
 .tomorrow-plan p { margin: 0; color: #89968f; font-size: 11px; }
 .tomorrow-plan button { border: 0; background: transparent; color: var(--lime); font-size: 11px; }
 
-/* WorkBuddy UI system — spacious, research-first, and readable */
+/* ScholarBuddy UI system — spacious, research-first, and readable */
 :root {
   --paper: #f4f6f1;
   --white: #ffffff;
@@ -941,6 +941,10 @@ body { font-size: 17px; line-height: 1.5; }
 .provider-switch button.active { border-color: #7c9d57; background: #f0f6e8; box-shadow: inset 0 0 0 1px rgba(124,157,87,.16); }
 .provider-switch button > span { grid-row: 1 / 3; width: 32px; height: 32px; border-radius: 9px; display: grid; place-items: center; background: #202b27; color: #c9f48b; font: 11px var(--font-geist-mono); }
 .provider-switch button:nth-child(2) > span { color: #b9d7ff; }
+.provider-switch button:nth-child(3) > span { color: #fff; background: #101010; }
+.provider-switch button:nth-child(4) > span { color: #f2c8ad; background: #392a25; }
+.provider-switch button:nth-child(5) > span { color: #fff; background: #151515; }
+.provider-switch button:nth-child(6) > span { color: #c9d7ff; background: #3156a3; }
 .provider-switch b { align-self: end; font-size: 13px; }
 .provider-switch small { align-self: start; color: #86918a; font-size: 11px; }
 .drawer-sources input:disabled { opacity: .55; }
@@ -1118,6 +1122,10 @@ body { font-size: 17px; line-height: 1.5; }
 .connection-list article:last-child { border-bottom: 0; }
 .connection-logo { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 10px; background: #202a27; color: #d7f9a5; font: 11px var(--font-geist-mono); }
 .connection-logo.kimi { color: #b7d9ff; }
+.connection-logo.openai { color: #fff; background: #101010; }
+.connection-logo.claude { color: #f2c8ad; background: #392a25; }
+.connection-logo.grok { color: #fff; background: #151515; }
+.connection-logo.gemini { color: #dbe4ff; background: #3156a3; }
 .connection-logo.zotero { background: #a93333; color: #fff; font-size: 17px; font-family: Georgia, serif; }
 .connection-logo.obsidian { background: #7151b7; color: #fff; font-size: 15px; }
 .connection-list article > div { display: flex; flex-direction: column; gap: 4px; }

@@ -6,23 +6,18 @@
   <string>com.workbuddy.research-bridge</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/opt/homebrew/opt/node@24/bin/node</string>
-    <string>/Users/biomech/Documents/workbench/bridge/server.mjs</string>
+    <string>{{NODE_PATH}}</string>
+    <string>{{BRIDGE_PATH}}</string>
   </array>
   <key>WorkingDirectory</key>
-  <string>/Users/biomech/Documents/workbench</string>
-  <key>EnvironmentVariables</key>
-  <dict>
-    <key>PATH</key>
-    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
-  </dict>
+  <string>{{REPOSITORY_PATH}}</string>
   <key>RunAtLoad</key>
   <true/>
   <key>KeepAlive</key>
   <true/>
   <key>StandardOutPath</key>
-  <string>/tmp/workbuddy-research-bridge.log</string>
+  <string>{{LOG_PATH}}</string>
   <key>StandardErrorPath</key>
-  <string>/tmp/workbuddy-research-bridge-error.log</string>
+  <string>{{ERROR_LOG_PATH}}</string>
 </dict>
 </plist>
