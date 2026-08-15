@@ -93,6 +93,8 @@ test("client routes all bridge calls through pairing auth and keeps daily and so
   assert.match(source, /aria-label="Reset focus timer"/);
   assert.match(source, /bridgeHealthFetch/);
   assert.match(source, /Passage Library/);
+  assert.match(source, /Using Passage Library/);
+  assert.match(source, /Hosted access/);
   assert.match(source, /\/zotero\/passages/);
   assert.match(source, /annotationKey/);
   assert.match(source, /Copy Citation/);
