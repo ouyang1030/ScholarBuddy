@@ -85,7 +85,9 @@ test("client routes all bridge calls through pairing auth and keeps daily and so
   assert.doesNotMatch(source, /NEW RECORD/);
   assert.doesNotMatch(source, /Description \/ notes/);
   assert.match(source, /calendarDisplayName/);
-  assert.match(source, /Delete this event\?/);
+  assert.doesNotMatch(source, /Delete this event\?/);
+  assert.doesNotMatch(source, /\{calendarDisplayName\(event\.calendar\)\} ·/);
+  assert.match(source, /Confirm deletion of \$\{event\.title\}/);
   assert.match(source, /\[6,10,16,23,31,19,28,39/);
   assert.match(source, /aria-label=\{running \? "Pause focus session"/);
   assert.match(source, /aria-label="Reset focus timer"/);
@@ -104,6 +106,6 @@ test("client routes all bridge calls through pairing auth and keeps daily and so
   assert.match(css, /\.focus-session \{ grid-column: 1; min-height: 0;[\s\S]*grid-template-columns: 1fr/);
   assert.match(css, /\.time-editor-fields \{ display: grid;/);
   assert.match(css, /\.focus-wave \{ grid-column: 2; grid-row: 2 \/ 4;/);
-  assert.match(css, /\.focus-actions \{ grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/);
+  assert.match(css, /\.focus-actions \{ width: max-content; justify-self: center; grid-template-columns: repeat\(2, 64px\);/);
   assert.match(css, /\.debt-table \{[^}]*overflow-x: auto/);
 });

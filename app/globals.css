@@ -840,12 +840,11 @@ body { font-size: 17px; line-height: 1.5; }
 .time-editor footer > div { display: flex; gap: 7px; }
 .schedule-list { margin: 22px 0 17px; }
 .schedule-list::before { left: 62px; }
-.schedule-list > div { min-height: 72px; grid-template-columns: 48px 17px minmax(0,1fr) auto; gap: 11px; }
+.schedule-list > div { min-height: 66px; grid-template-columns: 48px 17px minmax(180px,1fr) auto; gap: 11px; }
 .schedule-list time { font-size: 12px; padding-top: 2px; }
 .schedule-list i { width: 9px; height: 9px; margin-top: 4px; }
-.schedule-list > div > span { gap: 6px; }
-.schedule-list strong { font-size: 15px; line-height: 1.35; }
-.schedule-list small { font-size: 13px; }
+.schedule-list > div > span { min-width: 0; gap: 6px; }
+.schedule-list strong { font-size: 15px; line-height: 1.35; overflow-wrap: anywhere; }
 .schedule-list > div { padding: 5px 0; border-radius: 10px; transition: background .18s, padding .18s; }
 .schedule-list > div:hover { background: #f6f8f4; padding-left: 7px; padding-right: 7px; }
 .schedule-list > div.confirming-delete { background: #fff7f3; }
@@ -853,10 +852,8 @@ body { font-size: 17px; line-height: 1.5; }
 .schedule-actions > b { font: 10px var(--font-geist-mono); color: #557323; background: #e9f4d8; border-radius: 9px; padding: 4px 7px; margin-right: 3px; }
 .schedule-actions button { border: 1px solid #dce3dc; background: white; box-shadow: 0 2px 8px rgba(40,54,45,.05); }
 .schedule-actions button:last-child { color: #8b5b4e; }
-.schedule-confirm { min-width: 226px; display: flex !important; flex-direction: row !important; align-items: center; justify-content: flex-end; gap: 9px !important; }
-.schedule-confirm > small { color: #8a5b4c; white-space: nowrap; }
-.schedule-confirm > span { display: flex; gap: 5px; }
-.schedule-confirm button { height: 32px; border: 1px solid #d7ded7; border-radius: 8px; padding: 0 10px; background: white; color: #66736b; font-size: 11px; font-weight: 700; }
+.schedule-confirm { width: 148px; display: grid !important; grid-template-columns: repeat(2, minmax(0,1fr)); align-items: center; gap: 7px !important; }
+.schedule-confirm button { width: 100%; height: 34px; border: 1px solid #d7ded7; border-radius: 8px; padding: 0 10px; background: white; color: #66736b; font-size: 11px; font-weight: 700; }
 .schedule-confirm .danger { border-color: #e4b8aa; background: #fff0ea; color: #9b432d; }
 
 .focus-session { grid-column: 1 / -1; min-height: 228px; padding: 27px 30px 29px; display: grid; grid-template-columns: minmax(255px, .72fr) minmax(390px, 1.35fr) minmax(220px, .62fr); grid-template-rows: auto minmax(76px,1fr) auto; column-gap: 26px; align-items: center; overflow: hidden; position: relative; }
@@ -870,9 +867,11 @@ body { font-size: 17px; line-height: 1.5; }
 .focus-wave i { width: 4px; }
 .focus-actions { grid-column: 3; grid-row: 3; align-self: start; margin-top: 0; }
 .focus-actions button { height: 44px; border-radius: 9px; font-size: 13px; }
-.focus-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
-.focus-actions button, .focus-actions button:first-child { width: 100%; display: grid; place-items: center; padding: 0; }
-.focus-actions button span, .focus-actions button:first-child span { color: var(--lime); font-size: 17px; line-height: 1; }
+.focus-actions { width: max-content; justify-self: center; grid-template-columns: repeat(2, 64px); gap: 10px; }
+.focus-actions button, .focus-actions button:first-child { width: 64px; display: grid; place-items: center; padding: 0; }
+.focus-actions button:first-child { border-color: #59704f; background: #28342f; }
+.focus-actions button:last-child { border-color: #39453f; background: transparent; }
+.focus-actions button span, .focus-actions button:first-child span { color: var(--lime); font-size: 18px; line-height: 1; }
 
 .daily-progress-row { grid-template-columns: minmax(0, 1.35fr) minmax(360px, .65fr); gap: 18px; margin-top: 18px; }
 .writing-today, .research-anchor { padding: 28px; }
@@ -1461,7 +1460,7 @@ small { font-size: 13px !important; line-height: 1.45; }
   .focus-session::after { display: none; }
   .focus-session .focus-top, .focus-session .focus-object, .focus-session h2, .focus-session > p, .focus-session .focus-wave, .focus-actions { grid-column: 1; grid-row: auto; width: 100%; margin: 0; }
   .focus-session h2 { font-size: 36px; }
-  .focus-actions { align-self: auto; }
+  .focus-actions { width: max-content; justify-self: center; align-self: auto; }
   .daily-task-list > div { grid-template-columns: 28px minmax(0,1fr); }
   .daily-task-list .task-check, .daily-task-list .task-copy { grid-row: 1; }
   .task-plan { display: none; }
@@ -1475,7 +1474,9 @@ small { font-size: 13px !important; line-height: 1.45; }
   .time-editor footer { align-items: flex-start; flex-direction: column; }
   .time-editor footer > div { width: 100%; }
   .time-editor footer button { flex: 1; }
-  .schedule-confirm { min-width: 0; align-items: flex-end; flex-direction: column !important; gap: 5px !important; }
+  .schedule-list > div { grid-template-columns: 42px 14px minmax(0,1fr); }
+  .schedule-actions, .schedule-confirm { grid-column: 3; justify-self: start; }
+  .schedule-confirm { width: 140px; }
   .writing-numbers { display: grid; grid-template-columns: repeat(2,1fr); width: 100%; }
   .writing-numbers > span { border: 0; border-top: 1px solid #e0e4de; padding: 8px 0; }
   .writing-log { flex-direction: column; gap: 5px; }
