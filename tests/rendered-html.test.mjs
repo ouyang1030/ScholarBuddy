@@ -54,10 +54,12 @@ test("every rendered button declares an interaction handler", async () => {
 
 test("client routes all bridge calls through pairing auth and keeps daily and source scopes explicit", async () => {
   const source = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const bridgeClient = await readFile(new URL("../app/lib/bridge-client.ts", import.meta.url), "utf8");
+  const clientSource = `${source}\n${bridgeClient}`;
   const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
-  assert.match(source, /Authorization.*Bearer/);
-  assert.match(source, /workbuddy-bridge-token/);
-  assert.match(source, /NEXT_PUBLIC_WORKBUDDY_BRIDGE_PORT/);
+  assert.match(clientSource, /Authorization.*Bearer/);
+  assert.match(clientSource, /workbuddy-bridge-token/);
+  assert.match(clientSource, /NEXT_PUBLIC_WORKBUDDY_BRIDGE_PORT/);
   assert.match(source, /\/pair\/exchange/);
   assert.match(source, /temporary code/i);
   assert.match(source, /task\.date === today/);
@@ -102,7 +104,7 @@ test("client routes all bridge calls through pairing auth and keeps daily and so
   assert.match(source, /\[6,10,16,23,31,19,28,39/);
   assert.match(source, /aria-label=\{running \? "Pause focus session"/);
   assert.match(source, /aria-label="Reset focus timer"/);
-  assert.match(source, /bridgeHealthFetch/);
+  assert.match(clientSource, /bridgeHealthFetch/);
   assert.match(source, /Passage Library/);
   assert.match(source, /Using Passage Library/);
   assert.match(source, /Hosted access/);
@@ -115,7 +117,7 @@ test("client routes all bridge calls through pairing auth and keeps daily and so
   assert.match(source, /display === "list"/);
   assert.match(source, /passage-year-block/);
   assert.match(source, /LinkedPassages/);
-  assert.match(source, /workbuddy-bridge-url/);
+  assert.match(clientSource, /workbuddy-bridge-url/);
   assert.match(source, /Bridge unreachable · open in a Mac browser/);
   assert.match(css, /\.record-board > \.real-empty \{ grid-column: 1 \/ -1; \}/);
   assert.match(css, /\.real-summary-grid \{ margin-top: 18px;[\s\S]*repeat\(2/);

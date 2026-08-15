@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "./submission.css";
 
 :root {
   --ink: #0c1110;
@@ -1035,53 +1036,6 @@ body { font-size: 17px; line-height: 1.5; }
 .project-flow-items button small { display: block; margin-top: 3px; color: #87928c; font-size: 10px; }
 .paper-link-note { margin: -7px 0 16px; padding: 10px 13px; border: 1px solid #d9e6cb; border-radius: 9px; background: #f5faee; color: #5c7146; font-size: 12px; }
 
-.submission-tracker { border: 1px solid var(--line); border-radius: 16px; background: white; padding: 26px; box-shadow: var(--shadow); }
-.tracker-toolbar { display: flex; justify-content: space-between; gap: 20px; align-items: center; }
-.tracker-toolbar h3 { margin: 5px 0 3px; font-size: 22px; letter-spacing: -.025em; }
-.tracker-toolbar p { margin: 0; color: #7d8982; font-size: 13px; }
-.tracker-toolbar > span { display: flex; gap: 8px; }
-.auto-sync { min-height: 44px; padding: 0 10px; border: 1px solid #dce3dc; border-radius: 9px; display: flex; align-items: center; gap: 7px; color: #657169; font-size: 11px; white-space: nowrap; }
-.auto-sync input { accent-color: var(--lime-deep); }
-.tracker-message { margin: 18px 0 0; padding: 11px 13px; border-radius: 9px; background: #edf5e5; border: 1px solid #d3e2c5; color: #58713d; font-size: 12px; }
-.pending-email-updates { margin-top: 12px; padding: 16px; border: 1px solid #ead8bd; border-radius: 11px; background: #fff9ee; }
-.pending-email-updates > .label { color: #98703b; }
-.pending-email-updates article { min-height: 70px; padding: 10px 0; border-top: 1px solid #eadfcd; display: flex; align-items: center; justify-content: space-between; gap: 15px; }
-.pending-email-updates article:first-of-type { margin-top: 8px; }
-.pending-email-updates article > div { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-.pending-email-updates strong { font-size: 13px; }
-.pending-email-updates p { margin: 0; color: #71675b; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.pending-email-updates small { color: #998b7a; font-size: 10px; }
-.pending-email-updates article > span { display: flex; gap: 7px; flex: 0 0 auto; }
-.attempt-tabs { display: flex; gap: 8px; margin: 24px 0 14px; overflow-x: auto; }
-.attempt-tabs button { flex: 0 0 190px; min-height: 76px; border: 1px solid #dfe4dd; border-radius: 10px; background: #fafbf8; color: #445149; padding: 10px 12px; display: flex; flex-direction: column; align-items: flex-start; gap: 3px; text-align: left; }
-.attempt-tabs button.active { background: #202a27; border-color: #202a27; color: white; }
-.attempt-tabs span { color: #8c9690; font: 9px var(--font-geist-mono); letter-spacing: .1em; text-transform: uppercase; }
-.attempt-tabs strong { width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12px; }
-.attempt-tabs small { color: #8d9892; font-size: 10px; }
-.submission-status-card { border: 1px solid #dce3dc; border-radius: 13px; overflow: hidden; display: grid; grid-template-columns: 260px 1fr; background: #f9faf7; }
-.submission-stage { padding: 24px; background: #19231f; color: white; }
-.submission-stage > span { color: var(--lime); font: 10px var(--font-geist-mono); letter-spacing: .12em; }
-.submission-stage h3 { margin: 15px 0 7px; font-size: 24px; line-height: 1.15; }
-.submission-stage p { margin: 0; color: #96a29b; font-size: 11px; line-height: 1.5; }
-.submission-facts { display: grid; grid-template-columns: repeat(3, 1fr); }
-.submission-facts > span { min-width: 0; min-height: 76px; padding: 14px; border-left: 1px solid #e0e5df; border-bottom: 1px solid #e0e5df; display: flex; flex-direction: column; gap: 5px; }
-.submission-facts small { color: #8b9690; font-size: 10px; }
-.submission-facts strong { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12px; }
-.submission-actions { grid-column: 1 / -1; display: flex; justify-content: flex-end; gap: 8px; padding: 12px; background: white; }
-.status-event-form { margin: 12px 0; padding: 16px; border: 1px solid #d9e1d8; border-radius: 12px; background: #f5f8f2; display: grid; grid-template-columns: 1fr 150px; gap: 11px; }
-.status-event-form label { display: flex; flex-direction: column; gap: 5px; color: #6a766f; font-size: 10px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
-.status-event-form label.wide, .status-event-form > div { grid-column: 1 / -1; }
-.status-event-form input, .status-event-form select { height: 40px; border: 1px solid #d2dad1; border-radius: 8px; background: white; padding: 0 10px; color: #35413b; }
-.status-event-form > div { display: flex; justify-content: flex-end; gap: 8px; }
-.submission-timeline { margin-top: 24px; padding: 22px; border-radius: 13px; background: #f6f8f4; border: 1px solid #e1e6df; }
-.submission-timeline > article { min-height: 72px; display: grid; grid-template-columns: 13px 100px 1fr; gap: 12px; position: relative; padding: 11px 0; }
-.submission-timeline > article:not(:last-child)::after { content: ""; position: absolute; left: 5px; top: 28px; bottom: -12px; width: 1px; background: #cfd8ce; }
-.submission-timeline > article > i { width: 11px; height: 11px; margin-top: 4px; border-radius: 50%; background: var(--lime-deep); border: 3px solid #e9f1e1; box-shadow: 0 0 0 1px #7a9b57; z-index: 1; }
-.submission-timeline time { color: #7e8983; font: 11px var(--font-geist-mono); }
-.submission-timeline article > div { display: flex; flex-direction: column; gap: 4px; }
-.submission-timeline strong { font-size: 13px; }
-.submission-timeline p { margin: 0; color: #68746d; font-size: 12px; }
-.submission-timeline small { color: #929b96; font-size: 10px; }
 
 @media (max-width: 900px) {
   .submission-watch { grid-template-columns: 1fr; }

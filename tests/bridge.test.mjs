@@ -78,6 +78,17 @@ test("AI workflow stops before model execution when a selected source fails", as
   } finally { await rm(vault, { recursive: true, force: true }); }
 });
 
+test("AI workflow rejects an unknown provider before retrieving local sources", async () => {
+  const responsePromise = handle(request("/ai/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ provider: "typo-provider", input: "ACL injury", sources: { zotero: true, obsidian: true, kbase: true } }) }), config("/tmp/unused"));
+  await assert.rejects(responsePromise, (error) => error.status === 422 && error.code === "provider_invalid");
+});
+
+test("health is lightweight and detailed integration checks use status", async () => {
+  const response = await handle(request("/health"), config("/path/that/does/not/exist"));
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { bridge: true, paired: true });
+});
+
 test("AI providers use their native request and response formats", () => {
   const providers = {
     openai: { key: "OPENAI_API_KEY", adapter: "responses", url: "https://api.openai.com/v1/responses", model: "gpt-5.6-terra" },
@@ -137,6 +148,7 @@ test("Kbase saves atomically, detects stale updates, and archives history", asyn
   try {
     const first = await saveRecord(config(vault), "projects", { id: "PRJ-test", title: "First title", description: "v1" });
     const second = await saveRecord(config(vault), "projects", { ...first, title: "Second title", description: "v2" });
+    await assert.rejects(saveRecord(config(vault), "projects", { id: first.id, title: "Missing revision" }), (error) => error.status === 428 && error.code === "revision_required");
     await assert.rejects(saveRecord(config(vault), "projects", { ...first, title: "Stale title" }), (error) => error.status === 409);
     const current = parseRecord(await readFile(path.join(vault, "WorkBuddy", "projects", "PRJ-test.md"), "utf8"), "PRJ-test");
     assert.equal(current.title, "Second title");
@@ -145,6 +157,18 @@ test("Kbase saves atomically, detects stale updates, and archives history", asyn
     const history = await readdir(path.join(vault, "WorkBuddy", ".history", "projects", "PRJ-test"));
     assert.equal(history.length, 1);
     assert.match(await readFile(path.join(vault, "WorkBuddy", ".history", "projects", "PRJ-test", history[0]), "utf8"), /First title/);
+  } finally { await rm(vault, { recursive: true, force: true }); }
+});
+
+test("Kbase validates common fields and keeps only one active project", async () => {
+  const vault = await mkdtemp(path.join(os.tmpdir(), "workbuddy-record-validation-"));
+  try {
+    const first = await saveRecord(config(vault), "projects", { id: "PRJ-one", title: "First", active: true, progress: 50 });
+    await assert.rejects(saveRecord(config(vault), "projects", { ...first, progress: 101 }), (error) => error.status === 422);
+    await saveRecord(config(vault), "projects", { id: "PRJ-two", title: "Second", active: true });
+    const state = await (await handle(request("/workbench/state"), config(vault))).json();
+    assert.equal(state.projects.filter((project) => project.active).length, 1);
+    assert.equal(state.projects.find((project) => project.active).id, "PRJ-two");
   } finally { await rm(vault, { recursive: true, force: true }); }
 });
 
@@ -173,6 +197,8 @@ test("calendar adapter uses interval overlap and preserves notes unless supplied
   assert.match(source, /payload\.notes !== undefined/);
   assert.match(source, /findEventByExternalId/);
   assert.match(source, /deduplicated: true/);
+  assert.match(source, /WorkBuddy-ID/);
+  assert.match(source, /events\.whose/);
   assert.doesNotMatch(source, /startDate >= start && startDate < end/);
 });
 
@@ -215,5 +241,16 @@ test("high-confidence email sync is idempotent", async () => {
     const second = await syncSubmissionEmails(config(vault), emails);
     assert.equal(first.updated.length, 1);
     assert.equal(second.updated.length, 0);
+  } finally { await rm(vault, { recursive: true, force: true }); }
+});
+
+test("consequential email statuses require confirmation", async () => {
+  const vault = await mkdtemp(path.join(os.tmpdir(), "workbuddy-email-confirmation-"));
+  try {
+    await saveRecord(config(vault), "submission-attempts", { id: "SUB-one", title: "Paper one", manuscriptId: "MS-one", manuscriptTitle: "Paper one", journal: "Journal A", submissionId: "JA-101", status: "Under Review" });
+    const result = await syncSubmissionEmails(config(vault), [{ id: "mail-accepted", subject: "JA-101 has been accepted", sender: "editor@journal.test", receivedAt: "2026-08-02T10:00:00Z" }]);
+    assert.equal(result.updated.length, 0);
+    assert.equal(result.pending.length, 1);
+    assert.equal(result.pending[0].status, "Accepted");
   } finally { await rm(vault, { recursive: true, force: true }); }
 });

@@ -12,6 +12,9 @@
 
 # testing
 /coverage
+/.nyc_output/
+/playwright-report/
+/test-results/
 
 # next.js
 /.next/
@@ -20,9 +23,21 @@
 
 # misc
 .DS_Store
+._*
+Thumbs.db
+.idea/
+.vscode/
+.eslintcache
+.cache/
+.tmp/
+/tmp/
 *.pem
+*.swp
+*.swo
+*~
 
 # debug
+*.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
@@ -31,14 +46,25 @@ yarn-error.log*
 # env files (can opt-in for committing if needed)
 .env*
 !.env.local.example
+.dev.vars*
 
 # vercel
 .vercel
 
 # typescript
 next-env.d.ts
+*.tsbuildinfo
 /dist/
 /.wrangler/
 /outputs/
 /work/
 /bridge/.workbuddy-token
+*.db
+*.sqlite
+*.sqlite3
+
+# unused starter and superseded public assets
+/public/file.svg
+/public/globe.svg
+/public/window.svg
+/public/og-v1.png

@@ -11,7 +11,13 @@ function cssColor(value) {
 function calendarEvents(calendar, start, end) {
   const name = clean(calendar.name());
   const color = cssColor(calendar.color());
-  return calendar.events().flatMap((event) => {
+  let candidates;
+  try {
+    candidates = calendar.events.whose({ _and: [{ startDate: { _lessThan: end } }, { endDate: { _greaterThan: start } }] })();
+  } catch (_) {
+    candidates = calendar.events();
+  }
+  return candidates.flatMap((event) => {
     try {
       const startDate = event.startDate();
       const endDate = event.endDate();
@@ -130,7 +136,12 @@ function run(argv) {
       match.event.endDate = newEnd;
     }
     match.event.summary = payload.title;
-    if (payload.notes !== undefined) match.event.description = payload.notes;
+    if (payload.notes !== undefined) {
+      const currentNotes = clean(match.event.description());
+      const marker = (currentNotes.match(/\[WorkBuddy-ID:[^\]]+\]/) || [""])[0];
+      const nextNotes = clean(payload.notes);
+      match.event.description = marker && !nextNotes.includes(marker) ? `${nextNotes}\n${marker}`.trim() : nextNotes;
+    }
     return JSON.stringify({ saved: true, id: clean(match.event.uid()) });
   }
 
