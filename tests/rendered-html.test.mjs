@@ -95,8 +95,9 @@ test("client routes all bridge calls through pairing auth and keeps daily and so
   assert.match(source, /Passage Library/);
   assert.match(source, /\/zotero\/passages/);
   assert.match(source, /annotationKey/);
-  assert.match(source, /Copy APA 7/);
+  assert.match(source, /Copy Citation/);
   assert.match(source, /words >= 40/);
+  assert.doesNotMatch(source, /const page = passage\.pageLabel/);
   assert.match(source, /suggestedPassageSection/);
   assert.match(source, /display === "list"/);
   assert.match(source, /LinkedPassages/);
@@ -122,4 +123,6 @@ test("client routes all bridge calls through pairing auth and keeps daily and so
   assert.match(css, /\.passage-organize \{/);
   assert.match(css, /\.linked-passages \{/);
   assert.match(css, /\.passage-list\.list-view/);
+  assert.match(css, /\.literature-card > \.section-heading \{ margin-bottom: 18px; \}/);
+  assert.match(css, /footer button:nth-child\(n\+4\)/);
 });
