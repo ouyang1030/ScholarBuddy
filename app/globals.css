@@ -859,17 +859,20 @@ body { font-size: 17px; line-height: 1.5; }
 .schedule-confirm button { height: 32px; border: 1px solid #d7ded7; border-radius: 8px; padding: 0 10px; background: white; color: #66736b; font-size: 11px; font-weight: 700; }
 .schedule-confirm .danger { border-color: #e4b8aa; background: #fff0ea; color: #9b432d; }
 
-.focus-session { grid-column: 1 / -1; min-height: 228px; padding: 27px 30px 29px; display: grid; grid-template-columns: minmax(300px, 1fr) minmax(280px, 1.05fr) minmax(255px, .72fr); grid-template-rows: auto minmax(76px,1fr) auto; column-gap: 34px; align-items: center; overflow: hidden; position: relative; }
+.focus-session { grid-column: 1 / -1; min-height: 228px; padding: 27px 30px 29px; display: grid; grid-template-columns: minmax(255px, .72fr) minmax(390px, 1.35fr) minmax(220px, .62fr); grid-template-rows: auto minmax(76px,1fr) auto; column-gap: 26px; align-items: center; overflow: hidden; position: relative; }
 .focus-session::after { content: ""; position: absolute; width: 310px; height: 310px; border: 1px solid #2b3933; border-radius: 50%; right: -140px; top: -165px; pointer-events: none; }
 .focus-top { grid-column: 1 / -1; }
 .focus-top > span:last-child { font-size: 12px; }
 .focus-object { grid-column: 1; grid-row: 2; align-self: center; margin-top: 17px; font-size: 12px; }
 .focus-session h2 { grid-column: 3; grid-row: 2; align-self: end; justify-self: stretch; margin: 0 0 12px; text-align: center; font-size: 42px; }
 .focus-session > p { grid-column: 1; grid-row: 3; align-self: start; margin-top: 5px; font-size: 15px; }
-.focus-wave { grid-column: 2; grid-row: 2 / 4; align-self: start; justify-self: stretch; justify-content: center; width: 100%; margin: 24px 0 0; height: 64px; gap: 9px; }
-.focus-wave i { width: 3px; }
+.focus-wave { grid-column: 2; grid-row: 2 / 4; align-self: start; justify-self: stretch; justify-content: center; width: 100%; margin: 24px 0 0; height: 64px; gap: 10px; }
+.focus-wave i { width: 4px; }
 .focus-actions { grid-column: 3; grid-row: 3; align-self: start; margin-top: 0; }
 .focus-actions button { height: 44px; border-radius: 9px; font-size: 13px; }
+.focus-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.focus-actions button, .focus-actions button:first-child { width: 100%; display: grid; place-items: center; padding: 0; }
+.focus-actions button span, .focus-actions button:first-child span { color: var(--lime); font-size: 17px; line-height: 1; }
 
 .daily-progress-row { grid-template-columns: minmax(0, 1.35fr) minmax(360px, .65fr); gap: 18px; margin-top: 18px; }
 .writing-today, .research-anchor { padding: 28px; }
@@ -1310,6 +1313,10 @@ small { font-size: 13px !important; line-height: 1.45; }
 .pairing-card p { margin: 0; color: #647260; font-size: 14px; line-height: 1.5; }
 .pairing-card label { display: grid; gap: 6px; color: #59675a; font-size: 13px; }
 .pairing-card input { width: 100%; min-height: 44px; padding: 0 12px; border: 1px solid #cbd8c7; border-radius: 8px; background: #fff; font-size: 15px; }
+.bridge-help { padding: 12px 13px; display: grid; gap: 5px; border: 1px solid #e8ceb2; border-radius: 9px; background: #fff7ee; color: #72543d; }
+.bridge-help strong { font-size: 13px; }
+.bridge-help span { font-size: 12px; line-height: 1.5; }
+.pairing-error { color: #994c35; line-height: 1.5; }
 .citation-warning { padding: 10px 12px; border-left: 3px solid #d08345; background: #fff1e4; color: #7c4e2c; font-size: 14px; }
 .evidence-manifest { padding: 14px 18px 18px; border-top: 1px solid #dde4dc; color: #58665e; font-size: 14px; }
 .evidence-manifest summary { cursor: pointer; color: #35453b; font-weight: 750; }
@@ -1347,6 +1354,11 @@ small { font-size: 13px !important; line-height: 1.45; }
   .guide-footer { margin-left: -18px; margin-right: -18px; padding-left: 18px; padding-right: 18px; }
 }
 
+@media (max-width: 1400px) {
+  .focus-session { grid-template-columns: minmax(230px,.75fr) minmax(300px,1.2fr) minmax(210px,.65fr); column-gap: 20px; }
+  .focus-wave { gap: 7px; }
+}
+
 @media (max-width: 1180px) {
   .content { padding-left: 25px; padding-right: 25px; }
   .current-study { grid-template-columns: 1fr 190px; }
@@ -1358,7 +1370,7 @@ small { font-size: 13px !important; line-height: 1.45; }
   .reviewer-grid { grid-template-columns: repeat(2, 1fr); }
   .project-grid { grid-template-columns: repeat(2, 1fr); }
   .daily-command-grid { grid-template-columns: minmax(390px, 1fr) minmax(270px, .7fr); }
-  .focus-session { grid-column: 1 / -1; min-height: 218px; grid-template-columns: minmax(250px,1fr) minmax(210px,.82fr) minmax(235px,.72fr); column-gap: 23px; }
+  .focus-session { grid-column: 1 / -1; min-height: 218px; grid-template-columns: minmax(230px,.75fr) minmax(300px,1.2fr) minmax(210px,.65fr); column-gap: 20px; }
   .focus-wave { gap: 7px; }
   .focus-object { margin-top: 24px; }
   .writing-main { flex-direction: column; }

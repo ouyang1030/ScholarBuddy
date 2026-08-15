@@ -86,7 +86,12 @@ test("client routes all bridge calls through pairing auth and keeps daily and so
   assert.doesNotMatch(source, /Description \/ notes/);
   assert.match(source, /calendarDisplayName/);
   assert.match(source, /Delete this event\?/);
-  assert.match(source, /\[7,13,21,31,18,26,39/);
+  assert.match(source, /\[6,10,16,23,31,19,28,39/);
+  assert.match(source, /aria-label=\{running \? "Pause focus session"/);
+  assert.match(source, /aria-label="Reset focus timer"/);
+  assert.match(source, /bridgeHealthFetch/);
+  assert.match(source, /workbuddy-bridge-url/);
+  assert.match(source, /Bridge unreachable · open in a Mac browser/);
   assert.match(css, /\.record-board > \.real-empty \{ grid-column: 1 \/ -1; \}/);
   assert.match(css, /\.real-summary-grid \{ margin-top: 18px;[\s\S]*repeat\(2/);
   assert.match(css, /\.editable-section \{ margin-top: 22px; padding: 24px; \}/);
@@ -99,5 +104,6 @@ test("client routes all bridge calls through pairing auth and keeps daily and so
   assert.match(css, /\.focus-session \{ grid-column: 1; min-height: 0;[\s\S]*grid-template-columns: 1fr/);
   assert.match(css, /\.time-editor-fields \{ display: grid;/);
   assert.match(css, /\.focus-wave \{ grid-column: 2; grid-row: 2 \/ 4;/);
+  assert.match(css, /\.focus-actions \{ grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/);
   assert.match(css, /\.debt-table \{[^}]*overflow-x: auto/);
 });
