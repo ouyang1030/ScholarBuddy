@@ -2,7 +2,7 @@
 
 An AI-powered research workbench for a sports analytics PhD. WorkBuddy keeps Obsidian, Zotero, and research repositories as the sources of truth while providing a focused orchestration, context-building, and review layer.
 
-The MVP includes seven interactive modules: Dashboard, Research, Data & Experiments, Manuscript, AI Workspace, Review, and Projects.
+The main navigation includes Today, Projects, Manuscripts, Library, and Operations. A manuscript is the persistent paper workspace: Develop keeps draft evidence and research gaps together; Review & revise keeps feedback and linked gaps in the same context; Submission keeps the submission tracker and status history. Projects, Library, and Operations can each be linked back to the paper and its research project.
 
 ## Local development
 

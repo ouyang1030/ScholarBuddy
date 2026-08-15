@@ -195,8 +195,9 @@ async function deleteRecord(config, collectionValue, idValue) {
   await archiveVersion(config, collection, id, file, "deleted"); await unlink(file); return { deleted: true, id };
 }
 
-const submissionStages = new Set(["Preparing", "Submitted", "Technical Check", "With Editor", "Under Review", "Reviews Complete", "Decision Pending", "Revision Required", "Revised Submission", "Accepted", "Rejected", "Withdrawn"]);
+const submissionStages = new Set(["Preparing", "Submitted", "Technical Check", "With Editor", "Under Review", "Reviews Complete", "Decision Pending", "Revision Required", "Revised Submission", "Accepted", "Published", "Rejected", "Withdrawn"]);
 const statusPatterns = [
+  ["Published", /\b(published (?:online|in|by)|publication (?:is )?(?:now )?(?:online|available)|version of record (?:is )?(?:now )?(?:online|available))\b/i],
   ["Accepted", /\b(accept(?:ed|ance)|pleased to accept)\b/i],
   ["Rejected", /\b(reject(?:ed|ion)|declin(?:e|ed))\b/i],
   ["Revision Required", /\b(major revision|minor revision|revise and resubmit|revision (?:is )?required|invite you to revise)\b/i],
@@ -364,7 +365,7 @@ async function bridgeStatus(config) {
 }
 async function runCalendar(action, payload) { const { stdout } = await execFileAsync("/usr/bin/osascript", ["-l", "JavaScript", calendarScript, action, JSON.stringify(payload)], { timeout: 20_000, maxBuffer: 2_000_000 }); return JSON.parse(stdout.trim() || "{}"); }
 async function runMail(action, payload) { const { stdout } = await execFileAsync("/usr/bin/osascript", ["-l", "JavaScript", mailScript, action, JSON.stringify(payload)], { timeout: 30_000, maxBuffer: 4_000_000 }); return JSON.parse(stdout.trim() || "{}"); }
-function validateCalendar(payload, updating = false) { if (updating) requireText(payload.id, "Calendar event id", 300); requireText(payload.title, "Event title", 1000); const start = requireIsoDate(payload.start, "Event start"); const end = requireIsoDate(payload.end, "Event end"); if (end <= start) { const error = new Error("Event end must be after its start."); error.status = 422; throw error; } return payload; }
+function validateCalendar(payload, updating = false) { if (updating) requireText(payload.id, "Calendar event id", 300); requireText(payload.title, "Event title", 1000); if (payload.externalId !== undefined) { const externalId = requireText(payload.externalId, "External event id", 200); if (!/^[A-Za-z0-9._:-]+$/.test(externalId)) { const error = new Error("External event id contains unsupported characters."); error.status = 422; throw error; } } const start = requireIsoDate(payload.start, "Event start"); const end = requireIsoDate(payload.end, "Event end"); if (end <= start) { const error = new Error("Event end must be after its start."); error.status = 422; throw error; } return payload; }
 
 async function saveAiNote(config, payload) {
   const title = String(payload.title || "WorkBuddy research note").replace(/[\\/:*?\"<>|]/g, "-").trim().slice(0, 120) || "Research note";

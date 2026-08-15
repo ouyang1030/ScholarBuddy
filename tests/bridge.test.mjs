@@ -83,6 +83,8 @@ test("calendar adapter uses interval overlap and preserves notes unless supplied
   const source = await readFile(new URL("../bridge/calendar.jxa", import.meta.url), "utf8");
   assert.match(source, /endDate > start && startDate < end/);
   assert.match(source, /payload\.notes !== undefined/);
+  assert.match(source, /findEventByExternalId/);
+  assert.match(source, /deduplicated: true/);
   assert.doesNotMatch(source, /startDate >= start && startDate < end/);
 });
 
@@ -90,6 +92,7 @@ test("submission status detection normalizes publisher wording", () => {
   assert.equal(detectSubmissionStatus("The required reviews are complete"), "Reviews Complete");
   assert.equal(detectSubmissionStatus("Your manuscript is now under review"), "Under Review");
   assert.equal(detectSubmissionStatus("We invite you to revise your manuscript"), "Revision Required");
+  assert.equal(detectSubmissionStatus("The version of record is now available online"), "Published");
   assert.equal(detectSubmissionStatus("No workflow language here"), "");
 });
 

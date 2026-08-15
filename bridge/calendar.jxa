@@ -44,6 +44,23 @@ function findEvent(calendars, uid) {
   return null;
 }
 
+function externalMarker(externalId) {
+  return externalId ? `[WorkBuddy-ID:${clean(externalId)}]` : "";
+}
+
+function findEventByExternalId(calendars, externalId) {
+  const marker = externalMarker(externalId);
+  if (!marker) return null;
+  for (const calendar of calendars) {
+    for (const event of calendar.events()) {
+      try {
+        if (clean(event.description()).includes(marker)) return { calendar, event };
+      } catch (_) { /* continue */ }
+    }
+  }
+  return null;
+}
+
 function writableCalendar(calendars, requestedName) {
   if (requestedName) {
     const requested = calendars.find((calendar) => clean(calendar.name()) === requestedName);
@@ -78,13 +95,17 @@ function run(argv) {
   }
 
   if (action === "create") {
+    const existing = findEventByExternalId(calendars, payload.externalId);
+    if (existing) return JSON.stringify({ saved: true, id: clean(existing.event.uid()), deduplicated: true });
     const calendar = writableCalendar(calendars, payload.calendar);
     if (!calendar) throw new Error("No writable calendar is available.");
+    const marker = externalMarker(payload.externalId);
+    const notes = payload.notes === undefined ? "Created by WorkBuddy" : clean(payload.notes);
     const event = Calendar.Event({
       summary: payload.title,
       startDate: new Date(payload.start),
       endDate: new Date(payload.end),
-      description: payload.notes === undefined ? "Created by WorkBuddy" : payload.notes,
+      description: marker ? `${notes}\n${marker}` : notes,
     });
     calendar.events.push(event);
     return JSON.stringify({ saved: true, id: clean(event.uid()) });
