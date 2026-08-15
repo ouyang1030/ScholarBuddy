@@ -43,7 +43,8 @@ test("every rendered button declares an interaction handler", async () => {
   assert.match(source, /saveRecord/);
   assert.match(source, /deleteRecord/);
   assert.match(source, /Save to Kbase/);
-  assert.match(source, /Save to Calendar/);
+  assert.match(source, /Save changes/);
+  assert.match(source, /Add event/);
   assert.match(source, /How to use your workbench/);
   assert.doesNotMatch(source, /Command library/);
 });
@@ -81,6 +82,11 @@ test("client routes all bridge calls through pairing auth and keeps daily and so
   assert.doesNotMatch(source, /No demo records are shown/);
   assert.doesNotMatch(source, /Create a project to define the dashboard context/);
   assert.doesNotMatch(source, /Create a paper when a project starts producing a publishable output/);
+  assert.doesNotMatch(source, /NEW RECORD/);
+  assert.doesNotMatch(source, /Description \/ notes/);
+  assert.match(source, /calendarDisplayName/);
+  assert.match(source, /Delete this event\?/);
+  assert.match(source, /\[7,13,21,31,18,26,39/);
   assert.match(css, /\.record-board > \.real-empty \{ grid-column: 1 \/ -1; \}/);
   assert.match(css, /\.real-summary-grid \{ margin-top: 18px;[\s\S]*repeat\(2/);
   assert.match(css, /\.editable-section \{ margin-top: 22px; padding: 24px; \}/);
@@ -91,5 +97,7 @@ test("client routes all bridge calls through pairing auth and keeps daily and so
   assert.match(css, /\.focus-celebration/);
   assert.match(css, /prefers-reduced-motion: reduce/);
   assert.match(css, /\.focus-session \{ grid-column: 1; min-height: 0;[\s\S]*grid-template-columns: 1fr/);
+  assert.match(css, /\.time-editor-fields \{ display: grid;/);
+  assert.match(css, /\.focus-wave \{ grid-column: 2; grid-row: 2 \/ 4;/);
   assert.match(css, /\.debt-table \{[^}]*overflow-x: auto/);
 });

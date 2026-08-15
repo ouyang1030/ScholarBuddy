@@ -821,11 +821,23 @@ body { font-size: 17px; line-height: 1.5; }
 .task-footer button { font-size: 12px; }
 
 .mini-add { border-radius: 16px; font-size: 12px; padding: 7px 11px; }
-.time-editor { display: grid; grid-template-columns: 92px minmax(150px,1fr); gap: 10px; margin-top: 18px; padding: 16px; border: 1px solid #d9e1d8; border-radius: 12px; background: #f7f9f5; }
-.time-editor label { display: flex; flex-direction: column; gap: 5px; color: #6c7972; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; }
-.time-editor input, .time-editor select { width: 100%; height: 39px; border: 1px solid #d2dbd2; border-radius: 8px; background: white; color: #34413a; padding: 0 9px; font-size: 13px; }
+.time-editor { display: grid; grid-template-columns: 1fr; gap: 15px; margin-top: 18px; padding: 20px; border: 1px solid #d4ded2; border-radius: 15px; background: linear-gradient(145deg, #f4f8f0, #fbfcf9); box-shadow: 0 14px 34px rgba(35,50,41,.08); }
+.time-editor header { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; padding-bottom: 13px; border-bottom: 1px solid #dce4da; }
+.time-editor header > span { display: flex; flex-direction: column; gap: 4px; }
+.time-editor header small { color: #73934d; font: 10px var(--font-geist-mono); letter-spacing: .12em; }
+.time-editor header strong { color: #29362f; font-size: 16px; }
+.time-editor header > button { width: 30px; height: 30px; flex: 0 0 auto; border: 0; border-radius: 50%; padding: 0; background: #e9efe6; color: #5f6d64; font-size: 19px; }
+.time-editor label { display: flex; flex-direction: column; gap: 6px; color: #6c7972; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; }
+.time-editor input, .time-editor select { width: 100%; height: 42px; border: 1px solid #ccd7cc; border-radius: 9px; background: white; color: #34413a; padding: 0 11px; font-size: 13px; outline: none; }
+.time-editor input:focus, .time-editor select:focus { border-color: #82a45d; box-shadow: 0 0 0 3px rgba(111,153,65,.1); }
 .time-editor .time-title { min-width: 0; }
-.time-editor > div { grid-column: 1 / -1; display: flex; justify-content: flex-end; gap: 7px; }
+.time-editor-fields { display: grid; grid-template-columns: 110px 110px minmax(130px,1fr); gap: 10px; }
+.duration-input { position: relative; display: block; }
+.duration-input input { padding-right: 40px; }
+.duration-input b { position: absolute; right: 11px; top: 50%; transform: translateY(-50%); color: #87938c; font-size: 11px; text-transform: lowercase; }
+.time-editor footer { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding-top: 3px; }
+.time-editor footer > span { color: #7d8982; font-size: 11px; }
+.time-editor footer > div { display: flex; gap: 7px; }
 .schedule-list { margin: 22px 0 17px; }
 .schedule-list::before { left: 62px; }
 .schedule-list > div { min-height: 72px; grid-template-columns: 48px 17px minmax(0,1fr) auto; gap: 11px; }
@@ -834,19 +846,29 @@ body { font-size: 17px; line-height: 1.5; }
 .schedule-list > div > span { gap: 6px; }
 .schedule-list strong { font-size: 15px; line-height: 1.35; }
 .schedule-list small { font-size: 13px; }
-.schedule-actions { width: 68px; display: grid; grid-template-columns: repeat(2, 32px); align-items: center; gap: 2px; }
-.schedule-actions > b { grid-column: 1 / -1; justify-self: end; font: 11px var(--font-geist-mono); color: #557323; background: #e9f4d8; border-radius: 9px; padding: 4px 6px; margin-right: 2px; }
-.schedule-confirm { align-items: center; }
+.schedule-list > div { padding: 5px 0; border-radius: 10px; transition: background .18s, padding .18s; }
+.schedule-list > div:hover { background: #f6f8f4; padding-left: 7px; padding-right: 7px; }
+.schedule-list > div.confirming-delete { background: #fff7f3; }
+.schedule-actions { width: auto; display: flex; flex-direction: row !important; align-items: center; justify-content: flex-end; gap: 5px !important; }
+.schedule-actions > b { font: 10px var(--font-geist-mono); color: #557323; background: #e9f4d8; border-radius: 9px; padding: 4px 7px; margin-right: 3px; }
+.schedule-actions button { border: 1px solid #dce3dc; background: white; box-shadow: 0 2px 8px rgba(40,54,45,.05); }
+.schedule-actions button:last-child { color: #8b5b4e; }
+.schedule-confirm { min-width: 226px; display: flex !important; flex-direction: row !important; align-items: center; justify-content: flex-end; gap: 9px !important; }
+.schedule-confirm > small { color: #8a5b4c; white-space: nowrap; }
+.schedule-confirm > span { display: flex; gap: 5px; }
+.schedule-confirm button { height: 32px; border: 1px solid #d7ded7; border-radius: 8px; padding: 0 10px; background: white; color: #66736b; font-size: 11px; font-weight: 700; }
+.schedule-confirm .danger { border-color: #e4b8aa; background: #fff0ea; color: #9b432d; }
 
-.focus-session { grid-column: 1 / -1; min-height: 172px; padding: 26px 28px; display: grid; grid-template-columns: minmax(300px, 1fr) auto 220px; grid-template-rows: auto auto 1fr; column-gap: 34px; align-items: center; overflow: hidden; position: relative; }
+.focus-session { grid-column: 1 / -1; min-height: 228px; padding: 27px 30px 29px; display: grid; grid-template-columns: minmax(300px, 1fr) minmax(280px, 1.05fr) minmax(255px, .72fr); grid-template-rows: auto minmax(76px,1fr) auto; column-gap: 34px; align-items: center; overflow: hidden; position: relative; }
 .focus-session::after { content: ""; position: absolute; width: 310px; height: 310px; border: 1px solid #2b3933; border-radius: 50%; right: -140px; top: -165px; pointer-events: none; }
 .focus-top { grid-column: 1 / -1; }
 .focus-top > span:last-child { font-size: 12px; }
-.focus-object { grid-column: 1; grid-row: 2; margin-top: 20px; font-size: 12px; }
-.focus-session h2 { grid-column: 2; grid-row: 2 / 4; margin: 14px 0 0; font-size: 42px; }
-.focus-session > p { grid-column: 1; grid-row: 3; align-self: start; margin-top: 7px; font-size: 15px; }
-.focus-wave { grid-column: 3; grid-row: 2; margin: 15px 0 0; height: 38px; }
-.focus-actions { grid-column: 3; grid-row: 3; align-self: start; margin-top: 6px; }
+.focus-object { grid-column: 1; grid-row: 2; align-self: center; margin-top: 17px; font-size: 12px; }
+.focus-session h2 { grid-column: 3; grid-row: 2; align-self: end; justify-self: stretch; margin: 0 0 12px; text-align: center; font-size: 42px; }
+.focus-session > p { grid-column: 1; grid-row: 3; align-self: start; margin-top: 5px; font-size: 15px; }
+.focus-wave { grid-column: 2; grid-row: 2 / 4; align-self: start; justify-self: stretch; justify-content: center; width: 100%; margin: 24px 0 0; height: 64px; gap: 9px; }
+.focus-wave i { width: 3px; }
+.focus-actions { grid-column: 3; grid-row: 3; align-self: start; margin-top: 0; }
 .focus-actions button { height: 44px; border-radius: 9px; font-size: 13px; }
 
 .daily-progress-row { grid-template-columns: minmax(0, 1.35fr) minmax(360px, .65fr); gap: 18px; margin-top: 18px; }
@@ -1336,7 +1358,8 @@ small { font-size: 13px !important; line-height: 1.45; }
   .reviewer-grid { grid-template-columns: repeat(2, 1fr); }
   .project-grid { grid-template-columns: repeat(2, 1fr); }
   .daily-command-grid { grid-template-columns: minmax(390px, 1fr) minmax(270px, .7fr); }
-  .focus-session { grid-column: 1 / -1; min-height: 205px; }
+  .focus-session { grid-column: 1 / -1; min-height: 218px; grid-template-columns: minmax(250px,1fr) minmax(210px,.82fr) minmax(235px,.72fr); column-gap: 23px; }
+  .focus-wave { gap: 7px; }
   .focus-object { margin-top: 24px; }
   .writing-main { flex-direction: column; }
   .submission-board { grid-template-columns: repeat(2, 1fr); }
@@ -1435,6 +1458,12 @@ small { font-size: 13px !important; line-height: 1.45; }
   .task-editor input { grid-column: 1 / -1; }
   .time-editor { grid-template-columns: 1fr; }
   .time-editor > div { grid-column: 1; }
+  .time-editor-fields { grid-template-columns: 1fr 1fr; }
+  .time-editor-fields label:last-child { grid-column: 1 / -1; }
+  .time-editor footer { align-items: flex-start; flex-direction: column; }
+  .time-editor footer > div { width: 100%; }
+  .time-editor footer button { flex: 1; }
+  .schedule-confirm { min-width: 0; align-items: flex-end; flex-direction: column !important; gap: 5px !important; }
   .writing-numbers { display: grid; grid-template-columns: repeat(2,1fr); width: 100%; }
   .writing-numbers > span { border: 0; border-top: 1px solid #e0e4de; padding: 8px 0; }
   .writing-log { flex-direction: column; gap: 5px; }
