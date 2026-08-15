@@ -100,6 +100,7 @@ test("client routes all bridge calls through pairing auth and keeps daily and so
   assert.doesNotMatch(source, /const page = passage\.pageLabel/);
   assert.match(source, /suggestedPassageSection/);
   assert.match(source, /display === "list"/);
+  assert.match(source, /passage-year-block/);
   assert.match(source, /LinkedPassages/);
   assert.match(source, /workbuddy-bridge-url/);
   assert.match(source, /Bridge unreachable · open in a Mac browser/);
