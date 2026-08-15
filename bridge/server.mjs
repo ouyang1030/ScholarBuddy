@@ -148,6 +148,7 @@ export function normalizeZoteroPassage(annotation, attachment, source) {
     color: note.annotationColor || "#ffd400",
     sourceTitle: item.title || file.title || "Untitled source",
     creators: (item.creators || []).map(creatorName).filter(Boolean),
+    citationAuthors: (item.creators || []).map((creator) => creator.lastName || creator.name).filter(Boolean),
     year: String(item.date || "").match(/\d{4}/)?.[0] || "",
     citationKey: citationKey(item),
     dateModified: note.dateModified || "",

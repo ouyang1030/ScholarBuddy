@@ -88,6 +88,7 @@ test("Zotero annotations become source-aware passages without changing the highl
   assert.equal(passage.text, "A useful result.");
   assert.equal(passage.sourceTitle, "Measurement validity");
   assert.equal(passage.citationKey, "lovelace2025");
+  assert.deepEqual(passage.citationAuthors, ["Lovelace"]);
   assert.deepEqual(passage.tags, ["validity"]);
   assert.match(passage.url, /^zotero:\/\/open-pdf\/library\/items\/PDF1\?/);
 });

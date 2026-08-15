@@ -95,7 +95,10 @@ test("client routes all bridge calls through pairing auth and keeps daily and so
   assert.match(source, /Passage Library/);
   assert.match(source, /\/zotero\/passages/);
   assert.match(source, /annotationKey/);
-  assert.match(source, /Copy with citation/);
+  assert.match(source, /Copy APA 7/);
+  assert.match(source, /words >= 40/);
+  assert.match(source, /suggestedPassageSection/);
+  assert.match(source, /display === "list"/);
   assert.match(source, /LinkedPassages/);
   assert.match(source, /workbuddy-bridge-url/);
   assert.match(source, /Bridge unreachable · open in a Mac browser/);
@@ -111,11 +114,12 @@ test("client routes all bridge calls through pairing auth and keeps daily and so
   assert.match(css, /\.focus-session \{ grid-column: 1; min-height: 0;[\s\S]*grid-template-columns: 1fr/);
   assert.match(css, /\.time-editor-fields \{ display: grid;/);
   assert.match(css, /\.focus-wave \{ grid-column: 2; grid-row: 2 \/ 4;/);
-  assert.match(css, /\.focus-actions \{ width: 100%; justify-self: stretch; grid-template-columns: repeat\(2, minmax\(0,1fr\)\);/);
+  assert.match(css, /\.focus-actions \{ width: 86%; justify-self: center; grid-template-columns: repeat\(2, minmax\(0,1fr\)\);/);
   assert.match(css, /\.focus-control-icon\.reset \{[^}]*font-size: 21px/);
   assert.match(css, /\.schedule-list > div\.confirming-delete \{ grid-template-columns: 48px 17px minmax\(0,1fr\) 128px;/);
   assert.match(css, /\.debt-table \{[^}]*overflow-x: auto/);
   assert.match(css, /\.passage-list \{[^}]*repeat\(2/);
   assert.match(css, /\.passage-organize \{/);
   assert.match(css, /\.linked-passages \{/);
+  assert.match(css, /\.passage-list\.list-view/);
 });
