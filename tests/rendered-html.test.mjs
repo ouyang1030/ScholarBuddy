@@ -133,9 +133,13 @@ test("client routes all bridge calls through pairing auth and keeps daily and so
   assert.match(source, /workbuddy-calendar-refresh/);
   assert.match(source, /focus-wave \$\{running \? "active" : ""\}/);
   assert.match(source, /seconds < 21600/);
-  assert.match(source, /workbuddy-focus-celebrated-date/);
+  assert.match(source, /workbuddy-focus-celebration-v2/);
+  assert.match(source, /status: "pending"/);
+  assert.match(source, /status: "seen"/);
+  assert.match(source, /document\.visibilityState !== "visible"/);
+  assert.match(source, /visibilitychange/);
   assert.match(source, /FocusCelebration/);
-  assert.match(source, /setCelebrating\(false\), 8000/);
+  assert.match(source, /setTimeout\(finishCelebration, 8000\)/);
   assert.match(source, /workbuddy-paper-celebrations-v1/);
   assert.match(source, /热烈祝贺/);
   assert.match(source, /Herzlichen Glückwunsch/);

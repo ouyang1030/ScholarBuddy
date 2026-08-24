@@ -164,7 +164,7 @@ export function GuideDrawer({
               <p>
                 Use New to create a record. Open an existing card or row to edit it. Progress is
                 manual and remains authoritative until you change it. Delete requires a second
-                confirmation.
+                confirmation and permanently removes both the record and all of its saved history.
               </p>
             </div>
           </div>

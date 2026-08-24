@@ -1,15 +1,17 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import { mkdtemp, readFile, readdir, rm, stat, utimes, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import {
   addSubmissionEvent,
   authorize,
+  deleteRecord,
   detectSubmissionStatus,
+  evidenceManifest,
   handle,
-  invalidCitations,
+  invalidReferenceIds,
   issuePairingCode,
   modelConfig,
   modelRequest,
@@ -21,9 +23,13 @@ import {
   streamDelta,
   submissionEmailCandidate,
   syncSubmissionEmails,
+  zoteroItemsByKey,
 } from "../bridge/server.mjs";
+import { readEventStream } from "../shared/sse.mjs";
 import { parseActions, systemPrompt } from "../bridge/prompts.mjs";
 import { parseEnv, updateLocalConfig } from "../bridge/local-settings.mjs";
+import { AI_PROVIDER_DEFINITIONS } from "../shared/constants.mjs";
+import { zoteroPassageUrl } from "../shared/zotero.mjs";
 
 const allowedOrigin = "https://workbench.example";
 const bridgeToken = "test-token-with-at-least-thirty-two-characters";
@@ -391,8 +397,8 @@ test("Obsidian records save atomically, detect stale updates, and archive histor
       description: "v2",
     });
     await assert.rejects(
-      saveRecord(config(vault), "projects", { id: first.id, title: "Missing revision" }),
-      (error) => error.status === 428 && error.code === "revision_required",
+      saveRecord(config(vault), "projects", { id: first.id, title: "Missing version" }),
+      (error) => error.status === 428 && error.code === "version_required",
     );
     await assert.rejects(
       saveRecord(config(vault), "projects", { ...first, title: "Stale title" }),
@@ -405,6 +411,8 @@ test("Obsidian records save atomically, detect stale updates, and archive histor
     assert.equal(current.title, "Second title");
     assert.equal(current.description, "v2");
     assert.equal(current.updatedAt, second.updatedAt);
+    assert.equal(first.version, 1);
+    assert.equal(second.version, 2);
     const history = await readdir(
       path.join(vault, "ScholarBuddy", ".history", "projects", "PRJ-test"),
     );
@@ -415,6 +423,86 @@ test("Obsidian records save atomically, detect stale updates, and archive histor
         "utf8",
       ),
       /First title/,
+    );
+  } finally {
+    await rm(vault, { recursive: true, force: true });
+  }
+});
+
+test("record mutations serialize same-version writers instead of losing an update", async () => {
+  const vault = await mkdtemp(path.join(os.tmpdir(), "workbuddy-record-race-"));
+  try {
+    const first = await saveRecord(config(vault), "projects", {
+      id: "PRJ-race",
+      title: "Initial",
+    });
+    const results = await Promise.allSettled([
+      saveRecord(config(vault), "projects", { ...first, title: "Writer A" }),
+      saveRecord(config(vault), "projects", { ...first, title: "Writer B" }),
+    ]);
+    assert.equal(results.filter((result) => result.status === "fulfilled").length, 1);
+    assert.equal(
+      results.filter(
+        (result) => result.status === "rejected" && result.reason?.code === "version_conflict",
+      ).length,
+      1,
+    );
+  } finally {
+    await rm(vault, { recursive: true, force: true });
+  }
+});
+
+test("permanent deletion removes both the live record and every history version", async () => {
+  const vault = await mkdtemp(path.join(os.tmpdir(), "workbuddy-permanent-delete-"));
+  try {
+    const first = await saveRecord(config(vault), "projects", {
+      id: "PRJ-delete",
+      title: "First",
+    });
+    const second = await saveRecord(config(vault), "projects", { ...first, title: "Second" });
+    await assert.rejects(
+      deleteRecord(config(vault), "projects", second.id, first.version),
+      (error) => error.status === 409 && error.code === "version_conflict",
+    );
+    const result = await deleteRecord(config(vault), "projects", second.id, second.version);
+    assert.deepEqual(result, { deleted: true, id: second.id, historyPurged: true });
+    await assert.rejects(
+      stat(path.join(vault, "ScholarBuddy", "projects", "PRJ-delete.md")),
+      (error) => error.code === "ENOENT",
+    );
+    await assert.rejects(
+      stat(path.join(vault, "ScholarBuddy", ".history", "projects", "PRJ-delete")),
+      (error) => error.code === "ENOENT",
+    );
+  } finally {
+    await rm(vault, { recursive: true, force: true });
+  }
+});
+
+test("the record boundary rejects malformed stored types and drops legacy executable URLs", async () => {
+  const vault = await mkdtemp(path.join(os.tmpdir(), "workbuddy-record-schema-"));
+  const folder = path.join(vault, "ScholarBuddy", "passages");
+  try {
+    await mkdir(folder, { recursive: true });
+    await writeFile(
+      path.join(folder, "PASS-safe.md"),
+      '---\ntitle: "Safe passage"\ncollection: "passages"\nattachmentKey: "PDF1"\nzoteroUrl: "javascript:alert(1)"\ncustomPluginData: {"color":"blue"}\n---\n',
+    );
+    const state = await (await handle(request("/workbench/state"), config(vault))).json();
+    assert.equal(state.passages[0].zoteroUrl, undefined);
+    assert.deepEqual(state.passages[0].customPluginData, { color: "blue" });
+    const updated = await saveRecord(config(vault), "passages", {
+      ...state.passages[0],
+      title: "Updated passage",
+    });
+    assert.deepEqual(updated.customPluginData, { color: "blue" });
+    await writeFile(
+      path.join(folder, "PASS-bad.md"),
+      '---\ntitle: {"unexpected":true}\ncollection: "passages"\n---\n',
+    );
+    await assert.rejects(
+      handle(request("/workbench/state"), config(vault)),
+      (error) => error.status === 422 && /title must be a string/.test(error.message),
     );
   } finally {
     await rm(vault, { recursive: true, force: true });
@@ -435,9 +523,13 @@ test("Obsidian records validate common fields and keep only one active project",
       (error) => error.status === 422,
     );
     await saveRecord(config(vault), "projects", { id: "PRJ-two", title: "Second", active: true });
+    await Promise.all([
+      saveRecord(config(vault), "projects", { id: "PRJ-three", title: "Third", active: true }),
+      saveRecord(config(vault), "projects", { id: "PRJ-four", title: "Fourth", active: true }),
+    ]);
     const state = await (await handle(request("/workbench/state"), config(vault))).json();
     assert.equal(state.projects.filter((project) => project.active).length, 1);
-    assert.equal(state.projects.find((project) => project.active).id, "PRJ-two");
+    assert.equal(state.projects.find((project) => project.active).id, "PRJ-four");
   } finally {
     await rm(vault, { recursive: true, force: true });
   }
@@ -486,10 +578,71 @@ test("research log entries and ideas are ordinary records with their own dates a
 
 test("citation validation identifies references missing from the evidence manifest", () => {
   const manifest = { zotero: [{ id: "Z1" }], obsidian: [{ id: "O1" }] };
-  assert.deepEqual(invalidCitations("Supported [Z1] [O1], invented [Z9] and [O7].", manifest), [
+  assert.deepEqual(invalidReferenceIds("Supported [Z1] [O1], invented [Z9] and [O7].", manifest), [
     "Z9",
     "O7",
   ]);
+});
+
+test("only exact excerpts receive citable evidence IDs", () => {
+  const manifest = evidenceManifest({
+    query: "sprint effect",
+    retrievedAt: "2026-08-24T10:00:00.000Z",
+    zotero: [
+      {
+        key: "WITH-TEXT",
+        title: "Measured result",
+        creators: ["A. Author"],
+        year: "2025",
+        doi: "",
+        url: "",
+        excerpt: "Sprint counts increased by twelve percent.",
+      },
+      {
+        key: "METADATA",
+        title: "Metadata only",
+        creators: ["B. Author"],
+        year: "2024",
+        doi: "",
+        url: "",
+        excerpt: "",
+      },
+    ],
+    obsidian: [{ title: "Analysis", path: "Analysis.md", modified: "", snippet: "Model output." }],
+    passages: [{ key: "P", sourceTitle: "Paper", year: "2025", pageLabel: "4", quote: "Quote." }],
+  });
+  assert.deepEqual(
+    manifest.zotero.map((item) => item.id),
+    ["Z1"],
+  );
+  assert.deepEqual(
+    manifest.bibliography.map((item) => item.key),
+    ["METADATA"],
+  );
+  assert.equal("contentHash" in manifest.zotero[0], false);
+  assert.deepEqual(invalidReferenceIds("Supported [Z1], metadata invented as [Z2].", manifest), [
+    "Z2",
+  ]);
+});
+
+test("Zotero open links are derived from inert keys under a fixed protocol", () => {
+  const url = zoteroPassageUrl({
+    attachmentKey: "javascript:alert(1)",
+    annotationKey: "ANN 1",
+    pageLabel: "12",
+  });
+  assert.match(url, /^zotero:\/\/open-pdf\/library\/items\//);
+  assert.doesNotMatch(url, /^javascript:/i);
+  assert.match(url, /annotation=ANN\+1/);
+});
+
+test("the example Gemini configuration matches the shared provider defaults", async () => {
+  const example = parseEnv(
+    await readFile(new URL("../.env.local.example", import.meta.url), "utf8"),
+  );
+  const gemini = AI_PROVIDER_DEFINITIONS.find((provider) => provider.id === "gemini");
+  assert.equal(example.GEMINI_MODEL, gemini.defaultModel);
+  assert.equal(example.GEMINI_BASE_URL, gemini.defaultBase);
 });
 
 test("Zotero annotations become source-aware passages without changing the highlight", () => {
@@ -523,6 +676,26 @@ test("Zotero annotations become source-aware passages without changing the highl
   assert.deepEqual(passage.citationAuthors, ["Lovelace"]);
   assert.deepEqual(passage.tags, ["validity"]);
   assert.match(passage.url, /^zotero:\/\/open-pdf\/library\/items\/PDF1\?/);
+});
+
+test("Zotero item keys are fetched in bounded batches instead of one request per item", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url) => {
+    calls.push(String(url));
+    const itemKeys = new URL(url).searchParams.get("itemKey").split(",");
+    return Response.json(itemKeys.map((key) => ({ key, data: { key } })));
+  };
+  try {
+    const keys = Array.from({ length: 51 }, (_, index) => `KEY${index}`);
+    const items = await zoteroItemsByKey({ ZOTERO_LOCAL_URL: "http://127.0.0.1:23119" }, keys);
+    assert.equal(items.size, 51);
+    assert.equal(calls.length, 2);
+    assert.match(calls[0], /itemKey=/);
+    assert.doesNotMatch(calls[0], /\/items\/KEY0/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test("calendar adapter uses interval overlap and preserves notes unless supplied", async () => {
@@ -753,7 +926,7 @@ test("next actions are parsed out of the answer and bounded", () => {
 
 test("saved passages are citable and audited like any other source", () => {
   const manifest = { zotero: [{ id: "Z1" }], obsidian: [], passages: [{ id: "P1" }] };
-  assert.deepEqual(invalidCitations("Quoted [P1] and [Z1], invented [P4].", manifest), ["P4"]);
+  assert.deepEqual(invalidReferenceIds("Quoted [P1] and [Z1], invented [P4].", manifest), ["P4"]);
 });
 
 test("a follow-up turn reuses history and streaming is opt-in per adapter", () => {
@@ -770,6 +943,7 @@ test("a follow-up turn reuses history and streaming is opt-in per adapter", () =
     ["system", "user", "assistant", "user"],
   );
   assert.equal(chat.stream, true);
+  assert.deepEqual(chat.thinking, { type: "disabled" });
 
   const gemini = modelConfig({ GEMINI_API_KEY: "secret" }, "gemini");
   const geminiRequest = modelRequest(gemini, "system", "follow-up", 500, { history, stream: true });
@@ -787,6 +961,49 @@ test("a follow-up turn reuses history and streaming is opt-in per adapter", () =
     input: "task",
     max_output_tokens: 500,
   });
+});
+
+test("an unknown conversation id fails instead of silently changing its evidence", async () => {
+  await assert.rejects(
+    handle(
+      request("/ai/stream", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          provider: "deepseek",
+          input: "continue",
+          conversationId: "expired-conversation",
+          sources: { zotero: false, obsidian: false, kbase: false },
+        }),
+      }),
+      { ...config("/tmp/unused"), DEEPSEEK_API_KEY: "configured" },
+    ),
+    (error) => error.status === 410 && error.code === "conversation_expired",
+  );
+});
+
+test("the client SSE protocol requires exactly one terminal completion", async () => {
+  const deltas = [];
+  const completed = await readEventStream(
+    new Response(
+      'event: delta\r\ndata: {"text":"Hello"}\r\n\r\nevent: done\ndata: {"output":"Hello"}\n\n',
+    ).body,
+    (event, payload) => deltas.push([event, payload.text]),
+  );
+  assert.deepEqual(deltas, [["delta", "Hello"]]);
+  assert.deepEqual(completed, { output: "Hello" });
+  await assert.rejects(
+    readEventStream(new Response('event: delta\ndata: {"text":"partial"}\n\n').body),
+    /ended before completion/,
+  );
+  await assert.rejects(
+    readEventStream(
+      new Response(
+        'event: done\ndata: {"output":"done"}\n\nevent: delta\ndata: {"text":"late"}\n\n',
+      ).body,
+    ),
+    /data after completion/,
+  );
 });
 
 test("stream frames reduce to answer text, reasoning, and usage", () => {
@@ -874,6 +1091,46 @@ test("a streaming run still refuses to start when a selected source fails", asyn
   }
 });
 
+test("a streamed provider failure preserves safe upstream diagnostics", async () => {
+  const provider = createServer((incoming, outgoing) => {
+    outgoing.writeHead(429, { "Content-Type": "application/json" });
+    outgoing.end(
+      JSON.stringify({
+        error: { code: "rate_limit", message: "Rate limit exceeded for key sk-secret123456." },
+      }),
+    );
+  });
+  await new Promise((resolve) => provider.listen(0, "127.0.0.1", resolve));
+  const vault = await mkdtemp(path.join(os.tmpdir(), "workbuddy-provider-error-"));
+  try {
+    const response = await handle(
+      request("/ai/stream", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          provider: "deepseek",
+          input: "test",
+          sources: { zotero: false, obsidian: false, kbase: false },
+        }),
+      }),
+      {
+        ...config(vault),
+        DEEPSEEK_API_KEY: "fake",
+        DEEPSEEK_BASE_URL: `http://127.0.0.1:${provider.address().port}`,
+      },
+    );
+    const stream = await new Response(response.body).text();
+    const failed = JSON.parse(stream.match(/event: failed\ndata: (.+)/)?.[1] || "{}");
+    assert.equal(failed.code, "provider_error");
+    assert.match(failed.error, /DeepSeek request failed \(HTTP 429, rate_limit\)/);
+    assert.match(failed.error, /Rate limit exceeded/);
+    assert.doesNotMatch(failed.error, /sk-secret123456/);
+  } finally {
+    provider.close();
+    await rm(vault, { recursive: true, force: true });
+  }
+});
+
 test("a streamed run emits deltas, audits the finished answer, and keeps a follow-up on the same sources", async () => {
   const seen = [];
   const chunks = [
@@ -957,7 +1214,7 @@ test("a streamed run emits deltas, audits the finished answer, and keeps a follo
       [["Report Hedges g", "gap"]],
     );
     // Streaming displays text early, but the citation audit still runs on the end.
-    assert.deepEqual(done.invalidCitations, ["Z4"]);
+    assert.deepEqual(done.invalidReferenceIds, ["Z4"]);
     assert.deepEqual(
       done.manifest.passages.map((item) => item.id),
       ["P1"],

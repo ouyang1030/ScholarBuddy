@@ -8,6 +8,7 @@ import {
   readFile,
   readdir,
   rename,
+  rm,
   stat,
   unlink,
   writeFile,
@@ -28,11 +29,7 @@ import {
   updateLocalConfig,
 } from "./local-settings.mjs";
 import { parseActions, systemPrompt } from "./prompts.mjs";
-import {
-  consequentialSubmissionStages,
-  submissionStages,
-  validateRecord,
-} from "./record-schema.mjs";
+import { consequentialSubmissionStages, decodeRecord, submissionStages } from "./record-schema.mjs";
 import { expandTerms } from "./search-terms.mjs";
 import {
   AI_PROVIDER_DEFINITIONS,
@@ -55,6 +52,16 @@ const aiClients = new Map();
 const pairingCodes = new Map();
 const setupSessions = new Map();
 let activeAiRequests = 0;
+let recordMutationTail = Promise.resolve();
+
+function serializeRecordMutation(operation) {
+  const result = recordMutationTail.then(operation, operation);
+  recordMutationTail = result.then(
+    () => undefined,
+    () => undefined,
+  );
+  return result;
+}
 
 async function ensureBridgeToken(config) {
   if (config.WORKBUDDY_BRIDGE_TOKEN) return config.WORKBUDDY_BRIDGE_TOKEN;
@@ -339,6 +346,10 @@ function normalizeZoteroItem(item) {
     itemType: data.itemType || "",
     doi: data.DOI || "",
     url: data.url || (data.key ? `zotero://select/library/items/${data.key}` : ""),
+    excerpt: String(data.abstractNote || "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 2_000),
   };
 }
 
@@ -378,12 +389,22 @@ export function normalizeZoteroPassage(annotation, attachment, source) {
 }
 
 async function zoteroItemsByKey(config, keys, signal) {
-  const items = await Promise.all(
-    keys.map(async (key) => {
-      const response = await zoteroRequest(config, `/api/users/0/items/${key}`, signal);
+  const unique = [...new Set(keys.filter(Boolean))];
+  const chunks = Array.from({ length: Math.ceil(unique.length / 50) }, (_, index) =>
+    unique.slice(index * 50, index * 50 + 50),
+  );
+  const batches = await Promise.all(
+    chunks.map(async (chunk) => {
+      const params = new URLSearchParams({
+        itemKey: chunk.join(","),
+        format: "json",
+        limit: String(chunk.length),
+      });
+      const response = await zoteroRequest(config, `/api/users/0/items?${params}`, signal);
       return response.json();
     }),
   );
+  const items = batches.flat();
   return new Map(items.map((item) => [item?.data?.key || item?.key, item]));
 }
 
@@ -485,6 +506,7 @@ function serializeRecord(record) {
   const metadata = { ...record };
   delete metadata.description;
   delete metadata.content;
+  if (metadata.collection === "projects") delete metadata.active;
   const lines = Object.entries(metadata).map(
     ([key, value]) => `${key}: ${JSON.stringify(value ?? null)}`,
   );
@@ -507,6 +529,20 @@ function parseRecord(text, fallbackId) {
     }
   }
   return { ...record, id: fallbackId, description: match[2].trim() };
+}
+
+async function readStoredRecord(file, id, collection) {
+  const content = await readFile(file, "utf8");
+  try {
+    const parsed = parseRecord(content, id);
+    return decodeRecord(collection, {
+      ...parsed,
+      version: Number.isInteger(parsed.version) ? parsed.version : 1,
+    });
+  } catch (error) {
+    error.message = `Invalid ScholarBuddy record ${collection}/${id}: ${error.message}`;
+    throw error;
+  }
 }
 
 async function atomicWrite(file, content) {
@@ -544,7 +580,8 @@ async function archiveVersion(config, collection, id, file, suffix = "version") 
 }
 
 async function listRecords(config, collection) {
-  const folder = path.join(recordRoot(config), safeCollection(collection));
+  const safe = safeCollection(collection);
+  const folder = path.join(recordRoot(config), safe);
   let entries;
   try {
     entries = await readdir(folder, { withFileTypes: true });
@@ -557,14 +594,19 @@ async function listRecords(config, collection) {
       .filter((entry) => entry.isFile() && entry.name.endsWith(".md"))
       .map(async (entry) => {
         const id = entry.name.slice(0, -3);
-        return parseRecord(await readFile(path.join(folder, entry.name), "utf8"), id);
+        return readStoredRecord(path.join(folder, entry.name), id, safe);
       }),
   );
-  return records.sort(
+  const sorted = records.sort(
     (a, b) =>
       String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")) ||
       String(a.title || "").localeCompare(String(b.title || "")),
   );
+  if (safe !== "projects") return sorted;
+  const workspace = await readWorkspaceState(config);
+  const activeProjectId =
+    workspace?.activeProjectId || sorted.find((record) => record.active)?.id || "";
+  return sorted.map((record) => ({ ...record, active: record.id === activeProjectId }));
 }
 async function workbenchState(config) {
   const pairs = await Promise.all(
@@ -576,7 +618,29 @@ async function workbenchState(config) {
   return Object.fromEntries(pairs);
 }
 
-async function saveRecord(config, collectionValue, incoming) {
+async function readWorkspaceState(config) {
+  const file = path.join(recordRoot(config), ".workspace.json");
+  try {
+    const value = JSON.parse(await readFile(file, "utf8"));
+    if (!value || typeof value !== "object" || Array.isArray(value))
+      throw new Error("ScholarBuddy workspace state must be an object.");
+    const activeProjectId = value.activeProjectId || "";
+    if (activeProjectId) safeRecordId(activeProjectId);
+    return { activeProjectId };
+  } catch (error) {
+    if (error?.code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+async function writeWorkspaceState(config, activeProjectId) {
+  await atomicWrite(
+    path.join(recordRoot(config), ".workspace.json"),
+    `${JSON.stringify({ activeProjectId }, null, 2)}\n`,
+  );
+}
+
+async function saveRecordUnlocked(config, collectionValue, incoming) {
   if (!incoming || typeof incoming !== "object" || Array.isArray(incoming)) {
     const error = new Error("Record must be an object.");
     error.status = 422;
@@ -586,63 +650,117 @@ async function saveRecord(config, collectionValue, incoming) {
   const id = incoming.id ? safeRecordId(incoming.id) : newRecordId(collection);
   const folder = path.join(recordRoot(config), collection);
   const file = path.join(folder, `${id}.md`);
+  const requestedVersion = incoming.version;
+  const requestedActive = collection === "projects" ? incoming.active : undefined;
+  const input = { ...incoming };
+  delete input.version;
+  if (collection === "projects") delete input.active;
   let previous = {};
   let exists = false;
   try {
-    previous = parseRecord(await readFile(file, "utf8"), id);
+    previous = await readStoredRecord(file, id, collection);
     exists = true;
   } catch (error) {
     if (error?.code !== "ENOENT") throw error;
   }
-  if (exists && !incoming.updatedAt) {
+  if (exists && !requestedVersion) {
     const error = new Error("Reload this record before saving it.");
     error.status = 428;
-    error.code = "revision_required";
+    error.code = "version_required";
     throw error;
   }
-  if (exists && incoming.updatedAt !== previous.updatedAt) {
+  if (exists && requestedVersion !== previous.version) {
     const error = new Error("This record changed after you opened it. Reload before saving.");
     error.status = 409;
-    error.code = "revision_conflict";
+    error.code = "version_conflict";
     throw error;
   }
   const previousTime = new Date(previous.updatedAt || 0).getTime();
-  const record = {
+  const candidate = {
     ...previous,
-    ...incoming,
+    ...input,
     id,
     collection,
+    version: exists ? previous.version + 1 : 1,
     updatedAt: new Date(
       Math.max(Date.now(), Number.isFinite(previousTime) ? previousTime + 1 : 0),
     ).toISOString(),
   };
-  record.title = requireText(record.title, "Record title", 1_000);
-  validateRecord(collection, record);
+  candidate.title = requireText(candidate.title, "Record title", 1_000);
+  const record = decodeRecord(collection, candidate);
   if (!record.createdAt) record.createdAt = record.updatedAt;
   if (exists) await archiveVersion(config, collection, id, file);
-  await atomicWrite(file, serializeRecord(record));
-  if (collection === "projects" && record.active) {
-    const projects = await listRecords(config, "projects");
-    for (const project of projects.filter((item) => item.id !== record.id && item.active))
-      await saveRecord(config, "projects", { ...project, active: false });
+  const content = serializeRecord(record);
+  await atomicWrite(file, content);
+  let active = false;
+  if (collection === "projects") {
+    const workspace = await readWorkspaceState(config);
+    const currentActiveProjectId =
+      workspace?.activeProjectId ||
+      (previous.active
+        ? id
+        : (await listRecords(config, "projects")).find((item) => item.active)?.id) ||
+      "";
+    const activeProjectId =
+      requestedActive === true
+        ? id
+        : requestedActive === false && currentActiveProjectId === id
+          ? ""
+          : currentActiveProjectId;
+    await writeWorkspaceState(config, activeProjectId);
+    active = activeProjectId === id;
   }
-  return record;
+  return {
+    ...record,
+    ...(collection === "projects" ? { active } : {}),
+  };
 }
 
-async function deleteRecord(config, collectionValue, idValue) {
+async function saveRecord(config, collectionValue, incoming) {
+  return serializeRecordMutation(() => saveRecordUnlocked(config, collectionValue, incoming));
+}
+
+async function deleteRecordUnlocked(config, collectionValue, idValue, version) {
   const collection = safeCollection(collectionValue);
   const id = safeRecordId(idValue);
   const file = path.join(recordRoot(config), collection, `${id}.md`);
+  let record;
   try {
-    await access(file, constants.F_OK);
-  } catch {
-    const error = new Error("That record no longer exists.");
-    error.status = 404;
+    record = await readStoredRecord(file, id, collection);
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+    const missing = new Error("That record no longer exists.");
+    missing.status = 404;
+    throw missing;
+  }
+  if (!version) {
+    const error = new Error("Reload this record before deleting it.");
+    error.status = 428;
+    error.code = "version_required";
     throw error;
   }
-  await archiveVersion(config, collection, id, file, "deleted");
+  if (version !== record.version) {
+    const error = new Error("This record changed after you opened it. Reload before deleting.");
+    error.status = 409;
+    error.code = "version_conflict";
+    throw error;
+  }
   await unlink(file);
-  return { deleted: true, id };
+  await rm(path.join(recordRoot(config), ".history", collection, id), {
+    recursive: true,
+    force: true,
+  });
+  if (collection === "projects") {
+    const workspace = await readWorkspaceState(config);
+    if (workspace?.activeProjectId === id) await writeWorkspaceState(config, "");
+  }
+  return { deleted: true, id, historyPurged: true };
+}
+
+async function deleteRecord(config, collectionValue, idValue, version) {
+  return serializeRecordMutation(() =>
+    deleteRecordUnlocked(config, collectionValue, idValue, version),
+  );
 }
 
 const statusPatterns = [
@@ -731,7 +849,7 @@ function submissionEmailCandidate(emailValue, attempts) {
   };
 }
 
-async function addSubmissionEvent(config, incoming) {
+async function addSubmissionEventUnlocked(config, incoming) {
   const attemptId = safeRecordId(requireText(incoming.attemptId, "Submission attempt id", 100));
   const stage = requireText(incoming.status, "Submission status", 100);
   if (!submissionStages.has(stage)) {
@@ -750,7 +868,7 @@ async function addSubmissionEvent(config, incoming) {
     error.status = 404;
     throw error;
   }
-  const event = await saveRecord(config, "submission-events", {
+  const event = await saveRecordUnlocked(config, "submission-events", {
     ...incoming,
     id: incoming.id,
     title: incoming.title || `${stage} · ${eventDate.slice(0, 10)}`,
@@ -763,7 +881,7 @@ async function addSubmissionEvent(config, incoming) {
   });
   const existingStageDate = new Date(attempt.stageStartedAt || attempt.submittedAt || 0).getTime();
   if (!Number.isFinite(existingStageDate) || new Date(eventDate).getTime() >= existingStageDate) {
-    await saveRecord(config, "submission-attempts", {
+    await saveRecordUnlocked(config, "submission-attempts", {
       ...attempt,
       status: stage,
       rawStatus: incoming.rawStatus || attempt.rawStatus || stage,
@@ -772,6 +890,10 @@ async function addSubmissionEvent(config, incoming) {
     });
   }
   return event;
+}
+
+async function addSubmissionEvent(config, incoming) {
+  return serializeRecordMutation(() => addSubmissionEventUnlocked(config, incoming));
 }
 
 async function syncSubmissionEmails(config, suppliedEmails) {
@@ -1058,10 +1180,15 @@ function promptPassages(value) {
 }
 
 function buildPrompt(payload, zotero, obsidian, passages = []) {
+  const zoteroEvidence = zotero.filter((item) => item.excerpt);
+  const bibliography = zotero.filter((item) => !item.excerpt);
   const sources = [
-    zotero.length
-      ? `ZOTERO RECORDS:\n${zotero.map((item, i) => `[Z${i + 1}] ${item.title}. ${item.creators.join(", ")} (${item.year || "n.d."}). DOI: ${item.doi || "not recorded"}. Zotero key: ${item.key}`).join("\n")}`
-      : "ZOTERO RECORDS: none retrieved.",
+    zoteroEvidence.length
+      ? `ZOTERO EVIDENCE EXCERPTS:\n${zoteroEvidence.map((item, i) => `[Z${i + 1}] ${item.title}. ${item.creators.join(", ")} (${item.year || "n.d."}). DOI: ${item.doi || "not recorded"}. Zotero key: ${item.key}\n${item.excerpt}`).join("\n\n")}`
+      : "ZOTERO EVIDENCE EXCERPTS: none retrieved.",
+    bibliography.length
+      ? `BIBLIOGRAPHIC CANDIDATES (metadata only; do not cite as evidence):\n${bibliography.map((item) => `- ${item.title}. ${item.creators.join(", ")} (${item.year || "n.d."}). DOI: ${item.doi || "not recorded"}. Zotero key: ${item.key}`).join("\n")}`
+      : "",
     obsidian.length
       ? `OBSIDIAN NOTES:\n${obsidian.map((note, i) => `[O${i + 1}] ${note.title} (${note.path})\n${note.snippet}`).join("\n\n")}`
       : "OBSIDIAN NOTES: none retrieved.",
@@ -1151,6 +1278,10 @@ function modelRequest(target, system, prompt, maxOutputTokens, options = {}) {
         ],
         temperature: target.provider === "kimi" ? 1 : 0.2,
         max_tokens: maxOutputTokens,
+        // DeepSeek V4 enables thinking by default. These workflows need a concise
+        // final answer inside a bounded output budget, so do not let hidden
+        // reasoning consume the entire allowance before content is produced.
+        ...(target.provider === "deepseek" ? { thinking: { type: "disabled" } } : {}),
         ...(stream ? { stream: true, stream_options: { include_usage: true } } : {}),
       }),
     },
@@ -1204,6 +1335,7 @@ export function streamDelta(target, data) {
   return {
     ...(choice.content ? { text: choice.content } : {}),
     ...(choice.reasoning_content ? { reasoning: choice.reasoning_content } : {}),
+    ...(data?.choices?.[0]?.finish_reason ? { finishReason: data.choices[0].finish_reason } : {}),
     ...(data?.usage ? { usage: data.usage } : {}),
   };
 }
@@ -1309,14 +1441,31 @@ async function providerFetch(target, request, signal) {
     throw error;
   }
   if (!response.ok) {
-    const error = new Error(
-      response.status === 401 || response.status === 403
-        ? `${target.label} rejected its credentials.`
-        : `${target.label} request failed.`,
+    const raw = await response.text().catch(() => "");
+    let body = {};
+    try {
+      body = JSON.parse(raw);
+    } catch {
+      /* some providers return a plain-text error page */
+    }
+    const providerCode = String(body?.error?.code || body?.code || "").slice(0, 80);
+    const detail = String(body?.error?.message || body?.message || "")
+      .replace(/[\r\n\t]+/g, " ")
+      .replace(/\s+/g, " ")
+      .replace(/(?:sk|key)-[A-Za-z0-9_-]{8,}/gi, "[redacted]")
+      .trim()
+      .slice(0, 300);
+    const authenticationFailure = response.status === 401 || response.status === 403;
+    const summary = authenticationFailure
+      ? `${target.label} rejected its credentials.`
+      : `${target.label} request failed (HTTP ${response.status}${providerCode ? `, ${providerCode}` : ""})${detail ? `: ${detail}` : "."}`;
+    process.stderr.write(
+      `${target.label} provider failure: HTTP ${response.status}${providerCode ? ` ${providerCode}` : ""}${detail ? ` — ${detail}` : ""}\n`,
     );
+    const error = new Error(summary);
     error.status = 502;
-    error.code =
-      response.status === 401 || response.status === 403 ? "provider_auth" : "provider_error";
+    error.code = authenticationFailure ? "provider_auth" : "provider_error";
+    error.publicMessage = summary;
     throw error;
   }
   return response;
@@ -1350,9 +1499,11 @@ async function streamModel(config, payload, context, signal, onDelta) {
   let output = "";
   let reasoning = "";
   let usage = null;
+  let finishReason = "";
   for await (const frame of sseFrames(response.body, signal)) {
     const delta = streamDelta(target, frame);
     if (delta.usage) usage = delta.usage;
+    if (delta.finishReason) finishReason = delta.finishReason;
     if (delta.text) {
       output += delta.text;
       onDelta({ text: delta.text });
@@ -1363,9 +1514,14 @@ async function streamModel(config, payload, context, signal, onDelta) {
     }
   }
   if (!output.trim()) {
-    const error = new Error(`${target.label} returned no text.`);
+    const error = new Error(
+      reasoning && finishReason === "length"
+        ? `${target.label} used the response limit before producing a final answer. Retry the task or increase WORKBUDDY_AI_MAX_OUTPUT_TOKENS.`
+        : `${target.label} returned no final answer.`,
+    );
     error.status = 502;
     error.code = "provider_error";
+    error.publicMessage = error.message;
     throw error;
   }
   return {
@@ -1377,7 +1533,10 @@ async function streamModel(config, payload, context, signal, onDelta) {
   };
 }
 
-function evidenceManifest(zotero, obsidian, passages = []) {
+function evidenceManifest(context) {
+  const { zotero, obsidian, passages = [], query, retrievedAt } = context;
+  const zoteroEvidence = zotero.filter((item) => item.excerpt);
+  const bibliography = zotero.filter((item) => !item.excerpt);
   return {
     passages: passages.map((item, index) => ({
       id: `P${index + 1}`,
@@ -1386,8 +1545,10 @@ function evidenceManifest(zotero, obsidian, passages = []) {
       year: item.year,
       pageLabel: item.pageLabel,
       quote: item.quote,
+      query,
+      retrievedAt,
     })),
-    zotero: zotero.map((item, index) => ({
+    zotero: zoteroEvidence.map((item, index) => ({
       id: `Z${index + 1}`,
       key: item.key,
       title: item.title,
@@ -1395,16 +1556,32 @@ function evidenceManifest(zotero, obsidian, passages = []) {
       year: item.year,
       doi: item.doi,
       url: item.url,
+      excerpt: item.excerpt,
+      query,
+      retrievedAt,
+    })),
+    bibliography: bibliography.map((item) => ({
+      key: item.key,
+      title: item.title,
+      creators: item.creators,
+      year: item.year,
+      doi: item.doi,
+      url: item.url,
+      query,
+      retrievedAt,
     })),
     obsidian: obsidian.map((note, index) => ({
       id: `O${index + 1}`,
       title: note.title,
       path: note.path,
       modified: note.modified,
+      snippet: note.snippet,
+      query,
+      retrievedAt,
     })),
   };
 }
-function invalidCitations(output, manifest) {
+function invalidReferenceIds(output, manifest) {
   const valid = new Set(
     [...manifest.zotero, ...manifest.obsidian, ...(manifest.passages || [])].map((item) => item.id),
   );
@@ -1488,8 +1665,16 @@ async function prepareAiRun(config, payload, signal) {
         zotero: previous.zotero,
         obsidian: previous.obsidian,
         passages: previous.passages,
+        query: previous.query,
+        retrievedAt: previous.retrievedAt,
       },
     };
+  if (payload.conversationId) {
+    const error = new Error("This evidence conversation expired. Start a new research task.");
+    error.status = 410;
+    error.code = "conversation_expired";
+    throw error;
+  }
   const useZotero = payload.sources?.zotero !== false;
   const useObsidian = payload.sources?.obsidian !== false;
   const retrieval = {
@@ -1524,6 +1709,8 @@ async function prepareAiRun(config, payload, signal) {
       zotero: settled[0].status === "fulfilled" ? settled[0].value : [],
       obsidian: settled[1].status === "fulfilled" ? settled[1].value : [],
       passages: payload.sources?.kbase === false ? [] : promptPassages(payload.passages),
+      query: input,
+      retrievedAt: new Date().toISOString(),
     },
   };
 }
@@ -1890,7 +2077,10 @@ async function handle(request, providedConfig) {
   }
   if (url.pathname === "/workbench/record" && request.method === "DELETE") {
     const payload = await readJson(request);
-    return json(origin, await deleteRecord(config, payload.collection, payload.id));
+    return json(
+      origin,
+      await deleteRecord(config, payload.collection, payload.id, payload.version),
+    );
   }
   if (url.pathname === "/submissions/event" && request.method === "POST")
     return json(origin, { event: await addSubmissionEvent(config, await readJson(request)) }, 201);
@@ -1954,11 +2144,7 @@ async function handle(request, providedConfig) {
           ? String(payload.projectContext || "").slice(0, 12_000)
           : "",
     };
-    const manifest = evidenceManifest(
-      prepared.context.zotero,
-      prepared.context.obsidian,
-      prepared.context.passages,
-    );
+    const manifest = evidenceManifest(prepared.context);
     const settle = (result) => {
       const { output, actions } = parseActions(result.output);
       quota.current.tokens +=
@@ -1982,7 +2168,7 @@ async function handle(request, providedConfig) {
         sources: { zotero: prepared.context.zotero, obsidian: prepared.context.obsidian },
         retrieval: prepared.retrieval,
         manifest,
-        invalidCitations: invalidCitations(output, manifest),
+        invalidReferenceIds: invalidReferenceIds(output, manifest),
       };
     };
     if (url.pathname === "/ai/run") {
@@ -2026,7 +2212,12 @@ async function handle(request, providedConfig) {
         } catch (error) {
           quota.current.tokens = Math.max(0, quota.current.tokens - quota.reservation);
           send("failed", {
-            error: error?.status && error.status < 500 ? error.message : "The AI request failed.",
+            error:
+              typeof error?.publicMessage === "string"
+                ? error.publicMessage
+                : error?.status && error.status < 500
+                  ? error.message
+                  : "The AI request failed.",
             code: typeof error?.code === "string" ? error.code : "provider_error",
           });
         } finally {
@@ -2198,9 +2389,11 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
 export {
   addSubmissionEvent,
   authorize,
+  deleteRecord,
   detectSubmissionStatus,
   handle,
-  invalidCitations,
+  evidenceManifest,
+  invalidReferenceIds,
   issuePairingCode,
   modelConfig,
   modelRequest,
@@ -2210,4 +2403,5 @@ export {
   searchObsidian,
   submissionEmailCandidate,
   syncSubmissionEmails,
+  zoteroItemsByKey,
 };

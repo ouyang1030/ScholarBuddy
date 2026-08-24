@@ -18,7 +18,10 @@ export function RecordEditor({
   state: WorkbenchState;
   onClose: () => void;
   onSave: (collection: CollectionKey, record: Partial<RecordItem>) => Promise<RecordItem>;
-  onDelete: (collection: CollectionKey, id: string) => Promise<void>;
+  onDelete: (
+    collection: CollectionKey,
+    record: Pick<RecordItem, "id" | "version">,
+  ) => Promise<void>;
   ref?: React.Ref<HTMLElement>;
 }) {
   const isJournal = editor.collection === "journal";
@@ -56,11 +59,11 @@ export function RecordEditor({
     }
   };
   const remove = async () => {
-    if (!form.id) return;
+    if (!form.id || !form.version) return;
     setSaving(true);
     setError("");
     try {
-      await onDelete(editor.collection, form.id);
+      await onDelete(editor.collection, { id: form.id, version: form.version });
       onClose();
     } catch (deleteError) {
       setError(
@@ -683,6 +686,7 @@ export function RecordEditor({
           {form.id ? (
             confirmDelete ? (
               <span className="delete-confirm">
+                <small>Removes this record and every saved history version.</small>
                 <button onClick={remove}>Delete permanently</button>
                 <button onClick={() => setConfirmDelete(false)}>Keep</button>
               </span>

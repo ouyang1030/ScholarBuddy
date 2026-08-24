@@ -6,6 +6,33 @@ import { localDateKey, timeLabel } from "../../lib/format";
 import type { FocusCalendarBlock } from "../../types";
 import { FocusCelebration } from "../Celebrations";
 
+const FOCUS_STATE_KEY = "workbuddy-focus-en-v2";
+const LEGACY_FOCUS_STATE_KEY = "workbuddy-focus-en-v1";
+const FOCUS_CELEBRATION_KEY = "workbuddy-focus-celebration-v2";
+const LEGACY_FOCUS_CELEBRATION_KEY = "workbuddy-focus-celebrated-date";
+
+type FocusCelebrationState = {
+  date: string;
+  status: "pending" | "seen";
+};
+
+function readFocusCelebration(): FocusCelebrationState | null {
+  try {
+    const saved = JSON.parse(window.localStorage.getItem(FOCUS_CELEBRATION_KEY) || "null");
+    return saved &&
+      typeof saved.date === "string" &&
+      (saved.status === "pending" || saved.status === "seen")
+      ? saved
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeFocusCelebration(state: FocusCelebrationState) {
+  window.localStorage.setItem(FOCUS_CELEBRATION_KEY, JSON.stringify(state));
+}
+
 export function FocusPanel() {
   const [now, setNow] = useState(() => new Date());
   const [elapsed, setElapsed] = useState(0);
@@ -19,6 +46,9 @@ export function FocusPanel() {
   const [celebrating, setCelebrating] = useState(false);
   const syncingRef = useRef(false);
   const celebratedRef = useRef(false);
+  const celebrationPendingRef = useRef(false);
+  const celebrationDateRef = useRef("");
+  const celebrationShowTimerRef = useRef<number | null>(null);
   const celebrationTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -26,8 +56,8 @@ export function FocusPanel() {
     const hydrate = window.setTimeout(() => {
       try {
         const saved = JSON.parse(
-          window.localStorage.getItem("workbuddy-focus-en-v2") ||
-            window.localStorage.getItem("workbuddy-focus-en-v1") ||
+          window.localStorage.getItem(FOCUS_STATE_KEY) ||
+            window.localStorage.getItem(LEGACY_FOCUS_STATE_KEY) ||
             "{}",
         );
         const savedDate = saved.date || today;
@@ -60,8 +90,15 @@ export function FocusPanel() {
           setFocusDate(today);
           setPending(pendingItems);
         }
-        celebratedRef.current =
-          window.localStorage.getItem("workbuddy-focus-celebrated-date") === today;
+        const celebration = readFocusCelebration();
+        celebratedRef.current = celebration?.date === today && celebration.status === "seen";
+        celebrationPendingRef.current =
+          celebration?.date === today && celebration.status === "pending";
+        celebrationDateRef.current = celebration?.date === today ? today : "";
+        // v1 wrote "seen" before the overlay was visible, so it cannot prove the
+        // user actually saw anything. The v2 threshold check below safely requeues
+        // today's missed celebration once and then owns the lifecycle.
+        window.localStorage.removeItem(LEGACY_FOCUS_CELEBRATION_KEY);
       } catch {
         /* new timer */
       }
@@ -75,6 +112,7 @@ export function FocusPanel() {
   }, []);
   useEffect(
     () => () => {
+      if (celebrationShowTimerRef.current) window.clearTimeout(celebrationShowTimerRef.current);
       if (celebrationTimerRef.current) window.clearTimeout(celebrationTimerRef.current);
     },
     [],
@@ -82,7 +120,7 @@ export function FocusPanel() {
   useEffect(() => {
     if (ready)
       window.localStorage.setItem(
-        "workbuddy-focus-en-v2",
+        FOCUS_STATE_KEY,
         JSON.stringify({ date: focusDate, elapsed, startedAt, target, pending }),
       );
   }, [elapsed, focusDate, pending, ready, startedAt, target]);
@@ -184,18 +222,77 @@ export function FocusPanel() {
         setFocusDate(currentDate);
         setCalendarMessage("");
       }
-      celebratedRef.current =
-        window.localStorage.getItem("workbuddy-focus-celebrated-date") === currentDate;
+      const celebration = readFocusCelebration();
+      celebratedRef.current = celebration?.date === currentDate && celebration.status === "seen";
+      celebrationPendingRef.current =
+        celebration?.date === currentDate && celebration.status === "pending";
+      celebrationDateRef.current = celebration?.date === currentDate ? currentDate : "";
     }, 0);
     return () => window.clearTimeout(rollover);
   }, [currentDate, focusDate, now, ready, startedAt, target]);
+  const finishCelebration = useCallback(() => {
+    if (celebrationShowTimerRef.current) window.clearTimeout(celebrationShowTimerRef.current);
+    if (celebrationTimerRef.current) window.clearTimeout(celebrationTimerRef.current);
+    celebrationShowTimerRef.current = null;
+    celebrationTimerRef.current = null;
+    celebrationPendingRef.current = false;
+    celebratedRef.current = true;
+    writeFocusCelebration({
+      date: celebrationDateRef.current || localDateKey(new Date()),
+      status: "seen",
+    });
+    setCelebrating(false);
+  }, []);
+  const scheduleCelebration = useCallback(() => {
+    if (
+      celebratedRef.current ||
+      !celebrationPendingRef.current ||
+      document.visibilityState !== "visible" ||
+      celebrationShowTimerRef.current ||
+      celebrationTimerRef.current
+    )
+      return;
+    celebrationShowTimerRef.current = window.setTimeout(() => {
+      celebrationShowTimerRef.current = null;
+      if (
+        celebratedRef.current ||
+        !celebrationPendingRef.current ||
+        document.visibilityState !== "visible"
+      )
+        return;
+      setCelebrating(true);
+      celebrationTimerRef.current = window.setTimeout(finishCelebration, 8000);
+    }, 0);
+  }, [finishCelebration]);
   useEffect(() => {
     if (!ready || focusDate !== currentDate || seconds < 21600 || celebratedRef.current) return;
-    celebratedRef.current = true;
-    window.localStorage.setItem("workbuddy-focus-celebrated-date", currentDate);
-    window.setTimeout(() => setCelebrating(true), 0);
-    celebrationTimerRef.current = window.setTimeout(() => setCelebrating(false), 8000);
-  }, [currentDate, focusDate, ready, seconds]);
+    celebrationPendingRef.current = true;
+    celebrationDateRef.current = currentDate;
+    writeFocusCelebration({ date: currentDate, status: "pending" });
+    scheduleCelebration();
+  }, [currentDate, focusDate, ready, scheduleCelebration, seconds]);
+  useEffect(() => {
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        scheduleCelebration();
+        return;
+      }
+      if (celebrationShowTimerRef.current) window.clearTimeout(celebrationShowTimerRef.current);
+      if (celebrationTimerRef.current) window.clearTimeout(celebrationTimerRef.current);
+      celebrationShowTimerRef.current = null;
+      celebrationTimerRef.current = null;
+      setCelebrating(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && celebrationPendingRef.current) finishCelebration();
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [finishCelebration, scheduleCelebration]);
   const label = `${String(Math.floor(seconds / 3600)).padStart(2, "0")}:${String(Math.floor((seconds % 3600) / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
   const toggle = () => {
     const rightNow = Date.now();
@@ -215,8 +312,11 @@ export function FocusPanel() {
     } else {
       if (focusDate !== nextDate) {
         setElapsed(0);
-        celebratedRef.current =
-          window.localStorage.getItem("workbuddy-focus-celebrated-date") === nextDate;
+        const celebration = readFocusCelebration();
+        celebratedRef.current = celebration?.date === nextDate && celebration.status === "seen";
+        celebrationPendingRef.current =
+          celebration?.date === nextDate && celebration.status === "pending";
+        celebrationDateRef.current = celebration?.date === nextDate ? nextDate : "";
       }
       setFocusDate(nextDate);
       setStartedAt(rightNow);
@@ -306,7 +406,7 @@ export function FocusPanel() {
           )}
         </div>
       </article>
-      {celebrating && <FocusCelebration onClose={() => setCelebrating(false)} />}
+      {celebrating && <FocusCelebration onClose={finishCelebration} />}
     </>
   );
 }

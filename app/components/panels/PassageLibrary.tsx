@@ -97,7 +97,6 @@ export function PassageLibrary({
         creators: passage.creators,
         year: passage.year,
         citationKey: passage.citationKey,
-        zoteroUrl: passage.url,
         workbuddyKeywords: keywords[passage.key] ?? existing?.workbuddyKeywords ?? "",
         manuscriptId,
         manuscriptTitle: manuscript?.title || "",

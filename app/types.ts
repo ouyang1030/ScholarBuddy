@@ -18,6 +18,7 @@ export type Action = { label: string; meta: string; tone: string; command: strin
 
 export type RecordItem = {
   id: string;
+  version: number;
   collection?: CollectionKey;
   title: string;
   description?: string;
@@ -51,7 +52,6 @@ export type RecordItem = {
   workbuddyKeywords?: string;
   usedAt?: string;
   linkedAt?: string;
-  zoteroUrl?: string;
   manuscriptId?: string;
   manuscriptTitle?: string;
   projectId?: string;
@@ -111,6 +111,7 @@ export type ZoteroItem = {
   itemType: string;
   doi: string;
   url: string;
+  excerpt: string;
 };
 export type ZoteroPassage = {
   key: string;
@@ -174,8 +175,29 @@ export type WorkflowResult = {
       year: string;
       doi: string;
       url: string;
+      excerpt: string;
+      query: string;
+      retrievedAt: string;
     }[];
-    obsidian: { id: string; title: string; path: string; modified: string }[];
+    bibliography: {
+      key: string;
+      title: string;
+      creators: string[];
+      year: string;
+      doi: string;
+      url: string;
+      query: string;
+      retrievedAt: string;
+    }[];
+    obsidian: {
+      id: string;
+      title: string;
+      path: string;
+      modified: string;
+      snippet: string;
+      query: string;
+      retrievedAt: string;
+    }[];
     passages: {
       id: string;
       key: string;
@@ -183,9 +205,11 @@ export type WorkflowResult = {
       year: string;
       pageLabel: string;
       quote: string;
+      query: string;
+      retrievedAt: string;
     }[];
   };
-  invalidCitations: string[];
+  invalidReferenceIds: string[];
   actions: WorkflowAction[];
   conversationId: string;
   reasoning?: string;

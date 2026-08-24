@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { bridgeFetch } from "../../lib/bridge-client";
 import { localDateKey } from "../../lib/format";
 import { aiProviders, contextPassages, isAiProvider, recordContext } from "../../lib/workbench";
+import { readEventStream } from "../../../shared/sse.mjs";
 import type {
   Action,
   AiProvider,
@@ -119,18 +120,15 @@ export function ActionDrawer({
         const body = await response.json().catch(() => ({}));
         throw new Error(body.error || "Workflow failed.");
       }
-      await readEventStream(response.body, (event, payload) => {
-        const data = payload as { text: string; reasoning: string; error: string };
+      const result = (await readEventStream(response.body, (event, payload) => {
+        const data = payload as { text: string; reasoning: string };
         if (event === "delta") buffer.current.text += data.text;
         if (event === "reasoning") buffer.current.reasoning += data.reasoning;
-        if (event === "failed") throw new Error(data.error || "Workflow failed.");
-        if (event === "done") {
-          stopFlushing();
-          setTurns((current) => [...current, { question, result: payload as WorkflowResult }]);
-          setLive({ text: "", reasoning: "" });
-          setFollowUp("");
-        }
-      });
+      })) as WorkflowResult;
+      stopFlushing();
+      setTurns((current) => [...current, { question, result }]);
+      setLive({ text: "", reasoning: "" });
+      setFollowUp("");
     } catch (e) {
       if (!active.signal.aborted)
         setError(
@@ -182,6 +180,12 @@ export function ActionDrawer({
               `- [${item.id}] ${item.title || "Passage"}${item.pageLabel ? `, p. ${item.pageLabel}` : ""} — Zotero ${item.key}`,
           ),
         ].join("\n") || "- No external evidence retrieved.";
+      const bibliography =
+        latest.manifest.bibliography
+          .map(
+            (item) => `- ${item.title} — Zotero ${item.key}${item.doi ? ` — DOI ${item.doi}` : ""}`,
+          )
+          .join("\n") || "- None.";
       const transcript = turns
         .map((turn, index) => `## ${index + 1}. ${turn.question}\n\n${turn.result.output}`)
         .join("\n\n");
@@ -190,7 +194,7 @@ export function ActionDrawer({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           title: `${action.command} ${localDateKey(new Date())}`,
-          content: `---\nworkbuddyGenerated: true\nprovider: ${latest.provider}\nmodel: ${latest.model}\ncreatedAt: ${new Date().toISOString()}\n---\n\n# ${action.label}\n\n${transcript}\n\n## Evidence manifest\n\n${evidence}\n`,
+          content: `---\nworkbuddyGenerated: true\nprovider: ${latest.provider}\nmodel: ${latest.model}\ncreatedAt: ${new Date().toISOString()}\n---\n\n# ${action.label}\n\n${transcript}\n\n## Evidence manifest\n\n${evidence}\n\n## Bibliographic candidates (not evidence)\n\n${bibliography}\n`,
         }),
       });
       const body = await response.json();
@@ -312,9 +316,9 @@ export function ActionDrawer({
                 <pre>{turn.result.reasoning}</pre>
               </details>
             ) : null}
-            {turn.result.invalidCitations.length > 0 && (
+            {turn.result.invalidReferenceIds.length > 0 && (
               <div className="citation-warning">
-                Unverified citation IDs: {turn.result.invalidCitations.join(", ")}
+                Unknown reference IDs: {turn.result.invalidReferenceIds.join(", ")}
               </div>
             )}
             <pre>{turn.result.output}</pre>
@@ -431,34 +435,4 @@ export function ActionDrawer({
       </aside>
     </div>
   );
-}
-
-// Minimal SSE reader: EventSource cannot carry the pairing header, so the stream
-// is read from fetch and framed here.
-async function readEventStream(
-  body: ReadableStream<Uint8Array>,
-  onEvent: (event: string, data: unknown) => void,
-) {
-  const reader = body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  for (;;) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    let boundary = buffer.indexOf("\n\n");
-    while (boundary >= 0) {
-      const frame = buffer.slice(0, boundary);
-      buffer = buffer.slice(boundary + 2);
-      boundary = buffer.indexOf("\n\n");
-      const event = frame.match(/^event:\s*(.+)$/m)?.[1]?.trim() || "message";
-      const data = frame
-        .split(/\r?\n/)
-        .filter((line) => line.startsWith("data:"))
-        .map((line) => line.slice(5).trim())
-        .join("");
-      if (!data) continue;
-      onEvent(event, JSON.parse(data));
-    }
-  }
 }

@@ -85,11 +85,17 @@ export default function Home() {
   );
   const [paperCelebration, setPaperCelebration] = useState<PaperMilestone | null>(null);
   const paperCelebrationTimerRef = useRef<number | null>(null);
+  const stateRequestRef = useRef<AbortController | null>(null);
+  const recordMutationsRef = useRef(0);
   const loadState = async () => {
+    if (recordMutationsRef.current > 0) return;
+    stateRequestRef.current?.abort();
+    const controller = new AbortController();
+    stateRequestRef.current = controller;
     setLoading(true);
     setDataError("");
     try {
-      const response = await bridgeFetch(`/workbench/state`);
+      const response = await bridgeFetch(`/workbench/state`, { signal: controller.signal });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error);
       const nextState = { ...emptyState, ...body } as WorkbenchState;
@@ -104,9 +110,13 @@ export default function Home() {
         return next;
       });
     } catch (e) {
+      if (controller.signal.aborted) return;
       setDataError(e instanceof Error ? e.message : "Obsidian data could not be loaded.");
     } finally {
-      setLoading(false);
+      if (stateRequestRef.current === controller) {
+        stateRequestRef.current = null;
+        setLoading(false);
+      }
     }
   };
   const loadStatus = async (fresh = false): Promise<BridgeStatus | null> => {
@@ -194,6 +204,7 @@ export default function Home() {
       void loadStatus();
     }, 300_000);
     return () => {
+      stateRequestRef.current?.abort();
       window.clearTimeout(start);
       window.clearInterval(stateTimer);
       window.clearInterval(statusTimer);
@@ -305,73 +316,100 @@ export default function Home() {
     paperCelebrationTimerRef.current = window.setTimeout(() => setPaperCelebration(null), 10000);
   };
   const saveRecord = async (collection: CollectionKey, record: Partial<RecordItem>) => {
+    recordMutationsRef.current += 1;
+    stateRequestRef.current?.abort();
     const previous = record.id
       ? state[collection].find((item) => item.id === record.id)
       : undefined;
-    const response = await bridgeFetch(`/workbench/record`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ collection, record }),
-    });
-    const body = await response.json();
-    if (!response.ok) throw new Error(body.error || "Record could not be saved.");
-    const saved = body.record as RecordItem;
-    // The record the Bridge wrote is authoritative, so put it into view before the
-    // full reload: a reload that fails must not leave the card showing stale values
-    // under a "saved" toast.
-    setState((current) => ({
-      ...current,
-      [collection]: current[collection].some((item) => item.id === saved.id)
-        ? current[collection].map((item) => (item.id === saved.id ? saved : item))
-        : [saved, ...current[collection]],
-    }));
-    await loadState();
-    setToast(`${collectionLabels[collection]} saved to Obsidian`);
-    if (
-      collection === "manuscripts" &&
-      (saved.stage === "Accepted" || saved.stage === "Published") &&
-      previous?.stage !== saved.stage
-    )
-      showPaperCelebration(saved, saved.stage);
-    if (
-      collection === "submission-attempts" &&
-      (saved.status === "Accepted" || saved.status === "Published") &&
-      previous?.status !== saved.status
-    ) {
-      const manuscript = state.manuscripts.find((item) => item.id === saved.manuscriptId);
-      showPaperCelebration(
-        {
-          id: saved.manuscriptId || saved.id,
-          title: saved.manuscriptTitle || manuscript?.title || saved.title,
-          journal: saved.journal || manuscript?.journal,
-        },
-        saved.status,
-      );
+    try {
+      const response = await bridgeFetch(`/workbench/record`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ collection, record }),
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || "Record could not be saved.");
+      const saved = body.record as RecordItem;
+      setState((current) => {
+        const records = current[collection].some((item) => item.id === saved.id)
+          ? current[collection].map((item) => (item.id === saved.id ? saved : item))
+          : [saved, ...current[collection]];
+        return {
+          ...current,
+          [collection]:
+            collection === "projects" && saved.active
+              ? records.map((item) => ({ ...item, active: item.id === saved.id }))
+              : records,
+        };
+      });
+      setToast(`${collectionLabels[collection]} saved to Obsidian`);
+      if (
+        collection === "manuscripts" &&
+        (saved.stage === "Accepted" || saved.stage === "Published") &&
+        previous?.stage !== saved.stage
+      )
+        showPaperCelebration(saved, saved.stage);
+      if (
+        collection === "submission-attempts" &&
+        (saved.status === "Accepted" || saved.status === "Published") &&
+        previous?.status !== saved.status
+      ) {
+        const manuscript = state.manuscripts.find((item) => item.id === saved.manuscriptId);
+        showPaperCelebration(
+          {
+            id: saved.manuscriptId || saved.id,
+            title: saved.manuscriptTitle || manuscript?.title || saved.title,
+            journal: saved.journal || manuscript?.journal,
+          },
+          saved.status,
+        );
+      }
+      return saved;
+    } finally {
+      recordMutationsRef.current -= 1;
     }
-    return saved;
   };
-  const deleteRecord = async (collection: CollectionKey, id: string) => {
-    const response = await bridgeFetch(`/workbench/record`, {
-      method: "DELETE",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ collection, id }),
-    });
-    const body = await response.json();
-    if (!response.ok) throw new Error(body.error || "Record could not be deleted.");
-    await loadState();
-    setToast(`${collectionLabels[collection]} deleted`);
+  const deleteRecord = async (
+    collection: CollectionKey,
+    record: Pick<RecordItem, "id" | "version">,
+  ) => {
+    recordMutationsRef.current += 1;
+    stateRequestRef.current?.abort();
+    try {
+      const response = await bridgeFetch(`/workbench/record`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ collection, id: record.id, version: record.version }),
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || "Record could not be deleted.");
+      setState((current) => ({
+        ...current,
+        [collection]: current[collection].filter((item) => item.id !== record.id),
+      }));
+      setToast(`${collectionLabels[collection]} permanently deleted`);
+    } finally {
+      recordMutationsRef.current -= 1;
+    }
   };
   const addSubmissionEvent = async (record: Partial<RecordItem>) => {
-    const response = await bridgeFetch(`/submissions/event`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(record),
-    });
-    const body = await response.json();
-    if (!response.ok) throw new Error(body.error || "Submission event could not be saved.");
+    recordMutationsRef.current += 1;
+    stateRequestRef.current?.abort();
+    let event: RecordItem;
+    try {
+      const response = await bridgeFetch(`/submissions/event`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(record),
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || "Submission event could not be saved.");
+      event = body.event as RecordItem;
+    } finally {
+      recordMutationsRef.current -= 1;
+    }
     await loadState();
     setToast("Submission timeline updated");
-    const event = body.event as RecordItem;
     if (event.status === "Accepted" || event.status === "Published") {
       const manuscript = state.manuscripts.find((item) => item.id === event.manuscriptId);
       showPaperCelebration(
@@ -384,16 +422,24 @@ export default function Home() {
     }
   };
   const syncSubmissionEmail = async () => {
-    const response = await bridgeFetch(`/submissions/email-sync`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: "{}",
-      signal: AbortSignal.timeout(40000),
-    });
-    const body = await response.json();
-    if (!response.ok) throw new Error(body.error || "Mail could not be checked.");
+    recordMutationsRef.current += 1;
+    stateRequestRef.current?.abort();
+    let result: SubmissionSyncResult;
+    try {
+      const response = await bridgeFetch(`/submissions/email-sync`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+        signal: AbortSignal.timeout(40000),
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || "Mail could not be checked.");
+      result = body as SubmissionSyncResult;
+    } finally {
+      recordMutationsRef.current -= 1;
+    }
     await loadState();
-    for (const event of (body.updated || []) as RecordItem[]) {
+    for (const event of result.updated || []) {
       if (event.status !== "Accepted" && event.status !== "Published") continue;
       const manuscript = state.manuscripts.find((item) => item.id === event.manuscriptId);
       showPaperCelebration(
@@ -401,7 +447,7 @@ export default function Home() {
         event.status,
       );
     }
-    return body as SubmissionSyncResult;
+    return result;
   };
   const openEditor = (collection: CollectionKey, record?: Partial<RecordItem>) =>
     setEditor({ collection, record });

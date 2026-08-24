@@ -1,6 +1,7 @@
 "use client";
 
 import type { RecordItem, WorkbenchState } from "../../types";
+import { zoteroPassageUrl } from "../../../shared/zotero.mjs";
 import { EmptyState } from "../primitives";
 
 export function LinkedPassages({ paper, state }: { paper: RecordItem; state: WorkbenchState }) {
@@ -36,7 +37,8 @@ export function LinkedPassages({ paper, state }: { paper: RecordItem; state: Wor
               </p>
               <button
                 onClick={() => {
-                  if (item.zoteroUrl) window.location.href = item.zoteroUrl;
+                  const url = zoteroPassageUrl(item);
+                  if (url) window.location.href = url;
                 }}
               >
                 Open

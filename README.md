@@ -98,7 +98,7 @@ Publishing source code, making a Site public, and connecting a custom domain are
 - Selected Zotero and Obsidian context is sent to the configured AI provider only when the user runs an AI workflow.
 - AI request and token limits are process-local safeguards and reset when the Bridge restarts; they are not billing controls.
 - Submission email auto-check runs only while the Submission Tracker page is open. Acceptance, rejection, withdrawal, and publication always require confirmation.
-- Record history is retained as readable Markdown under `ScholarBuddy/.history`; it can be reviewed and pruned manually if a long-running vault grows unusually large.
+- Record history is retained as readable Markdown under `ScholarBuddy/.history` while a record exists. “Delete permanently” removes both the live note and every archived version for that record.
 
 See [PRIVACY.md](PRIVACY.md) and [SECURITY.md](SECURITY.md) before sharing a deployment.
 
