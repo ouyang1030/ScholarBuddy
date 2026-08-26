@@ -10,8 +10,14 @@ import type {
 import { daysSince, daysUntil, localDateKey, shortDate } from "./format";
 import {
   AI_PROVIDER_DEFINITIONS,
+  CLOSED_RECORD_STATUSES,
   COLLECTION_LABELS,
+  GENERIC_RECORD_STATUSES,
+  MANUSCRIPT_SECTIONS,
+  OPERATION_TYPES,
+  READING_QUEUE_STATUSES,
   RECORD_COLLECTIONS,
+  RECORD_STATUS_OPTIONS,
   SUBMISSION_STAGES,
 } from "../../shared/constants.mjs";
 
@@ -63,8 +69,33 @@ export const collectionLabels: Record<CollectionKey, string> = COLLECTION_LABELS
 
 export const submissionStages = SUBMISSION_STAGES;
 
-const closedStatuses = ["Resolved", "Completed", "Archived"];
-const isOpen = (item: RecordItem) => !closedStatuses.includes(item.status || "");
+export const operationTypes: string[] = OPERATION_TYPES;
+
+// Every collection that does not run on the generic record lifecycle names its
+// own states, and its first one is what a new record opens in — so a default can
+// never name a state its own dropdown does not offer.
+export function statusOptions(collection: CollectionKey): string[] {
+  return (RECORD_STATUS_OPTIONS as Record<string, string[]>)[collection] || GENERIC_RECORD_STATUSES;
+}
+export function statusDefault(collection: CollectionKey) {
+  return statusOptions(collection)[0];
+}
+
+// One class per reading state, so a queue card and a Zotero result can both
+// carry the state visually instead of leaving the word as the only sign of it.
+export function readingStatusClass(status: string) {
+  const known = (READING_QUEUE_STATUSES as string[]).find(
+    (option) => option.toLowerCase() === status.toLowerCase(),
+  );
+  return `is-${(known || "other").toLowerCase()}`;
+}
+
+// Matched without regard to case: a status is frontmatter a researcher can type
+// by hand in Obsidian, and "done" closes a record exactly as "Done" does.
+const closedStatuses = new Set(
+  CLOSED_RECORD_STATUSES.map((status: string) => status.toLowerCase()),
+);
+export const isOpen = (item: RecordItem) => !closedStatuses.has((item.status || "").toLowerCase());
 
 // The workbench knows the paper, its open gaps and its unresolved feedback; until
 // this sent all of it the model was reasoning from a project title alone.
@@ -119,8 +150,21 @@ export function recordContext(state: WorkbenchState, paperId = "") {
       ),
     ),
     list(
+      "READING QUEUE:",
+      state["reading-queue"]
+        .filter((item) => (item.status || "Queued") !== "Read")
+        .slice(0, 6)
+        .map(
+          (item) =>
+            `- [${item.status || "Queued"}] ${item.title}${item.year ? ` (${item.year})` : ""}${item.manuscriptId ? ` · ${item.manuscriptId}` : ""}`,
+        ),
+    ),
+    list(
       "OPEN COMMITMENTS:",
-      operations.map((item) => `- ${item.title}${item.dueDate ? ` · due ${item.dueDate}` : ""}`),
+      operations.map(
+        (item) =>
+          `- ${item.title}${item.type ? ` [${item.type}]` : ""}${item.dueDate ? ` · due ${item.dueDate}` : ""}`,
+      ),
     ),
     list(
       "RECENT RESEARCH LOG:",
@@ -149,15 +193,7 @@ export function contextPassages(state: WorkbenchState, paperId = "") {
   }));
 }
 
-export const manuscriptSections = [
-  "Unassigned",
-  "Introduction",
-  "Literature review",
-  "Methods",
-  "Results",
-  "Discussion",
-  "Conclusion",
-];
+export const manuscriptSections: string[] = MANUSCRIPT_SECTIONS;
 
 export function passageCitation(passage: ZoteroPassage) {
   const authors = passage.citationAuthors.length
@@ -190,7 +226,7 @@ export function suggestedPassageSection(passage: ZoteroPassage) {
   )
     return "Methods";
   if (
-    /\b(results?|significant|confidence interval|odds ratio|effect size|increased|decreased|associated with)\b|\b\d+(?:\.\d+)?%\b/.test(
+    /\b(results?|significant|confidence interval|odds ratio|effect size|increased|decreased|associated with)\b|\b\d+(?:\.\d+)?%/.test(
       text,
     )
   )
@@ -212,6 +248,32 @@ export function suggestedPassageSection(passage: ZoteroPassage) {
   )
     return "Introduction";
   return "Unassigned";
+}
+
+export type PassageSection = {
+  section: string;
+  heading: string;
+  source: "tag" | "pdf" | "text" | "none";
+};
+
+// The Bridge reports where a highlight physically sits; this decides what to
+// default the Section dropdown to. A section the researcher tagged themselves
+// wins, then the heading the highlight sits under, and only then the wording of
+// the highlight itself — which is also what places the ones the structure
+// cannot, since a highlight in the abstract or the reference list summarises the
+// whole paper rather than belonging to one of its sections.
+export function passageSection(passage: ZoteroPassage): PassageSection {
+  const heading = passage.sectionHeading || "";
+  if (passage.sectionSource === "tag" && passage.section)
+    return { section: passage.section, heading: "", source: "tag" };
+  if (passage.sectionSource === "pdf" && passage.section && passage.section !== "Unassigned")
+    return { section: passage.section, heading, source: "pdf" };
+  const guessed = suggestedPassageSection(passage);
+  return {
+    section: guessed,
+    heading,
+    source: guessed === "Unassigned" ? "none" : "text",
+  };
 }
 
 export type DataProps = {

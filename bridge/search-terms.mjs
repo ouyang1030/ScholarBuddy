@@ -65,4 +65,50 @@ export function expandTerms(terms, query = "", ceiling = 24) {
   return expanded;
 }
 
-export { SYNONYM_GROUPS };
+// Function words plus the vocabulary every paper uses about itself. A section
+// of a manuscript is mostly these, and without them a frequency ranking returns
+// "the study of these results" for every section of every paper.
+const STOPWORDS = new Set(
+  `the and for that with this was were are have has had not but from they their there here which who whom whose when where what while
+   into onto over under between among during after before above below than then them these those such been being does did doing
+   its his her our your you  she him himself herself itself themselves ourselves yourself
+   can could may might must shall should will would also both each every other more most some any all one two three
+   study studies research paper article manuscript section chapter draft write writing written
+   result results finding findings method methods data analysis analyses table figure appendix
+   show shows shown found using used use uses based following present presented report reported
+   significant significantly effect effects level levels group groups value values
+   however therefore thus moreover furthermore although though because since about across within without
+   aim aims objective objectives purpose approach overall general specific particular
+   participants subjects sample samples total mean means standard`
+    .split(/\s+/)
+    .filter(Boolean),
+);
+
+function countedTerms(text) {
+  const counts = new Map();
+  for (const raw of String(text || "")
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}_-]+/u)) {
+    // The same shape rule as the query tokenizer, and for the same reason: a
+    // three-letter cut would throw away GPS, RPE, HRV and ACL, which are the
+    // terms a sports-science section most needs to be searched on.
+    if (!(raw.length > 2 || (raw.length === 2 && /\p{Script=Han}/u.test(raw)))) continue;
+    if (STOPWORDS.has(raw)) continue;
+    counts.set(raw, (counts.get(raw) || 0) + 1);
+  }
+  return counts;
+}
+
+// The opening words of a manuscript section are its throat-clearing, not its
+// subject, so a long focus text is ranked by what recurs in it. Ties fall back
+// to the order the words appeared, which keeps a short text's own sequence.
+export function topicTerms(text, limit = 8) {
+  const counts = [...countedTerms(text)];
+  return counts
+    .map(([term, count], index) => ({ term, count, index }))
+    .sort((a, b) => b.count - a.count || a.index - b.index)
+    .slice(0, limit)
+    .map((item) => item.term);
+}
+
+export { SYNONYM_GROUPS, STOPWORDS };

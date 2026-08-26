@@ -1,7 +1,7 @@
 "use client";
 
 import { clampProgress } from "../../lib/format";
-import { quickActions } from "../../lib/workbench";
+import { isOpen, quickActions } from "../../lib/workbench";
 import type { DataProps, SubmissionAlert } from "../../lib/workbench";
 import type { RecordItem } from "../../types";
 import { LiveTimestamp } from "../LiveTimestamp";
@@ -71,9 +71,7 @@ export function Dashboard({
 }) {
   const project = state.projects.find((item) => item.active) || state.projects[0];
   const manuscript = paper || state.manuscripts[0];
-  const debts = state["research-debt"].filter(
-    (item) => !["Resolved", "Completed", "Archived"].includes(item.status || ""),
-  );
+  const debts = state["research-debt"].filter(isOpen);
   return (
     <>
       <section className="daily-intro">

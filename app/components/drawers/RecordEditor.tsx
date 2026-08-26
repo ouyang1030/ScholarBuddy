@@ -2,7 +2,13 @@
 
 import { useState } from "react";
 import { clampProgress } from "../../lib/format";
-import { collectionLabels, submissionStages } from "../../lib/workbench";
+import { CLOSED_RECORD_STATUSES } from "../../../shared/constants.mjs";
+import {
+  collectionLabels,
+  operationTypes,
+  statusDefault,
+  statusOptions,
+} from "../../lib/workbench";
 import type { CollectionKey, RecordItem, WorkbenchState } from "../../types";
 
 export type EditorState = { collection: CollectionKey; record?: Partial<RecordItem> } | null;
@@ -26,11 +32,17 @@ export function RecordEditor({
 }) {
   const isJournal = editor.collection === "journal";
   const isIdea = editor.collection === "ideas";
-  // A log entry has no status and no percentage, and an idea only has the three
-  // states its inbox uses. Neither should carry the generic record defaults into
-  // the vault, where they would show up as noise on every note.
+  const isReadingQueue = editor.collection === "reading-queue";
+  const isSubmission =
+    editor.collection === "submission-attempts" || editor.collection === "submission-events";
+  const showProgress = !isReadingQueue && !isSubmission && !isJournal && !isIdea;
+  // A log entry has no status and no percentage, an idea only has the three
+  // states its inbox uses, and a reading item is read rather than worked on.
+  // None should carry the generic record defaults into the vault, where they
+  // would show up as noise on every note.
   const [form, setForm] = useState<Partial<RecordItem>>({
-    ...(isJournal ? {} : { status: isIdea ? "Inbox" : "Active", progress: 0 }),
+    ...(isJournal ? {} : { status: statusDefault(editor.collection) }),
+    ...(showProgress ? { progress: 0 } : {}),
     ...editor.record,
   });
   const [saving, setSaving] = useState(false);
@@ -47,7 +59,8 @@ export function RecordEditor({
     setError("");
     try {
       const record: Partial<RecordItem> = { ...form, title: String(form.title).trim() };
-      if (isJournal || isIdea) delete record.progress;
+      // A percentage the form never showed is a value the researcher never set.
+      if (!showProgress) delete record.progress;
       else record.progress = clampProgress(form.progress);
       if (isJournal) delete record.status;
       await onSave(editor.collection, record);
@@ -72,11 +85,19 @@ export function RecordEditor({
       setSaving(false);
     }
   };
-  const isSubmission =
-    editor.collection === "submission-attempts" || editor.collection === "submission-events";
-  const showProgress =
-    editor.collection !== "reading-queue" && !isSubmission && !isJournal && !isIdea;
   const existing = Boolean(form.id);
+  const options = statusOptions(editor.collection);
+  // A status the list does not offer still has to be shown and still has to be
+  // changeable; left out, the select renders blank and the record looks empty.
+  const statusChoices =
+    form.status && !options.includes(form.status) ? [...options, form.status] : options;
+  // The operation vocabulary was rewritten, so a record filed under an older
+  // type has to keep offering it rather than reading as Unclassified while the
+  // board card beside it still shows the old label.
+  const typeChoices =
+    form.type && !operationTypes.includes(form.type)
+      ? [...operationTypes, form.type]
+      : operationTypes;
   // The paper link is an id the card views filter on, so it is always picked from
   // the known papers — a typed id silently detaches the record from its paper.
   const supportsPaperLink = [
@@ -125,45 +146,38 @@ export function RecordEditor({
             />
           </label>
           <label className="wide">
-            <span>Notes</span>
+            <span>
+              {editor.collection === "manuscripts"
+                ? "Manuscript text · use Markdown section headings"
+                : "Notes"}
+            </span>
             <textarea
               value={form.description || ""}
               onChange={(event) => set("description", event.target.value)}
+              placeholder={
+                editor.collection === "manuscripts"
+                  ? "## Introduction\n\n…\n\n## Methods\n\n…"
+                  : undefined
+              }
             />
           </label>
           {!isJournal && (
             <label>
               <span>Status</span>
               <select
-                value={form.status || (isSubmission ? "Preparing" : isIdea ? "Inbox" : "Active")}
+                value={form.status || statusDefault(editor.collection)}
                 onChange={(event) => {
                   const nextStatus = event.target.value;
-                  if (!isIdea && ["Completed", "Resolved", "Archived"].includes(nextStatus)) {
+                  if (showProgress && CLOSED_RECORD_STATUSES.includes(nextStatus)) {
                     setForm((current) => ({ ...current, status: nextStatus, progress: 100 }));
                   } else {
                     set("status", nextStatus);
                   }
                 }}
               >
-                {isSubmission ? (
-                  submissionStages.map((stage) => <option key={stage}>{stage}</option>)
-                ) : isIdea ? (
-                  <>
-                    <option>Inbox</option>
-                    <option>Promoted</option>
-                    <option>Dropped</option>
-                  </>
-                ) : (
-                  <>
-                    <option>Active</option>
-                    <option>Planned</option>
-                    <option>In progress</option>
-                    <option>Blocked</option>
-                    <option>Resolved</option>
-                    <option>Completed</option>
-                    <option>Archived</option>
-                  </>
-                )}
+                {statusChoices.map((status) => (
+                  <option key={status}>{status}</option>
+                ))}
               </select>
             </label>
           )}
@@ -507,14 +521,13 @@ export function RecordEditor({
               <label>
                 <span>Type</span>
                 <select
-                  value={form.type || "Submission"}
+                  value={form.type || ""}
                   onChange={(event) => set("type", event.target.value)}
                 >
-                  <option>Submission</option>
-                  <option>Supervision</option>
-                  <option>Commitment</option>
-                  <option>Meeting</option>
-                  <option>Deadline</option>
+                  <option value="">Unclassified</option>
+                  {typeChoices.map((type) => (
+                    <option key={type}>{type}</option>
+                  ))}
                 </select>
               </label>
               <label>

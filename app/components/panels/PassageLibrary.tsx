@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { bridgeFetch } from "../../lib/bridge-client";
-import { manuscriptSections, passageCitation, suggestedPassageSection } from "../../lib/workbench";
+import { manuscriptSections, passageCitation, passageSection } from "../../lib/workbench";
 import type { CollectionKey, RecordItem, WorkbenchState, ZoteroPassage } from "../../types";
 import { EmptyState, MetaPill } from "../primitives";
 
@@ -80,6 +80,7 @@ export function PassageLibrary({
       state.manuscripts[0]?.id ||
       "";
     const manuscript = state.manuscripts.find((item) => item.id === manuscriptId);
+    const auto = passageSection(passage);
     setNotice("");
     try {
       await saveRecord("passages", {
@@ -100,8 +101,17 @@ export function PassageLibrary({
         workbuddyKeywords: keywords[passage.key] ?? existing?.workbuddyKeywords ?? "",
         manuscriptId,
         manuscriptTitle: manuscript?.title || "",
-        manuscriptSection:
-          sections[passage.key] || existing?.manuscriptSection || suggestedPassageSection(passage),
+        manuscriptSection: sections[passage.key] || existing?.manuscriptSection || auto.section,
+        sectionSource: sections[passage.key]
+          ? "manual"
+          : existing?.manuscriptSection
+            ? // A record saved before sections had a source records none, and
+              // claiming "manual" would invent a decision nobody made.
+              existing.sectionSource || ""
+            : auto.source,
+        // Where the highlight physically sits is a fact about the PDF, so it is
+        // recorded even when the researcher files it under another section.
+        sectionHeading: auto.heading,
         status: existing?.status || "Linked",
         linkedAt: existing?.linkedAt || new Date().toISOString(),
       });
@@ -133,7 +143,7 @@ export function PassageLibrary({
     <section className="passage-library">
       <div className="passage-toolbar card">
         <div>
-          <span className="label">ZOTERO HIGHLIGHTS / LIVE</span>
+          <span className="label">ZOTERO HIGHLIGHTS</span>
           <h2>Passage Library</h2>
         </div>
         <button className="quiet-button passage-refresh" onClick={load}>
@@ -215,8 +225,20 @@ export function PassageLibrary({
               paper?.id ||
               state.manuscripts[0]?.id ||
               "";
-            const selectedSection =
-              sections[passage.key] || saved?.manuscriptSection || suggestedPassageSection(passage);
+            const auto = passageSection(passage);
+            const chosen = sections[passage.key] || saved?.manuscriptSection || "";
+            const selectedSection = chosen || auto.section;
+            // Saying where the section came from is the difference between a
+            // default worth accepting and one worth checking by hand.
+            const sectionOrigin = chosen
+              ? "your choice"
+              : auto.source === "pdf"
+                ? `read from “${auto.heading.slice(0, 32)}”`
+                : auto.source === "tag"
+                  ? "from a Zotero tag"
+                  : auto.source === "text"
+                    ? "guessed from wording"
+                    : "not detected";
             return (
               <article
                 className="passage-card card"
@@ -226,7 +248,12 @@ export function PassageLibrary({
                 <header>
                   <span className="passage-year-block">
                     <b>{passage.year || "—"}</b>
-                    <em className="passage-list-section">{selectedSection}</em>
+                    <em
+                      className={`passage-list-section${auto.source === "pdf" && !chosen ? " located" : ""}`}
+                      title={`Section · ${sectionOrigin}`}
+                    >
+                      {selectedSection}
+                    </em>
                   </span>
                   <div>
                     <strong>{passage.sourceTitle}</strong>
@@ -272,7 +299,7 @@ export function PassageLibrary({
                     </select>
                   </label>
                   <label>
-                    <span>Section · auto suggested</span>
+                    <span>Section · {sectionOrigin}</span>
                     <select
                       value={selectedSection}
                       onChange={(event) =>

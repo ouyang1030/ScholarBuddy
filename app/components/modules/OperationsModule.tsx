@@ -2,21 +2,23 @@
 
 import { useState } from "react";
 import { clampProgress, shortDate } from "../../lib/format";
-import type { DataProps } from "../../lib/workbench";
+import { isOpen, statusDefault, type DataProps } from "../../lib/workbench";
 import type { RecordItem } from "../../types";
 import { EmptyState, MetaPill } from "../primitives";
 import { RecordModule } from "./RecordModule";
 
-const FINISHED_STATUSES = new Set(["completed", "resolved", "archived"]);
+const OPEN_STATUS = statusDefault("operations");
+// A record written before operations had their own vocabulary still carries a
+// generic status, so what closes one is read from the shared list rather than
+// named here.
+const isFinished = (item: RecordItem) => !isOpen({ ...item, status: item.status || OPEN_STATUS });
 
 function sortOperations(operations: RecordItem[]): RecordItem[] {
   return [...operations].sort((a, b) => {
-    const aStatus = (a.status || "Active").toLowerCase();
-    const bStatus = (b.status || "Active").toLowerCase();
-    const aDone = FINISHED_STATUSES.has(aStatus);
-    const bDone = FINISHED_STATUSES.has(bStatus);
+    const aDone = isFinished(a);
+    const bDone = isFinished(b);
 
-    // 1. Active / In progress / Blocked / Planned come before Completed / Resolved / Archived
+    // 1. Planned / In progress / Blocked come before Done / Archived
     if (aDone !== bDone) return aDone ? 1 : -1;
 
     // 2. Both incomplete: order by dueDate ascending (earlier deadlines first)
@@ -36,7 +38,18 @@ function OperationsBoard({
   openEditor,
   paper,
 }: Pick<DataProps, "state" | "openEditor"> & { paper?: RecordItem }) {
-  const operations = sortOperations(state.operations);
+  const [typeFilter, setTypeFilter] = useState("");
+  // Only the kinds of work actually on the board, so the filter never offers a
+  // row that leads to an empty screen.
+  const types = [
+    ...new Set(state.operations.map((item) => item.type).filter((type) => Boolean(type))),
+  ].sort() as string[];
+  // Retyping the last operation of a kind hides the filter bar; without this the
+  // dropped filter would keep hiding records with no control left to clear it.
+  const active = typeFilter && types.includes(typeFilter) ? typeFilter : "";
+  const operations = sortOperations(
+    active ? state.operations.filter((item) => item.type === active) : state.operations,
+  );
 
   return (
     <>
@@ -46,7 +59,7 @@ function OperationsBoard({
           <h1>
             PhD <em>operations.</em>
           </h1>
-          <p>Track supervision, meetings, submissions, and administrative deadlines.</p>
+          <p>Track supervision, teaching, ethics, funding, and administrative deadlines.</p>
         </div>
         <button
           className="primary-button"
@@ -67,13 +80,28 @@ function OperationsBoard({
           New operation <b>+</b>
         </button>
       </section>
+      {types.length > 1 && (
+        <div className="record-filters" aria-label="Filter operations by type">
+          <button className={active ? "" : "active"} onClick={() => setTypeFilter("")}>
+            All
+          </button>
+          {types.map((type) => (
+            <button
+              key={type}
+              className={active === type ? "active" : ""}
+              onClick={() => setTypeFilter(type)}
+            >
+              {type}
+            </button>
+          ))}
+        </div>
+      )}
       <section className="record-board">
         {!operations.length ? (
           <EmptyState title="No operations yet" />
         ) : (
           operations.map((item) => {
-            const statusKey = (item.status || "Active").toLowerCase();
-            const isCompleted = FINISHED_STATUSES.has(statusKey);
+            const isCompleted = isFinished(item);
             const hasProgress =
               !isCompleted && item.progress !== undefined && Number(item.progress) > 0;
 
@@ -98,7 +126,7 @@ function OperationsBoard({
                               : "blue"
                       }
                     >
-                      {item.status || "Active"}
+                      {item.status || OPEN_STATUS}
                     </MetaPill>
                   </div>
                   {hasProgress && (
@@ -109,8 +137,14 @@ function OperationsBoard({
                 <h2>{item.title}</h2>
                 {item.description && <p>{item.description}</p>}
 
-                {(item.manuscriptTitle || item.projectTitle) && (
+                {(item.type || item.manuscriptTitle || item.projectTitle) && (
                   <div className="record-meta-vertical">
+                    {item.type && (
+                      <div className="record-meta-item">
+                        <span className="meta-tag">Type</span>
+                        <strong>{item.type}</strong>
+                      </div>
+                    )}
                     {item.manuscriptTitle && (
                       <div className="record-meta-item">
                         <span className="meta-tag">Paper</span>

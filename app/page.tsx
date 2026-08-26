@@ -2,9 +2,11 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { bridgeFetch, bridgeHealthFetch, exchangeBridgePairingCode } from "./lib/bridge-client";
+import { compareRecords } from "../shared/records.mjs";
 import {
   collectionLabels,
   emptyState,
+  isOpen,
   navItems,
   quickActions,
   submissionAlertKey,
@@ -331,9 +333,13 @@ export default function Home() {
       if (!response.ok) throw new Error(body.error || "Record could not be saved.");
       const saved = body.record as RecordItem;
       setState((current) => {
-        const records = current[collection].some((item) => item.id === saved.id)
-          ? current[collection].map((item) => (item.id === saved.id ? saved : item))
-          : [saved, ...current[collection]];
+        // Sorted the way the Bridge sorts it, so a saved record takes its place
+        // now rather than jumping there on the next reload.
+        const records = (
+          current[collection].some((item) => item.id === saved.id)
+            ? current[collection].map((item) => (item.id === saved.id ? saved : item))
+            : [saved, ...current[collection]]
+        ).sort((a, b) => compareRecords(collection, a, b));
         return {
           ...current,
           [collection]:
@@ -482,9 +488,7 @@ export default function Home() {
     state["research-debt"].filter((item) => item.status !== "Resolved").length;
   const badges: Partial<Record<ModuleKey, number>> = {
     manuscript: manuscriptAttention || state.manuscripts.length,
-    operations: state.operations.filter(
-      (item) => !["Resolved", "Completed", "Archived"].includes(item.status || ""),
-    ).length,
+    operations: state.operations.filter(isOpen).length,
     projects: state.projects.length,
     library: state["reading-queue"].length,
   };
@@ -608,7 +612,7 @@ export default function Home() {
               <span className="context-diamond">◇</span>
               <span>
                 <small>CONTEXT</small>
-                <strong>{Object.values(state).flat().length} real records</strong>
+                <strong>{Object.values(state).flat().length} records</strong>
               </span>
             </button>
             <button className="profile-button" onClick={() => setConnectionsOpen(true)}>

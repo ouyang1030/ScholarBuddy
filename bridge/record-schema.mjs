@@ -36,6 +36,8 @@ const stringFields = new Set([
   "projectId",
   "projectTitle",
   "manuscriptSection",
+  "sectionSource",
+  "sectionHeading",
   "reviewRound",
   "reviewSource",
   "resolution",

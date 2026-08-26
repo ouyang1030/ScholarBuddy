@@ -1,7 +1,7 @@
 "use client";
 
 import { clampProgress, shortDate } from "../../lib/format";
-import { collectionLabels } from "../../lib/workbench";
+import { collectionLabels, isOpen } from "../../lib/workbench";
 import type { CollectionKey, RecordItem, WorkbenchState } from "../../types";
 import { EmptyState, MetaPill } from "../primitives";
 
@@ -50,14 +50,15 @@ export function RecordModule({
                 {(item.status || collection !== "journal") && (
                   <MetaPill
                     tone={
-                      item.status === "Completed" ||
-                      item.status === "Resolved" ||
-                      item.status === "Promoted"
-                        ? "lime"
-                        : item.status === "Blocked"
-                          ? "orange"
-                          : item.status === "Dropped"
-                            ? "neutral"
+                      // Read from the shared list rather than named here, so a
+                      // collection that gains a finished state does not keep
+                      // drawing it as work still in flight.
+                      item.status === "Dropped"
+                        ? "neutral"
+                        : item.status === "Promoted" || (item.status && !isOpen(item))
+                          ? "lime"
+                          : item.status === "Blocked"
+                            ? "orange"
                             : "blue"
                     }
                   >

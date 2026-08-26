@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { bridgeFetch } from "../../lib/bridge-client";
+import { readingStatusClass } from "../../lib/workbench";
 import type { CollectionKey, RecordItem, WorkbenchState, ZoteroItem } from "../../types";
 import { EmptyState, SourceDot } from "../primitives";
 
@@ -73,12 +74,18 @@ export function LiteraturePanel({
     }, 0);
     return () => window.clearTimeout(timer);
   }, [search, seed]);
-  const queued = new Set(state["reading-queue"].map((item) => item.zoteroKey));
+  // The queue is what says how far a paper has been read, so this reports the
+  // state the record is actually in rather than the fact that it was once added.
+  const queuedStatus = new Map(
+    state["reading-queue"]
+      .filter((item) => item.zoteroKey)
+      .map((item) => [item.zoteroKey as string, item.status || "Queued"]),
+  );
   return (
     <article className={`${compact ? "literature-radar" : "literature-card"} card real-panel`}>
       <div className="section-heading">
         <div>
-          <span className="label">ZOTERO / LIVE LIBRARY</span>
+          <span className="label">LIVE LIBRARY</span>
         </div>
         <span className="source-chip">
           <SourceDot />
@@ -137,11 +144,15 @@ export function LiteraturePanel({
                   Open
                 </button>
                 <button
-                  className={queued.has(item.key) ? "queued" : ""}
-                  disabled={queued.has(item.key)}
+                  className={
+                    queuedStatus.has(item.key)
+                      ? `queued ${readingStatusClass(queuedStatus.get(item.key) || "")}`
+                      : ""
+                  }
+                  disabled={queuedStatus.has(item.key)}
                   onClick={() => void queue(item)}
                 >
-                  {queued.has(item.key) ? "Queued" : paper ? "+ Attach" : "+ Queue"}
+                  {queuedStatus.get(item.key) || (paper ? "+ Attach" : "+ Queue")}
                 </button>
               </span>
             </article>

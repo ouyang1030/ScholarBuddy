@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import type { DataProps } from "../../lib/workbench";
+import { readingStatusClass, type DataProps } from "../../lib/workbench";
 import type { RecordItem } from "../../types";
 import { EmptyState } from "../primitives";
 import { PanelBoundary } from "../PanelBoundary";
@@ -89,24 +89,27 @@ export function LibraryModule({
           {!queued.length ? (
             <EmptyState title="No saved papers yet" />
           ) : (
-            <div className="real-record-list">
-              {queued.map((item) => (
-                <button key={item.id} onClick={() => openEditor("reading-queue", item)}>
-                  <span className="zotero-year">{item.year || "—"}</span>
-                  <span>
-                    <strong>{item.title}</strong>
-                    <small>
-                      {[
-                        item.manuscriptTitle,
-                        item.creators?.join(", ") || item.doi || "Saved literature",
-                      ]
-                        .filter(Boolean)
-                        .join(" · ")}
-                    </small>
-                  </span>
-                  <b>{item.status || "Queued"}</b>
-                </button>
-              ))}
+            <div className="reading-queue-list">
+              {queued.map((item) => {
+                const status = item.status || "Queued";
+                return (
+                  <button
+                    key={item.id}
+                    className={`reading-queue-item ${readingStatusClass(status)}`}
+                    onClick={() => openEditor("reading-queue", item)}
+                  >
+                    <span className="reading-queue-year">{item.year || "—"}</span>
+                    <span className="reading-queue-body">
+                      <strong>{item.title}</strong>
+                      <small>{item.creators?.join(", ") || item.doi || "Saved literature"}</small>
+                      {item.manuscriptTitle && (
+                        <em className="reading-queue-paper">↳ {item.manuscriptTitle}</em>
+                      )}
+                    </span>
+                    <span className="reading-status">{status}</span>
+                  </button>
+                );
+              })}
             </div>
           )}
         </section>

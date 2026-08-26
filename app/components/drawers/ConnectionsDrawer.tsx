@@ -4,6 +4,7 @@ import { useState } from "react";
 import { bridgeBaseUrl, bridgeSetupUrl, exchangeBridgePairingCode } from "../../lib/bridge-client";
 import { aiProviders } from "../../lib/workbench";
 import type { BridgeIssue, BridgeStatus } from "../../types";
+import { BrandLogo } from "../BrandLogo";
 
 export function ConnectionsDrawer({
   status,
@@ -74,7 +75,7 @@ export function ConnectionsDrawer({
     const providerStatus = status?.[item.id];
     return (
       <article key={item.id}>
-        <span className={`connection-logo ${item.id}`}>{item.short}</span>
+        <BrandLogo brand={item.id} className="connection-logo" />
         <div>
           <strong>{item.name} API</strong>
           <small>{providerStatus?.model || item.fallbackModel}</small>
@@ -168,7 +169,7 @@ export function ConnectionsDrawer({
         <div className="connection-list">
           {aiConnections}
           <article>
-            <span className="connection-logo calendar">C</span>
+            <BrandLogo brand="calendar" className="connection-logo" />
             <div>
               <strong>macOS Calendar</strong>
               <small>Today · read + write</small>
@@ -176,7 +177,7 @@ export function ConnectionsDrawer({
             {connection(status?.calendar.connected)}
           </article>
           <article>
-            <span className="connection-logo zotero">Z</span>
+            <BrandLogo brand="zotero" className="connection-logo" />
             <div>
               <strong>Zotero Desktop</strong>
               <small>{status?.zotero.version || "Local API"}</small>
@@ -184,7 +185,7 @@ export function ConnectionsDrawer({
             {connection(status?.zotero.connected)}
           </article>
           <article>
-            <span className="connection-logo obsidian">O</span>
+            <BrandLogo brand="obsidian" className="connection-logo" />
             <div>
               <strong>Obsidian · {status?.obsidian.vault || "Vault"}</strong>
               <small>Markdown records</small>

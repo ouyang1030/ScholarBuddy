@@ -57,6 +57,8 @@ export type RecordItem = {
   projectId?: string;
   projectTitle?: string;
   manuscriptSection?: string;
+  sectionSource?: string;
+  sectionHeading?: string;
   reviewRound?: string;
   reviewSource?: string;
   resolution?: string;
@@ -112,6 +114,7 @@ export type ZoteroItem = {
   doi: string;
   url: string;
   excerpt: string;
+  evidenceType?: "full_text" | "abstract" | "metadata";
 };
 export type ZoteroPassage = {
   key: string;
@@ -120,6 +123,10 @@ export type ZoteroPassage = {
   text: string;
   comment: string;
   pageLabel: string;
+  pageIndex: number;
+  section: string;
+  sectionHeading: string;
+  sectionSource: "tag" | "pdf" | "none";
   tags: string[];
   color: string;
   sourceTitle: string;
@@ -163,7 +170,7 @@ export type WorkflowResult = {
   usage?: { total_tokens?: number } | null;
   sources: { zotero: ZoteroItem[]; obsidian: { title: string; path: string; snippet: string }[] };
   retrieval: Record<
-    "zotero" | "obsidian",
+    "zotero" | "obsidian" | "calendar",
     { selected: boolean; status: "disabled" | "ok" | "no_match" | "error"; error: string | null }
   >;
   manifest: {
@@ -176,6 +183,7 @@ export type WorkflowResult = {
       doi: string;
       url: string;
       excerpt: string;
+      evidenceType?: "full_text" | "abstract";
       query: string;
       retrievedAt: string;
     }[];
@@ -217,7 +225,7 @@ export type WorkflowResult = {
 export type WorkflowAction = {
   id: string;
   title: string;
-  kind: "task" | "gap";
+  kind: "task" | "gap" | "review";
   detail: string;
   severity: string;
   dueDate: string;

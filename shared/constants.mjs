@@ -33,6 +33,16 @@ export const COLLECTION_LABELS = {
   "submission-events": "Submission event",
 };
 
+export const MANUSCRIPT_SECTIONS = [
+  "Unassigned",
+  "Introduction",
+  "Literature review",
+  "Methods",
+  "Results",
+  "Discussion",
+  "Conclusion",
+];
+
 export const RECORD_ID_PREFIXES = {
   projects: "PRJ",
   "research-questions": "RQ",
@@ -48,6 +58,60 @@ export const RECORD_ID_PREFIXES = {
   "submission-attempts": "SUB",
   "submission-events": "SEV",
 };
+
+// A reading item is queued, being read, or read. A new item opens in the first
+// of these, which is why the list stays in that order.
+export const READING_QUEUE_STATUSES = ["Queued", "Reading", "Read"];
+
+// The queue is not read in the order the states are offered in: what is being
+// read now belongs at the top, what is finished belongs at the bottom, and "*"
+// is where a status this vocabulary does not know (one typed by hand in
+// Obsidian, or left over from an older list) sits — above the finished ones,
+// because nothing says it is finished.
+export const READING_QUEUE_STATUS_ORDER = ["Reading", "Queued", "*", "Read"];
+
+// One state per outcome the operations board actually draws. The generic list
+// offered seven, of which "Active" and "In progress" rendered identically and
+// "Resolved", "Completed" and "Archived" all counted as finished.
+export const OPERATION_STATUSES = ["Planned", "In progress", "Blocked", "Done", "Archived"];
+
+// Every state that closes a record, across every vocabulary. Attention counts
+// and the model's picture of open work both read this, so a new finished state
+// has to be named here or finished work keeps being reported as outstanding.
+export const CLOSED_RECORD_STATUSES = [
+  "Done",
+  "Read",
+  "Resolved",
+  "Completed",
+  "Archived",
+  "Dropped",
+];
+
+// One axis: what the commitment is about. Whether it has a deadline is the due
+// date's job, and a submission is tracked as a submission attempt, not here.
+export const OPERATION_TYPES = [
+  "Supervision",
+  "Teaching",
+  "Ethics & data",
+  "Funding",
+  "Conference",
+  "Service",
+  "Admin",
+];
+
+export const RECORD_STATUS_ORDER = {
+  "reading-queue": READING_QUEUE_STATUS_ORDER,
+};
+
+export const GENERIC_RECORD_STATUSES = [
+  "Active",
+  "Planned",
+  "In progress",
+  "Blocked",
+  "Resolved",
+  "Completed",
+  "Archived",
+];
 
 export const SUBMISSION_STAGES = [
   "Preparing",
@@ -68,6 +132,16 @@ export const SUBMISSION_STAGES = [
 // Stages that change what the record means, so email detection never applies
 // them without an explicit confirmation.
 export const CONSEQUENTIAL_SUBMISSION_STAGES = ["Accepted", "Published", "Rejected", "Withdrawn"];
+
+// A collection with its own lifecycle names it here; the first entry is the
+// state a new record opens in, so a default can never drift from the list.
+export const RECORD_STATUS_OPTIONS = {
+  ideas: ["Inbox", "Promoted", "Dropped"],
+  "reading-queue": READING_QUEUE_STATUSES,
+  operations: OPERATION_STATUSES,
+  "submission-attempts": SUBMISSION_STAGES,
+  "submission-events": SUBMISSION_STAGES,
+};
 
 export const AI_PROVIDER_DEFINITIONS = [
   {

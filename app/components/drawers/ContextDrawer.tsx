@@ -37,11 +37,11 @@ export function ContextDrawer({
         </div>
         <div className="drawer-title">
           <span>OBSIDIAN + ZOTERO</span>
-          <h2>What ScholarBuddy can use now</h2>
-          <p>
-            No completeness score is invented. These are the actual connected sources and current
-            records.
-          </p>
+          <h2>
+            What ScholarBuddy
+            <br />
+            can use now
+          </h2>
         </div>
         <div className="context-groups">
           <section>

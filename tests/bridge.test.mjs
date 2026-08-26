@@ -7,17 +7,23 @@ import test from "node:test";
 import {
   addSubmissionEvent,
   authorize,
+  calendarContext,
   deleteRecord,
+  detectPassageSection,
   detectSubmissionStatus,
   evidenceManifest,
+  fulltextIndex,
   handle,
   invalidReferenceIds,
   issuePairingCode,
+  itemKeywords,
   modelConfig,
   modelRequest,
   modelResponse,
   normalizeZoteroPassage,
+  outlineFromFulltext,
   parseRecord,
+  relevantFulltextExcerpt,
   saveRecord,
   searchObsidian,
   streamDelta,
@@ -25,10 +31,24 @@ import {
   syncSubmissionEmails,
   zoteroItemsByKey,
 } from "../bridge/server.mjs";
+import { compareRecords } from "../shared/records.mjs";
 import { readEventStream } from "../shared/sse.mjs";
+import {
+  CLOSED_RECORD_STATUSES,
+  GENERIC_RECORD_STATUSES,
+  RECORD_STATUS_OPTIONS,
+} from "../shared/constants.mjs";
 import { parseActions, systemPrompt } from "../bridge/prompts.mjs";
+import { topicTerms } from "../bridge/search-terms.mjs";
 import { parseEnv, updateLocalConfig } from "../bridge/local-settings.mjs";
 import { AI_PROVIDER_DEFINITIONS } from "../shared/constants.mjs";
+import {
+  manuscriptSectionEntries,
+  manuscriptSectionText,
+  replaceManuscriptSection,
+  sectionBody,
+} from "../shared/manuscript-text.mjs";
+import { WORKFLOW_CONTRACTS, workflowContract } from "../shared/workflows.mjs";
 import { zoteroPassageUrl } from "../shared/zotero.mjs";
 
 const allowedOrigin = "https://workbench.example";
@@ -39,6 +59,11 @@ function config(vault) {
     WORKBUDDY_ORIGINS: allowedOrigin,
     OBSIDIAN_VAULT_PATH: vault,
     _bridgeToken: bridgeToken,
+    // The request window and the token budget are process-wide, so a suite with
+    // more AI tests than the production ceiling would fail whichever ones
+    // happened to run last. The limiter is tested below with its own numbers.
+    WORKBUDDY_AI_REQUESTS_PER_10_MIN: "1000",
+    WORKBUDDY_AI_DAILY_TOKENS: "10000000",
   };
 }
 
@@ -229,6 +254,7 @@ test("AI workflow stops before model execution when a selected source fails", as
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           provider: "deepseek",
+          command: "@ask-knowledge",
           input: "ACL injury",
           sources: { zotero: true, obsidian: false, kbase: false },
         }),
@@ -251,6 +277,7 @@ test("AI workflow rejects an unknown provider before retrieving local sources", 
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         provider: "typo-provider",
+        command: "@ask-knowledge",
         input: "ACL injury",
         sources: { zotero: true, obsidian: true, kbase: true },
       }),
@@ -261,6 +288,29 @@ test("AI workflow rejects an unknown provider before retrieving local sources", 
     responsePromise,
     (error) => error.status === 422 && error.code === "provider_invalid",
   );
+});
+
+test("the daily token budget refuses a run before it reaches a provider", async () => {
+  const response = await handle(
+    request("/ai/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        provider: "deepseek",
+        command: "@ask-knowledge",
+        input: "ACL injury",
+        sources: { zotero: false, obsidian: false, kbase: false },
+      }),
+    }),
+    {
+      ...config("/tmp/unused"),
+      DEEPSEEK_API_KEY: "must-not-be-used",
+      // Below one reservation, so the budget is spent whatever else has run.
+      WORKBUDDY_AI_DAILY_TOKENS: "1000",
+    },
+  );
+  assert.equal(response.status, 429);
+  assert.equal((await response.json()).code, "ai_limit");
 });
 
 test("health is lightweight and detailed integration checks use status", async () => {
@@ -584,6 +634,78 @@ test("citation validation identifies references missing from the evidence manife
   ]);
 });
 
+test("calendar context carries the time and the title, and nothing else", () => {
+  // The bridge reports UTC, so the fixtures are built from local wall-clock
+  // times: the assertions then hold in any zone the workbench runs in.
+  const events = [
+    {
+      id: "B",
+      title: "Cafe Cursor Vienna",
+      start: new Date(2026, 7, 29, 9, 0).toISOString(),
+      end: new Date(2026, 7, 29, 10, 30).toISOString(),
+      allDay: false,
+      location: "Vienna, Stephansplatz 1",
+      notes: "Private note that must not leave the machine",
+      calendar: "工作",
+    },
+    {
+      id: "A",
+      title: "Data collection at the club",
+      start: new Date(2026, 7, 27).toISOString(),
+      end: new Date(2026, 7, 28).toISOString(),
+      allDay: true,
+    },
+  ];
+  const context = calendarContext(events);
+  assert.deepEqual(context, [
+    { when: "2026-08-27 (all day)", title: "Data collection at the club" },
+    { when: "2026-08-29 09:00–10:30", title: "Cafe Cursor Vienna" },
+  ]);
+  const serialized = JSON.stringify(context);
+  for (const leaked of ["Stephansplatz", "Private note", "工作", "B"])
+    assert.doesNotMatch(serialized, new RegExp(leaked), `${leaked} reached the prompt`);
+  assert.deepEqual(calendarContext(undefined), []);
+  // An event the bridge could not date is dropped rather than sent undated.
+  assert.deepEqual(calendarContext([{ title: "Broken", start: "not a date" }]), []);
+  assert.equal(
+    calendarContext(
+      Array.from({ length: 40 }, (_, index) => ({
+        title: "x",
+        start: new Date(2026, 7, 27, 8, index).toISOString(),
+        allDay: true,
+      })),
+    ).length,
+    20,
+  );
+});
+
+test("Zotero tags become subject keywords without the workflow markers", () => {
+  assert.deepEqual(
+    itemKeywords([{ tag: "/done" }, { tag: "⭐⭐⭐⭐" }, { tag: "⛔ No DOI found" }]),
+    [],
+  );
+  // A bilingual tag repeats the English term after a run of spaces, and the
+  // term itself is usually filed separately as well.
+  assert.deepEqual(
+    itemKeywords([
+      { tag: "analytics" },
+      { tag: "analytics\u00a0\u00a0分析/数据分析" },
+      { tag: "Analytics" },
+      { tag: "Hawk-Eye" },
+    ]),
+    ["analytics", "Hawk-Eye"],
+  );
+  // \w is ASCII-only in JavaScript, so a keyword in any other script has to be
+  // matched by a Unicode property escape or it is dropped as a symbol.
+  assert.deepEqual(itemKeywords([{ tag: "Übertraining" }, { tag: "足球" }, { tag: "Éire" }]), [
+    "Übertraining",
+    "足球",
+    "Éire",
+  ]);
+  assert.equal(itemKeywords(Array.from({ length: 20 }, (_, i) => `term${i}`)).length, 8);
+  assert.deepEqual(itemKeywords(undefined), []);
+});
+
 test("only exact excerpts receive citable evidence IDs", () => {
   const manifest = evidenceManifest({
     query: "sprint effect",
@@ -645,6 +767,49 @@ test("the example Gemini configuration matches the shared provider defaults", as
   assert.equal(example.GEMINI_BASE_URL, gemini.defaultBase);
 });
 
+test("a note's prose never files it, and an unlocatable annotation never throws", () => {
+  const pages = ["Introduction\nOpening prose.", "Methods\nParticipants were recruited here."];
+  const fulltext = fulltextIndex(pages);
+  const annotation = (extra) => ({
+    data: {
+      key: "ANN1",
+      parentItem: "PDF1",
+      annotationText: "A useful result.",
+      annotationSortIndex: "00001|000018|00292",
+      ...extra,
+    },
+  });
+  // The comment mentions results; the highlight still sits under Methods.
+  const commented = normalizeZoteroPassage(
+    annotation({ annotationComment: "compare to our results" }),
+    null,
+    null,
+    fulltext,
+  );
+  assert.equal(commented.section, "Methods");
+  assert.equal(commented.sectionSource, "pdf");
+  // A tag that is the section name, however, is a filing decision.
+  const filed = normalizeZoteroPassage(
+    annotation({ tags: [{ tag: "discussion" }] }),
+    null,
+    null,
+    fulltext,
+  );
+  assert.equal(filed.section, "Discussion");
+  assert.equal(filed.sectionSource, "tag");
+  // A tag that merely contains the word is not.
+  const mentioned = normalizeZoteroPassage(
+    annotation({ tags: [{ tag: "results of the pilot" }] }),
+    null,
+    null,
+    fulltext,
+  );
+  assert.equal(mentioned.sectionSource, "pdf");
+  // A sort index that names no page must not reach the page array.
+  assert.equal(detectPassageSection(fulltext, Number.NaN, 5), null);
+  assert.equal(detectPassageSection(fulltext, 0, Number.NaN), null);
+});
+
 test("Zotero annotations become source-aware passages without changing the highlight", () => {
   const passage = normalizeZoteroPassage(
     {
@@ -676,6 +841,143 @@ test("Zotero annotations become source-aware passages without changing the highl
   assert.deepEqual(passage.citationAuthors, ["Lovelace"]);
   assert.deepEqual(passage.tags, ["validity"]);
   assert.match(passage.url, /^zotero:\/\/open-pdf\/library\/items\/PDF1\?/);
+});
+
+test("every vocabulary's finished states are recognised as closed work", () => {
+  // Attention badges and the model's OPEN COMMITMENTS block both filter on this
+  // list. A vocabulary that adds a finished state without naming it here keeps
+  // reporting completed work as outstanding.
+  for (const finished of ["Done", "Read", "Resolved", "Completed", "Archived"])
+    assert.ok(CLOSED_RECORD_STATUSES.includes(finished), `${finished} is not treated as closed`);
+  for (const open of ["Planned", "In progress", "Blocked", "Queued", "Reading", "Active"])
+    assert.ok(!CLOSED_RECORD_STATUSES.includes(open), `${open} is wrongly treated as closed`);
+});
+
+test("a collection's status list opens on its own first state and never repeats one", () => {
+  for (const [collection, statuses] of [
+    ...Object.entries(RECORD_STATUS_OPTIONS),
+    ["generic", GENERIC_RECORD_STATUSES],
+  ]) {
+    assert.ok(statuses.length, `${collection} has no statuses`);
+    assert.equal(new Set(statuses).size, statuses.length, `${collection} repeats a status`);
+    assert.equal(typeof statuses[0], "string");
+  }
+  // The editor defaults a new record to the first entry, so these are the states
+  // records actually open in.
+  assert.equal(RECORD_STATUS_OPTIONS["reading-queue"][0], "Queued");
+  assert.equal(RECORD_STATUS_OPTIONS.operations[0], "Planned");
+  assert.equal(GENERIC_RECORD_STATUSES[0], "Active");
+});
+
+test("the reading queue puts what is being read on top and what is read at the bottom", () => {
+  const queue = [
+    { id: "a", title: "Finished paper", status: "Read", updatedAt: "2026-08-26T12:00:00Z" },
+    { id: "b", title: "Older queued paper", status: "Queued", updatedAt: "2026-08-20T09:00:00Z" },
+    { id: "c", title: "Open paper", status: "Reading", updatedAt: "2026-08-25T09:00:00Z" },
+    { id: "d", title: "Just attached", status: "Queued", updatedAt: "2026-08-26T18:00:00Z" },
+    // A record saved before the queue had its own states, or one whose status was
+    // typed by hand in Obsidian, sits below what is queued and above what is
+    // finished — nothing about it says it has been read.
+    { id: "e", title: "Legacy paper", status: "Active", updatedAt: "2026-08-26T20:00:00Z" },
+    // No status at all is the state a new item opens in.
+    { id: "f", title: "Statusless paper", updatedAt: "2026-08-21T09:00:00Z" },
+  ];
+  assert.deepEqual(
+    [...queue].sort((a, b) => compareRecords("reading-queue", a, b)).map((item) => item.id),
+    ["c", "d", "f", "b", "e", "a"],
+  );
+  // Every other collection keeps the plain most-recently-changed-first order.
+  assert.deepEqual(
+    [...queue].sort((a, b) => compareRecords("manuscripts", a, b)).map((item) => item.id),
+    ["e", "d", "a", "c", "f", "b"],
+  );
+});
+
+test("the full-text outline drops running heads and contents entries", () => {
+  const pages = [
+    ["Contents", "1 Introduction 1", "2 Related Work 6", "3 Methods 14", "4 Discussion 28"].join(
+      "\n",
+    ),
+    ["CHAPTER 1. INTRODUCTION 2", "1 Introduction", "Some opening prose."].join("\n"),
+    ["CHAPTER 1. INTRODUCTION 3", "More prose."].join("\n"),
+    ["CHAPTER 1. INTRODUCTION 4", "Still more prose."].join("\n"),
+    ["3 Methods", "3.2 Summary of findings", "Results of the model were compared"].join("\n"),
+  ];
+  const outline = outlineFromFulltext(pages);
+  assert.deepEqual(
+    outline.map((entry) => [entry.pageIndex, entry.heading, entry.section]),
+    [
+      [1, "1 Introduction", "Introduction"],
+      [4, "3 Methods", "Methods"],
+    ],
+  );
+});
+
+test("a highlight is placed by the heading it sits under, on its page or an earlier one", () => {
+  const pages = [
+    "Introduction\nOpening prose that runs on.\nMethods\nParticipants were recruited.",
+    "Prose continuing the method.\nResults\nThe effect was large.",
+  ];
+  const index = fulltextIndex(pages);
+  const at = (page, text) => {
+    const offset = pages[page].indexOf(text);
+    return pages[page].slice(0, offset).replace(/\s/g, "").length;
+  };
+  assert.equal(detectPassageSection(index, 0, at(0, "Opening")).section, "Introduction");
+  assert.equal(detectPassageSection(index, 0, at(0, "Participants")).section, "Methods");
+  // Nothing on this page opens a section, so the one from the page before holds.
+  assert.equal(detectPassageSection(index, 1, at(1, "Prose")).section, "Methods");
+  assert.equal(detectPassageSection(index, 1, at(1, "The effect")).section, "Results");
+  assert.equal(detectPassageSection(index, 1, -1), null);
+  assert.equal(detectPassageSection(null, 0, 0), null);
+  // Only the outline survives: a page beyond the document is still rejected
+  // without the text ever being kept.
+  assert.deepEqual(Object.keys(index).sort(), ["outline", "pageCount"]);
+  assert.equal(detectPassageSection(index, 9, 0), null);
+});
+
+test("passages report where their section came from and stay usable without a full text", () => {
+  const annotation = (extra) => ({
+    data: {
+      key: "ANN1",
+      parentItem: "PDF1",
+      annotationText: "A useful result.",
+      annotationSortIndex: "00001|000018|00292",
+      annotationPosition: JSON.stringify({ pageIndex: 1 }),
+      ...extra,
+    },
+  });
+  const pages = ["Introduction\nOpening prose.", "Methods\nParticipants were recruited here."];
+  const fulltext = fulltextIndex(pages);
+  const located = normalizeZoteroPassage(annotation(), null, null, fulltext);
+  assert.equal(located.pageIndex, 1);
+  assert.equal(located.section, "Methods");
+  assert.equal(located.sectionHeading, "Methods");
+  assert.equal(located.sectionSource, "pdf");
+
+  // A section the researcher wrote down themselves is not overruled by the PDF.
+  const tagged = normalizeZoteroPassage(
+    annotation({ tags: [{ tag: "Discussion" }] }),
+    null,
+    null,
+    fulltext,
+  );
+  assert.equal(tagged.section, "Discussion");
+  assert.equal(tagged.sectionSource, "tag");
+
+  // An unindexed attachment, or an annotation with no PDF position, still yields
+  // a passage; the browser falls back to reading the highlight itself.
+  const unindexed = normalizeZoteroPassage(annotation(), null, null, null);
+  assert.equal(unindexed.section, "");
+  assert.equal(unindexed.sectionSource, "none");
+  const unlocated = normalizeZoteroPassage(
+    { data: { key: "ANN2", annotationText: "Text." } },
+    null,
+    null,
+    fulltext,
+  );
+  assert.equal(unlocated.pageIndex, -1);
+  assert.equal(unlocated.sectionSource, "none");
 });
 
 test("Zotero item keys are fetched in bounded batches instead of one request per item", async () => {
@@ -882,6 +1184,458 @@ test("each workflow command carries its own expert brief and the action contract
   }
 });
 
+test("the six contextual workflows have distinct inputs, sources, and direct outcomes", () => {
+  assert.deepEqual(Object.keys(WORKFLOW_CONTRACTS), [
+    "@ask-knowledge",
+    "@evidence-for-claim",
+    "@result-explain",
+    "@reviewer-critique",
+    "@plan-today",
+    "@write-section",
+  ]);
+  assert.equal(workflowContract("@evidence-for-claim").focus, "claim");
+  assert.equal(workflowContract("@result-explain").focus, "result");
+  assert.equal(workflowContract("@reviewer-critique").outcome, "reviews");
+  assert.equal(workflowContract("@plan-today").outcome, "tasks");
+  assert.equal(workflowContract("@write-section").outcome, "section");
+  assert.equal(workflowContract("@unknown-command"), null);
+});
+
+// Every workflow is run through the real handler against a stub Zotero and a
+// stub model, so what each contract promises — its own required input, its own
+// sources, its own landing place — is checked where it actually takes effect
+// rather than in the table that declares it.
+const refusal = async (promise, code) => {
+  await assert.rejects(promise, (error) => error.status === 422 && error.code === code);
+};
+
+async function workflowHarness(run, calendar = null) {
+  const zoteroCalls = [];
+  const zotero = createServer(async (incoming, outgoing) => {
+    const url = new URL(incoming.url, "http://zotero.test");
+    zoteroCalls.push(url.pathname + url.search);
+    const send = (body) => {
+      outgoing.writeHead(200, { "Content-Type": "application/json" });
+      outgoing.end(JSON.stringify(body));
+    };
+    if (url.pathname.endsWith("/fulltext"))
+      return send({
+        content: [
+          "Introduction\nThe study setting is described here at length.",
+          "Results\n\nHigh press pressing raised sprint distance by twelve percent in elite football players over the season, adjusted for match location and opponent quality.",
+        ].join("\f"),
+      });
+    if (url.pathname.endsWith("/children"))
+      return send([{ data: { key: "PDF1", contentType: "application/pdf" } }]);
+    return send([
+      {
+        data: {
+          key: "ITEM1",
+          title: "Pressing intensity and sprint distance",
+          itemType: "journalArticle",
+          date: "2023",
+          DOI: "10.1/press",
+          abstractNote: "An abstract about pressing.",
+          creators: [{ firstName: "A", lastName: "Autor" }],
+          tags: [{ tag: "pressing" }, { tag: "/done" }],
+        },
+      },
+    ]);
+  });
+  const providerCalls = [];
+  const provider = createServer(async (incoming, outgoing) => {
+    let body = "";
+    for await (const chunk of incoming) body += chunk;
+    providerCalls.push(JSON.parse(body));
+    outgoing.writeHead(200, { "Content-Type": "application/json" });
+    outgoing.end(
+      JSON.stringify({
+        choices: [
+          {
+            message: {
+              content:
+                "Drafted answer citing [Z1].\n\n```scholarbuddy-actions\n" +
+                '{"actions":[{"title":"Report the effect size","kind":"gap"},' +
+                '{"title":"Rewrite the opening claim","kind":"review","severity":"Critical"},' +
+                '{"title":"Re-run the model","kind":"task"}]}' +
+                "\n```",
+            },
+          },
+        ],
+        usage: { total_tokens: 12 },
+      }),
+    );
+  });
+  await new Promise((resolve) => zotero.listen(0, "127.0.0.1", resolve));
+  await new Promise((resolve) => provider.listen(0, "127.0.0.1", resolve));
+  const vault = await mkdtemp(path.join(os.tmpdir(), "workbuddy-workflow-"));
+  try {
+    await writeFile(
+      path.join(vault, "pressing.md"),
+      "Notes on pressing intensity and sprint distance in elite football players.",
+      "utf8",
+    );
+    const settings = {
+      ...config(vault),
+      ZOTERO_LOCAL_URL: `http://127.0.0.1:${zotero.address().port}`,
+      DEEPSEEK_API_KEY: "fake",
+      DEEPSEEK_BASE_URL: `http://127.0.0.1:${provider.address().port}`,
+      // Never the real Calendar: an unstubbed run would prompt for access on the
+      // researcher's machine and answer with their actual week.
+      _calendarRunner:
+        calendar ||
+        (() => {
+          throw new Error("osascript is unavailable");
+        }),
+    };
+    const ask = (payload) =>
+      handle(
+        request("/ai/run", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ provider: "deepseek", ...payload }),
+        }),
+        settings,
+      );
+    await run({ ask, zoteroCalls, providerCalls, settings, vault });
+  } finally {
+    zotero.close();
+    provider.close();
+    await rm(vault, { recursive: true, force: true });
+  }
+}
+
+const SECTION_TEXT =
+  "Twenty-four elite football players completed a repeated pressing protocol. " +
+  "Sprint distance was recorded by GPS during every pressing sequence. " +
+  "Pressing intensity was derived from the same GPS traces.";
+
+test("@ask-knowledge answers from the vault and the library and lands as a note", async () => {
+  await workflowHarness(async ({ ask, providerCalls, zoteroCalls }) => {
+    const body = await (
+      await ask({ command: "@ask-knowledge", input: "pressing intensity" })
+    ).json();
+    assert.equal(body.retrieval.zotero.selected, true);
+    assert.equal(body.retrieval.obsidian.selected, true);
+    assert.equal(body.retrieval.calendar.selected, false);
+    assert.equal(workflowContract("@ask-knowledge").outcome, "note");
+    // The plain question asks for metadata search only; nothing pulls a PDF.
+    assert.ok(!zoteroCalls.some((call) => call.includes("/fulltext")));
+    assert.match(providerCalls[0].messages.at(-1).content, /^@ask-knowledge/);
+  });
+});
+
+test("@evidence-for-claim quotes the PDF and survives an attachment it cannot read", async () => {
+  await workflowHarness(async ({ ask, providerCalls, zoteroCalls }) => {
+    const body = await (
+      await ask({ command: "@evidence-for-claim", input: "pressing raises sprint distance" })
+    ).json();
+    assert.ok(zoteroCalls.some((call) => call.includes("/fulltext")));
+    assert.equal(body.manifest.zotero[0].evidenceType, "full_text");
+    assert.match(body.manifest.zotero[0].excerpt, /^\[PDF p\. 2\]/);
+    assert.match(providerCalls[0].messages.at(-1).content, /Evidence: exact PDF excerpt/);
+    // Obsidian is off by contract for a claim: the point is the literature.
+    assert.equal(body.retrieval.obsidian.selected, false);
+  });
+});
+
+test("@evidence-for-claim keeps the other papers when one attachment fails", async () => {
+  const zotero = createServer(async (incoming, outgoing) => {
+    const url = new URL(incoming.url, "http://zotero.test");
+    if (url.pathname.endsWith("/children")) {
+      outgoing.writeHead(500).end("nope");
+      return;
+    }
+    outgoing.writeHead(200, { "Content-Type": "application/json" });
+    outgoing.end(
+      JSON.stringify([
+        {
+          data: {
+            key: "ITEM1",
+            title: "Pressing intensity",
+            date: "2023",
+            abstractNote: "An abstract about pressing.",
+            creators: [],
+          },
+        },
+      ]),
+    );
+  });
+  const provider = createServer((incoming, outgoing) => {
+    outgoing.writeHead(200, { "Content-Type": "application/json" });
+    outgoing.end(JSON.stringify({ choices: [{ message: { content: "Answer." } }] }));
+  });
+  await new Promise((resolve) => zotero.listen(0, "127.0.0.1", resolve));
+  await new Promise((resolve) => provider.listen(0, "127.0.0.1", resolve));
+  const vault = await mkdtemp(path.join(os.tmpdir(), "workbuddy-evidence-"));
+  try {
+    const response = await handle(
+      request("/ai/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          provider: "deepseek",
+          command: "@evidence-for-claim",
+          input: "pressing raises sprint distance",
+        }),
+      }),
+      {
+        ...config(vault),
+        ZOTERO_LOCAL_URL: `http://127.0.0.1:${zotero.address().port}`,
+        DEEPSEEK_API_KEY: "fake",
+        DEEPSEEK_BASE_URL: `http://127.0.0.1:${provider.address().port}`,
+      },
+    );
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    // Degraded to the abstract rather than failing the whole run.
+    assert.equal(body.retrieval.zotero.status, "ok");
+    assert.equal(body.manifest.zotero[0].evidenceType, "abstract");
+  } finally {
+    zotero.close();
+    provider.close();
+    await rm(vault, { recursive: true, force: true });
+  }
+});
+
+test("@result-explain requires the statistics and puts every field in the prompt", async () => {
+  await workflowHarness(async ({ ask, providerCalls }) => {
+    await refusal(ask({ command: "@result-explain", input: "explain" }), "workflow_input_required");
+    assert.equal(providerCalls.length, 0);
+
+    const body = await (
+      await ask({
+        command: "@result-explain",
+        input: "explain",
+        focus: {
+          resultSummary: "Sprint distance rose 12%.",
+          estimate: "d = 0.42",
+          confidenceInterval: "0.11 to 0.73",
+          pValue: "0.03",
+          sampleSize: "24",
+          model: "mixed effects",
+        },
+      })
+    ).json();
+    const prompt = providerCalls[0].messages.at(-1).content;
+    for (const field of [
+      "Sprint distance rose 12%.",
+      "d = 0.42",
+      "0.11 to 0.73",
+      "0.03",
+      "24",
+      "mixed effects",
+    ])
+      assert.ok(prompt.includes(field), `prompt is missing ${field}`);
+    // Statistics are read against the researcher's own notes, not the library.
+    assert.equal(body.retrieval.zotero.selected, false);
+    assert.equal(body.retrieval.obsidian.selected, true);
+  });
+});
+
+test("@reviewer-critique requires a section and emits review items", async () => {
+  await workflowHarness(async ({ ask, providerCalls }) => {
+    await refusal(
+      ask({ command: "@reviewer-critique", input: "review" }),
+      "workflow_input_required",
+    );
+    assert.equal(providerCalls.length, 0);
+
+    const body = await (
+      await ask({
+        command: "@reviewer-critique",
+        input: "review",
+        focus: { section: "Methods", sectionText: SECTION_TEXT, manuscriptTitle: "Pressing paper" },
+      })
+    ).json();
+    const prompt = providerCalls[0].messages.at(-1).content;
+    assert.match(prompt, /MANUSCRIPT SECTION TO WORK ON:/);
+    assert.match(prompt, /Section: Methods/);
+    assert.ok(prompt.includes(SECTION_TEXT));
+    assert.equal(workflowContract("@reviewer-critique").outcome, "reviews");
+    assert.ok(body.actions.some((item) => item.kind === "review"));
+  });
+});
+
+test("@plan-today reads the calendar and is not blocked when it is unavailable", async () => {
+  await workflowHarness(async ({ ask, providerCalls, zoteroCalls }) => {
+    const response = await ask({ command: "@plan-today", input: "plan the day" });
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    // The osascript bridge is not available under test, so this is the
+    // degradation path: reported, named, and not fatal.
+    assert.equal(body.retrieval.calendar.selected, true);
+    assert.equal(body.retrieval.calendar.status, "error");
+    assert.match(body.retrieval.calendar.error, /does not account for committed time/);
+    assert.equal(providerCalls.length, 1);
+    // A day plan is not a literature search.
+    assert.equal(body.retrieval.zotero.selected, false);
+    assert.equal(zoteroCalls.length, 0);
+    assert.equal(workflowContract("@plan-today").outcome, "tasks");
+    assert.ok(body.actions.some((item) => item.kind === "task"));
+  });
+});
+
+test("@plan-today puts committed time in the prompt as time, not as evidence", async () => {
+  await workflowHarness(
+    async ({ ask, providerCalls }) => {
+      const body = await (await ask({ command: "@plan-today", input: "plan the day" })).json();
+      assert.equal(body.retrieval.calendar.status, "ok");
+      const prompt = providerCalls[0].messages.at(-1).content;
+      assert.match(prompt, /WORKING WEEK \(committed time; not research evidence\)/);
+      assert.match(prompt, /Supervision meeting/);
+      // Where it is and what was said about it never leave the machine.
+      assert.doesNotMatch(prompt, /Room 4\.12|bring the draft/);
+    },
+    () => ({
+      events: [
+        {
+          title: "Supervision meeting",
+          start: "2026-08-27T09:00:00.000Z",
+          end: "2026-08-27T10:00:00.000Z",
+          location: "Room 4.12",
+          notes: "bring the draft",
+        },
+      ],
+    }),
+  );
+});
+
+test("@write-section searches on the section itself, not on the button that opened it", async () => {
+  await workflowHarness(async ({ ask, providerCalls, zoteroCalls }) => {
+    await refusal(
+      ask({ command: "@write-section", input: "Draft manuscript section" }),
+      "workflow_input_required",
+    );
+    assert.equal(providerCalls.length, 0);
+
+    const body = await (
+      await ask({
+        command: "@write-section",
+        input: "Draft manuscript section",
+        focus: { section: "Methods", sectionText: SECTION_TEXT },
+      })
+    ).json();
+    const searched = zoteroCalls
+      .map((call) => new URLSearchParams(call.split("?")[1] || "").get("q"))
+      .filter(Boolean);
+    // What the section is about reaches Zotero; the quick action's own label
+    // does not get to spend the handful of terms the search allows.
+    assert.ok(searched.includes("pressing"), `searched for ${searched.join(", ")}`);
+    for (const boilerplate of ["draft", "manuscript", "section"])
+      assert.ok(!searched.includes(boilerplate), `searched for the label word ${boilerplate}`);
+    // The stored query travels back in the manifest, so it stays the short
+    // ranked list rather than a copy of the section.
+    assert.ok(body.manifest.zotero[0].query.length < 200);
+    assert.ok(!body.manifest.zotero[0].query.includes("Twenty-four"));
+    assert.equal(workflowContract("@write-section").outcome, "section");
+  });
+});
+
+test("an unknown command is refused before any source is touched", async () => {
+  await workflowHarness(async ({ ask, zoteroCalls, providerCalls }) => {
+    await refusal(ask({ command: "@make-coffee", input: "please" }), "workflow_unknown");
+    assert.equal(zoteroCalls.length, 0);
+    assert.equal(providerCalls.length, 0);
+  });
+});
+
+test("manuscript section context is exact and replacement preserves its neighbours", () => {
+  const markdown = [
+    "# Pressing paper",
+    "",
+    "## 1. Introduction",
+    "Intro text.",
+    "",
+    "## 2. Materials and Methods",
+    "Old methods.",
+    "",
+    "### 2.1 Participants",
+    "Twenty-four players.",
+    "",
+    "## 3. Results",
+    "Result text.",
+    "",
+    "## References",
+    "[1] Autor.",
+  ].join("\n");
+  // A real manuscript numbers its headings and spells Methods out in full; the
+  // strict name match this used to do found none of them and appended a second
+  // set of sections beside the author's own.
+  assert.deepEqual(
+    manuscriptSectionEntries(markdown).map((entry) => entry.section),
+    ["Introduction", "Methods", "Results"],
+  );
+  // A subsection belongs to its parent, so the context is the whole of Methods.
+  assert.match(manuscriptSectionText(markdown, "Methods"), /Old methods\.[\s\S]*Twenty-four/);
+
+  const replaced = replaceManuscriptSection(markdown, "Methods", "New methods.\n\nMore detail.");
+  assert.match(replaced, /## 1\. Introduction\nIntro text\./);
+  assert.match(replaced, /## 2\. Materials and Methods\nNew methods\.\n\nMore detail\./);
+  assert.match(replaced, /## 3\. Results\nResult text\./);
+  // The subsection was inside what was replaced; the reference list was not.
+  assert.doesNotMatch(replaced, /Twenty-four/);
+  assert.match(replaced, /## References\n\[1\] Autor\./);
+
+  // A section the manuscript has never had is written in front of the back
+  // matter, at the level the paper already uses.
+  const added = replaceManuscriptSection(markdown, "Discussion", "We discuss.");
+  assert.match(added, /## Discussion\n\nWe discuss\.\n\n## References/);
+
+  // An abstract is unassigned too, but it is front matter: a new section goes
+  // after the last real one, never above the paper.
+  const withAbstract = [
+    "# Title",
+    "",
+    "## Abstract",
+    "A summary.",
+    "",
+    "## Introduction",
+    "Intro.",
+  ].join("\n");
+  assert.match(
+    replaceManuscriptSection(withAbstract, "Discussion", "We discuss."),
+    /## Abstract\nA summary\.\n\n## Introduction\nIntro\.\n\n## Discussion/,
+  );
+});
+
+test("a drafted body never nests a second copy of the heading it replaces", () => {
+  // Models return the heading with the body however firmly they are told not to.
+  for (const heading of ["## Methods", "**Methods**", "Methods", "### 2. Materials and Methods"])
+    assert.equal(
+      sectionBody(`${heading}\nWe measured sprint distance.`, "Methods"),
+      "We measured sprint distance.",
+    );
+  // A sentence that merely opens with the word is the draft, not a heading —
+  // whether or not the model emphasised that opening word.
+  assert.equal(
+    sectionBody("Methods varied across the cohort.", "Methods"),
+    "Methods varied across the cohort.",
+  );
+  assert.equal(
+    sectionBody("**Methods** were as follows.", "Methods"),
+    "**Methods** were as follows.",
+  );
+  // Nor does a heading for some other section get eaten.
+  assert.match(sectionBody("## Results\nWe found more.", "Methods"), /^## Results/);
+  // An answer that was nothing but its heading must not empty the section.
+  const markdown = "## Methods\nOld methods.";
+  assert.equal(replaceManuscriptSection(markdown, "Methods", "## Methods"), markdown);
+});
+
+test("full-text evidence selects an exact PDF excerpt instead of relabelling metadata", () => {
+  const excerpt = relevantFulltextExcerpt(
+    [
+      "The introduction describes the study setting.",
+      "The high press phase increased sprint distance by twelve percent after adjustment.",
+      "The discussion considers coaching practice.",
+    ],
+    "high press sprint distance",
+  );
+  assert.match(excerpt, /^\[PDF p\. 2\]/);
+  assert.match(excerpt, /increased sprint distance/);
+});
+
 test("next actions are parsed out of the answer and bounded", () => {
   const answer = [
     "Conclusion text [Z1].",
@@ -971,6 +1725,7 @@ test("an unknown conversation id fails instead of silently changing its evidence
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           provider: "deepseek",
+          command: "@ask-knowledge",
           input: "continue",
           conversationId: "expired-conversation",
           sources: { zotero: false, obsidian: false, kbase: false },
@@ -1035,6 +1790,21 @@ test("stream frames reduce to answer text, reasoning, and usage", () => {
   assert.deepEqual(streamDelta(openai, { type: "response.created" }), {});
 });
 
+test("focus terms are ranked by what recurs and keep the acronyms that matter", () => {
+  const methods =
+    "The aim of this section is to describe the procedure. GPS traces were recorded for every " +
+    "pressing sequence. RPE was collected after each session, and RPE was repeated at rest. " +
+    "GPS traces were then compared with the pressing counts.";
+  const terms = topicTerms(methods, 8);
+  // What the section is about, not the words it opens with.
+  assert.ok(terms.indexOf("gps") < terms.indexOf("describe"), terms.join(", "));
+  assert.ok(terms.includes("pressing"));
+  // Three-letter domain acronyms are the whole point of a sports-science query.
+  for (const acronym of ["gps", "rpe"]) assert.ok(terms.includes(acronym), `dropped ${acronym}`);
+  // Boilerplate every paper uses about itself never becomes a search term.
+  for (const filler of ["this", "section", "were"]) assert.ok(!terms.includes(filler), filler);
+});
+
 test("bilingual retrieval ranks by BM25 and recalls across the synonym table", async () => {
   const vault = await mkdtemp(path.join(os.tmpdir(), "workbuddy-bm25-"));
   try {
@@ -1072,6 +1842,7 @@ test("a streaming run still refuses to start when a selected source fails", asyn
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           provider: "deepseek",
+          command: "@ask-knowledge",
           input: "ACL injury",
           sources: { zotero: true, obsidian: false, kbase: false },
         }),
@@ -1109,6 +1880,7 @@ test("a streamed provider failure preserves safe upstream diagnostics", async ()
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           provider: "deepseek",
+          command: "@ask-knowledge",
           input: "test",
           sources: { zotero: false, obsidian: false, kbase: false },
         }),
@@ -1179,6 +1951,14 @@ test("a streamed run emits deltas, audits the finished answer, and keeps a follo
             provider: "deepseek",
             command: "@result-explain",
             sources: { zotero: false, obsidian: true, kbase: true },
+            focus: {
+              resultSummary: "Sprint counts rose 12%.",
+              estimate: "12%",
+              confidenceInterval: "not reported",
+              pValue: "not reported",
+              sampleSize: "not reported",
+              model: "not reported",
+            },
             ...payload,
           }),
         }),

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { clampProgress, daysSince, localDateKey, shortDate } from "../../lib/format";
-import { submissionStages } from "../../lib/workbench";
+import { isOpen, submissionStages } from "../../lib/workbench";
 import type { DataProps } from "../../lib/workbench";
 import type {
   CollectionKey,
@@ -448,14 +448,10 @@ export function ManuscriptModule({
     );
   if (!selected) return null;
   const openDebts = state["research-debt"].filter(
-    (item) =>
-      item.manuscriptId === selected.id &&
-      !["Resolved", "Completed", "Archived"].includes(item.status || ""),
+    (item) => item.manuscriptId === selected.id && isOpen(item),
   ).length;
   const openReviews = state.reviews.filter(
-    (item) =>
-      item.manuscriptId === selected.id &&
-      !["Resolved", "Completed", "Archived"].includes(item.status || ""),
+    (item) => item.manuscriptId === selected.id && isOpen(item),
   ).length;
   return (
     <>
