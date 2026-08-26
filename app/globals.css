@@ -741,7 +741,7 @@ body { font-size: 17px; line-height: 1.5; }
 .real-paper-list > article { padding: 15px; display: grid; grid-template-columns: 42px minmax(0,1fr) auto; gap: 12px; background: #fff; }
 .real-paper-list strong { color: #344039; font-size: 13px; line-height: 1.4; }
 .real-paper-list small, .real-paper-list em { margin-top: 5px; display: block; color: #7b867f; font-size: 11px; font-style: normal; line-height: 1.45; }
-.zotero-year { color: #728369; font: 10px var(--font-geist-mono); }
+.zotero-year { align-self: start; padding-top: 3px; color: #728369; font: 10px/1.4 var(--font-geist-mono); }
 .paper-buttons { display: flex; align-items: flex-start; gap: 7px; }
 .paper-buttons button { padding: 7px 9px; border: 1px solid #d4dcd1; border-radius: 7px; background: #f8faf7; color: #5d6d63; font-size: 10px; font-weight: 750; }
 
