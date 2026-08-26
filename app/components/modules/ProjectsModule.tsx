@@ -194,16 +194,16 @@ export function ProjectsModule({ state, openEditor }: Pick<DataProps, "state" | 
           Projects
         </button>
         <button
-          className={tab === "research-questions" ? "active" : ""}
-          onClick={() => setTab("research-questions")}
-        >
-          Questions
-        </button>
-        <button
           className={tab === "experiments" ? "active" : ""}
           onClick={() => setTab("experiments")}
         >
           Experiments
+        </button>
+        <button
+          className={tab === "research-questions" ? "active" : ""}
+          onClick={() => setTab("research-questions")}
+        >
+          Questions
         </button>
         <button className={tab === "ideas" ? "active" : ""} onClick={() => setTab("ideas")}>
           Ideas
