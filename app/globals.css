@@ -606,13 +606,13 @@ body { font-size: 17px; line-height: 1.5; }
 .paper-context { padding: 15px 18px; }
 .paper-context h2 { margin: 4px 0 3px; line-height: 1.25; }
 .manuscript-focus { padding: 20px; }
-.manuscript-focus .manuscript-main { gap: 20px; margin: 0 0 12px; }
+.manuscript-focus .manuscript-main { gap: 20px; margin: 0; }
 .manuscript-focus .manuscript-main > div:first-child { display: flex; flex-direction: column; gap: 5px; }
 .manuscript-focus .manuscript-main h2 { margin: 0; }
 .manuscript-focus .manuscript-main p { font-size: 13px; }
-.manuscript-focus .coverage-row { margin-top: 12px; }
 .paper-work-list { margin-bottom: 16px; padding: 20px; }
 .paper-work-list > .section-heading, .research-debt > .section-heading, .literature-radar > .section-heading, .real-summary > .section-heading { margin-bottom: 14px; }
+.paper-work-list > .section-heading p { margin: 5px 0 0; color: #7d8982; font-size: 12px; }
 .project-flow-board { display: grid; gap: 18px; }
 .project-flow-card { overflow: hidden; padding: 0; }
 .project-flow-card > header { padding: 24px 26px 20px; display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; }
@@ -722,6 +722,10 @@ body { font-size: 17px; line-height: 1.5; }
 .record-form input[type="range"] { padding: 0; accent-color: #739b49; box-shadow: none; }
 .record-form .checkbox-label { flex-direction: row; align-items: center; align-self: end; min-height: 42px; }
 .record-form .checkbox-label input { width: 18px; min-height: 18px; accent-color: #739b49; }
+.record-form-details { grid-column: 1 / -1; border: 1px solid #dde3dc; border-radius: 10px; background: #f8faf7; }
+.record-form-details summary { padding: 12px 14px; cursor: pointer; color: #657269; font-size: 12px; font-weight: 750; }
+.record-form-details[open] summary { border-bottom: 1px solid #e1e6df; }
+.record-form-details-grid { padding: 14px; display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 15px; }
 .record-editor-footer { position: sticky; bottom: -20px; margin: 8px -30px -20px; padding: 16px 30px; display: flex; align-items: center; justify-content: space-between; gap: 12px; border-top: 1px solid #dfe4de; background: rgba(248,250,247,.96); backdrop-filter: blur(12px); }
 .record-editor-footer > span { display: flex; gap: 8px; }
 .delete-record, .delete-confirm button:first-child { border: 0; background: transparent; color: #a84f46; font-size: 11px; font-weight: 800; }
@@ -756,7 +760,12 @@ body { font-size: 17px; line-height: 1.5; }
 .real-record-list > button { width: 100%; padding: 13px 14px; display: grid; grid-template-columns: 12px minmax(0,1fr) auto; gap: 10px; align-items: center; text-align: left; border: 1px solid #dfe5de; border-radius: 9px; background: #fff; color: #3b4841; }
 .real-record-list > button:hover { border-color: #aec1a4; background: #f8fbf6; }
 .real-record-list small { margin-top: 4px; display: block; color: #849087; font-size: 10px; }
+.paper-issue-list .issue-response { max-width: 760px; color: #63745f; line-height: 1.45; }
+.paper-issue-list strong { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-height: 1.4; }
 .severity-mark { width: 7px; height: 7px; border-radius: 50%; background: #d49b64; }
+.paper-work-history { margin-top: 12px; border-top: 1px solid #e4e8e2; }
+.paper-work-history summary { padding: 12px 2px 4px; cursor: pointer; color: #7d8982; font-size: 11px; font-weight: 750; }
+.paper-work-history .real-record-list { margin-top: 8px; opacity: .82; }
 
 /* The reading queue is read down the left edge — year, title, who wrote it, and
    which paper it was attached to — with the state on the right, so a 12px dot
@@ -998,6 +1007,7 @@ small { font-size: 13px !important; line-height: 1.45; }
   .real-empty { grid-template-columns: 34px 1fr; }
   .real-empty button { grid-column: 2; width: max-content; }
   .record-form, .record-board, .real-summary-grid { grid-template-columns: 1fr; }
+  .record-form-details-grid { grid-template-columns: 1fr; }
   .passage-toolbar { padding: 18px; grid-template-columns: 1fr; }
   .passage-toolbar > button { justify-self: start; }
   .passage-toolbar-bottom { align-items: flex-start; flex-direction: column; }

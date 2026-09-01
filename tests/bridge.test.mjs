@@ -29,6 +29,7 @@ import {
   streamDelta,
   submissionEmailCandidate,
   syncSubmissionEmails,
+  verifySubmissionAttempt,
   zoteroItemsByKey,
 } from "../bridge/server.mjs";
 import { compareRecords } from "../shared/records.mjs";
@@ -559,6 +560,31 @@ test("the record boundary rejects malformed stored types and drops legacy execut
   }
 });
 
+test("paper issues keep the problem, plan, and response in one record", async () => {
+  const vault = await mkdtemp(path.join(os.tmpdir(), "workbuddy-paper-issue-"));
+  try {
+    const issue = await saveRecord(config(vault), "reviews", {
+      title: "Clarify the sampling decision",
+      description: "Reviewer 2 asks why this sample was retained.",
+      issueKind: "Feedback",
+      actionPlan: "Add the exclusion rationale to Methods.",
+      resolution: "Methods now names the criterion and affected cases.",
+      status: "Resolved",
+    });
+    assert.equal(issue.issueKind, "Feedback");
+    assert.equal(issue.actionPlan, "Add the exclusion rationale to Methods.");
+    assert.equal(issue.resolution, "Methods now names the criterion and affected cases.");
+    const markdown = await readFile(
+      path.join(vault, "ScholarBuddy", "reviews", `${issue.id}.md`),
+      "utf8",
+    );
+    assert.match(markdown, /issueKind: "Feedback"/);
+    assert.match(markdown, /actionPlan: "Add the exclusion rationale to Methods\."/);
+  } finally {
+    await rm(vault, { recursive: true, force: true });
+  }
+});
+
 test("Obsidian records validate common fields and keep only one active project", async () => {
   const vault = await mkdtemp(path.join(os.tmpdir(), "workbuddy-record-validation-"));
   try {
@@ -866,6 +892,8 @@ test("a collection's status list opens on its own first state and never repeats 
   // records actually open in.
   assert.equal(RECORD_STATUS_OPTIONS["reading-queue"][0], "Queued");
   assert.equal(RECORD_STATUS_OPTIONS.operations[0], "Planned");
+  assert.equal(RECORD_STATUS_OPTIONS.reviews[0], "Open");
+  assert.equal(RECORD_STATUS_OPTIONS["research-debt"][0], "Open");
   assert.equal(GENERIC_RECORD_STATUSES[0], "Active");
 });
 
@@ -1079,6 +1107,58 @@ test("submission events append history and advance the attempt", async () => {
   }
 });
 
+test("checking an unchanged submission updates verification without adding timeline noise", async () => {
+  const vault = await mkdtemp(path.join(os.tmpdir(), "workbuddy-submission-check-"));
+  try {
+    await saveRecord(config(vault), "submission-attempts", {
+      id: "SUB-one",
+      title: "Paper one",
+      status: "Under Review",
+      stageStartedAt: "2026-07-10T00:00:00.000Z",
+      lastVerifiedAt: "2026-07-10T00:00:00.000Z",
+    });
+    const verification = await addSubmissionEvent(config(vault), {
+      attemptId: "SUB-one",
+      status: "Under Review",
+      eventDate: "2026-08-01T00:00:00.000Z",
+    });
+    assert.equal(verification.verificationOnly, true);
+    await verifySubmissionAttempt(config(vault), {
+      attemptId: "SUB-one",
+      verifiedAt: "2026-08-02T00:00:00.000Z",
+    });
+    const state = await (await handle(request("/workbench/state"), config(vault))).json();
+    assert.equal(state["submission-events"].length, 0);
+    assert.equal(state["submission-attempts"][0].stageStartedAt, "2026-07-10T00:00:00.000Z");
+    assert.equal(state["submission-attempts"][0].lastVerifiedAt, "2026-08-02T00:00:00.000Z");
+  } finally {
+    await rm(vault, { recursive: true, force: true });
+  }
+});
+
+test("a revised submission advances the round inside the same journal attempt", async () => {
+  const vault = await mkdtemp(path.join(os.tmpdir(), "workbuddy-revision-round-"));
+  try {
+    await saveRecord(config(vault), "submission-attempts", {
+      id: "SUB-one",
+      title: "Paper one",
+      status: "Revision Required",
+      round: "Initial",
+      stageStartedAt: "2026-07-10T00:00:00.000Z",
+    });
+    await addSubmissionEvent(config(vault), {
+      attemptId: "SUB-one",
+      status: "Revised Submission",
+      eventDate: "2026-08-01T00:00:00.000Z",
+    });
+    const state = await (await handle(request("/workbench/state"), config(vault))).json();
+    assert.equal(state["submission-attempts"][0].round, "R1");
+    assert.equal(state["submission-attempts"].length, 1);
+  } finally {
+    await rm(vault, { recursive: true, force: true });
+  }
+});
+
 test("high-confidence email sync is idempotent", async () => {
   const vault = await mkdtemp(path.join(os.tmpdir(), "workbuddy-email-sync-"));
   try {
@@ -1103,6 +1183,37 @@ test("high-confidence email sync is idempotent", async () => {
     const second = await syncSubmissionEmails(config(vault), emails);
     assert.equal(first.updated.length, 1);
     assert.equal(second.updated.length, 0);
+  } finally {
+    await rm(vault, { recursive: true, force: true });
+  }
+});
+
+test("email that repeats the current stage only verifies the attempt", async () => {
+  const vault = await mkdtemp(path.join(os.tmpdir(), "workbuddy-email-verification-"));
+  try {
+    await saveRecord(config(vault), "submission-attempts", {
+      id: "SUB-one",
+      title: "Paper one",
+      manuscriptTitle: "Paper one with a searchable title",
+      submissionId: "JA-101",
+      status: "Under Review",
+      stageStartedAt: "2026-07-01T00:00:00.000Z",
+      lastVerifiedAt: "2026-07-01T00:00:00.000Z",
+    });
+    const result = await syncSubmissionEmails(config(vault), [
+      {
+        id: "mail-verify",
+        subject: "JA-101 remains under review",
+        sender: "editor@journal.test",
+        receivedAt: "2026-08-01T10:00:00Z",
+      },
+    ]);
+    assert.equal(result.updated.length, 0);
+    assert.equal(result.verified, 1);
+    const state = await (await handle(request("/workbench/state"), config(vault))).json();
+    assert.equal(state["submission-events"].length, 0);
+    assert.equal(state["submission-attempts"][0].stageStartedAt, "2026-07-01T00:00:00.000Z");
+    assert.equal(state["submission-attempts"][0].lastVerifiedAt, "2026-08-01T10:00:00.000Z");
   } finally {
     await rm(vault, { recursive: true, force: true });
   }

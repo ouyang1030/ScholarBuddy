@@ -31,6 +31,7 @@ export type SubmissionTrackerProps = {
   state: WorkbenchState;
   openEditor: (collection: CollectionKey, record?: Partial<RecordItem>) => void;
   addEvent: (record: Partial<RecordItem>) => Promise<void>;
+  verifyAttempt: (attemptId: string) => Promise<void>;
   syncEmail: () => Promise<SubmissionSyncResult>;
 };
 export function SubmissionTracker({
@@ -38,6 +39,7 @@ export function SubmissionTracker({
   state,
   openEditor,
   addEvent,
+  verifyAttempt,
   syncEmail,
 }: SubmissionTrackerProps) {
   const attempts = state["submission-attempts"].filter(
@@ -50,7 +52,7 @@ export function SubmissionTracker({
   const [pendingCandidates, setPendingCandidates] = useState<SubmissionEmailCandidate[]>([]);
   const autoCheckedRef = useRef(false);
   const [eventForm, setEventForm] = useState({
-    status: "Submitted",
+    status: "",
     eventDate: localDateKey(new Date()),
     rawStatus: "",
     description: "",
@@ -70,10 +72,14 @@ export function SubmissionTracker({
       manuscriptTitle: manuscript.title,
       journal: manuscript.journal,
       status: "Preparing",
-      round: attempts.length ? `R${attempts.length}` : "Initial",
+      round: "Initial",
     });
   const submitEvent = async () => {
     if (!attempt) return;
+    if (!eventForm.status) {
+      setMessage("Choose the new stage first.");
+      return;
+    }
     setMessage("");
     try {
       await addEvent({
@@ -86,13 +92,23 @@ export function SubmissionTracker({
       });
       setAddingEvent(false);
       setEventForm({
-        status: "Submitted",
+        status: "",
         eventDate: localDateKey(new Date()),
         rawStatus: "",
         description: "",
       });
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Could not add the status event.");
+    }
+  };
+  const markChecked = async () => {
+    if (!attempt) return;
+    setMessage("");
+    try {
+      await verifyAttempt(attempt.id);
+      setMessage("Status checked today · no timeline event added");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not mark the submission checked.");
     }
   };
   const checkEmail = useCallback(async () => {
@@ -103,7 +119,7 @@ export function SubmissionTracker({
       const result = await syncEmail();
       setPendingCandidates(result.pending);
       setMessage(
-        `${result.updated.length} status update${result.updated.length === 1 ? "" : "s"} added · ${result.pending.length} need confirmation · ${result.scanned} emails checked`,
+        `${result.updated.length} status update${result.updated.length === 1 ? "" : "s"} added · ${result.verified || 0} existing status${result.verified === 1 ? "" : "es"} verified · ${result.pending.length} need confirmation · ${result.scanned} emails checked`,
       );
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Mail could not be checked.");
@@ -155,7 +171,7 @@ export function SubmissionTracker({
                     setPendingCandidates((items) => items.filter((item) => item !== candidate))
                   }
                 >
-                  Ignore
+                  Dismiss for now
                 </button>
                 <button
                   className="primary-button"
@@ -186,13 +202,13 @@ export function SubmissionTracker({
       ) : (
         <>
           <div className="attempt-tabs">
-            {attempts.map((item, index) => (
+            {attempts.map((item) => (
               <button
                 className={item.id === attempt?.id ? "active" : ""}
                 key={item.id}
                 onClick={() => setSelectedId(item.id)}
               >
-                <span>Attempt {index + 1}</span>
+                <span>{item.submissionId || item.id}</span>
                 <strong>{item.journal || "Journal not set"}</strong>
                 <small>
                   {item.status || "Preparing"} · {item.round || "Initial"}
@@ -254,6 +270,9 @@ export function SubmissionTracker({
                   >
                     Open portal ↗
                   </button>
+                  <button className="quiet-button" onClick={markChecked}>
+                    Mark checked today
+                  </button>
                   <button
                     className="primary-button"
                     onClick={() => setAddingEvent((value) => !value)}
@@ -272,6 +291,7 @@ export function SubmissionTracker({
                         setEventForm({ ...eventForm, status: event.target.value })
                       }
                     >
+                      <option value="">Choose a stage…</option>
                       {submissionStages.map((stage) => (
                         <option key={stage}>{stage}</option>
                       ))}
@@ -287,25 +307,28 @@ export function SubmissionTracker({
                       }
                     />
                   </label>
-                  <label>
-                    <span>Publisher wording</span>
-                    <input
-                      value={eventForm.rawStatus}
-                      onChange={(event) =>
-                        setEventForm({ ...eventForm, rawStatus: event.target.value })
-                      }
-                      placeholder="Required Reviews Complete"
-                    />
-                  </label>
-                  <label className="wide">
-                    <span>Note</span>
-                    <input
-                      value={eventForm.description}
-                      onChange={(event) =>
-                        setEventForm({ ...eventForm, description: event.target.value })
-                      }
-                    />
-                  </label>
+                  <details className="status-event-details">
+                    <summary>More details</summary>
+                    <label>
+                      <span>Publisher wording</span>
+                      <input
+                        value={eventForm.rawStatus}
+                        onChange={(event) =>
+                          setEventForm({ ...eventForm, rawStatus: event.target.value })
+                        }
+                        placeholder="Required Reviews Complete"
+                      />
+                    </label>
+                    <label>
+                      <span>Note</span>
+                      <input
+                        value={eventForm.description}
+                        onChange={(event) =>
+                          setEventForm({ ...eventForm, description: event.target.value })
+                        }
+                      />
+                    </label>
+                  </details>
                   <div>
                     <button className="quiet-button" onClick={() => setAddingEvent(false)}>
                       Cancel
@@ -334,7 +357,9 @@ export function SubmissionTracker({
                       <time>{shortDate(event.eventDate || event.createdAt)}</time>
                       <div>
                         <strong>{event.status}</strong>
-                        <p>{event.rawStatus || event.description || "Confirmed status update"}</p>
+                        {event.rawStatus && <p>{event.rawStatus}</p>}
+                        {event.description && <p>{event.description}</p>}
+                        {!event.rawStatus && !event.description && <p>Confirmed status update</p>}
                         <small>
                           {event.source || "Manual"} · {event.confidence || "confirmed"}
                         </small>
@@ -351,52 +376,88 @@ export function SubmissionTracker({
   );
 }
 
-export function PaperWorkList({
-  collection,
+export function PaperFeedbackList({
   paper,
   state,
   openEditor,
+  context,
 }: {
-  collection: "reviews" | "research-debt";
   paper: RecordItem;
   state: WorkbenchState;
   openEditor: (collection: CollectionKey, record?: Partial<RecordItem>) => void;
+  context: "develop" | "review";
 }) {
-  const records = state[collection].filter((item) => item.manuscriptId === paper.id);
+  const severityRank: Record<string, number> = { Critical: 0, Major: 1, Minor: 2 };
+  const records = [
+    ...state.reviews.map((item) => ({ item, collection: "reviews" as const })),
+    ...state["research-debt"].map((item) => ({
+      item,
+      collection: "research-debt" as const,
+    })),
+  ].filter(({ item }) => item.manuscriptId === paper.id);
+  const openRecords = records
+    .filter(({ item }) => isOpen(item))
+    .sort(
+      (a, b) =>
+        (severityRank[a.item.severity || ""] ?? 3) - (severityRank[b.item.severity || ""] ?? 3) ||
+        String(a.item.dueDate || "9999").localeCompare(String(b.item.dueDate || "9999")),
+    );
+  const history = records.filter(({ item }) => !isOpen(item));
   const defaults = {
     manuscriptId: paper.id,
     manuscriptTitle: paper.title,
     projectId: paper.projectId || "",
     projectTitle: paper.projectTitle || "",
-    status: "Active",
+    status: "Open",
   };
+  const renderRecords = (items: typeof records) => (
+    <div className="real-record-list paper-issue-list">
+      {items.map(({ item, collection }) => {
+        const detail = item.status === "Resolved" ? item.resolution : item.actionPlan;
+        return (
+          <button key={`${collection}-${item.id}`} onClick={() => openEditor(collection, item)}>
+            <span className={`severity-mark ${(item.severity || "unspecified").toLowerCase()}`}>
+              !
+            </span>
+            <span>
+              <strong>{item.description || item.title}</strong>
+              <small>
+                {[item.reviewRound, item.reviewSource, item.manuscriptSection, item.type]
+                  .filter(Boolean)
+                  .join(" · ") || "No optional details"}
+              </small>
+              {detail && (
+                <small className="issue-response">
+                  {item.status === "Resolved" ? "Result" : "Plan"}: {detail}
+                </small>
+              )}
+            </span>
+            <b>{item.status || "Open"}</b>
+          </button>
+        );
+      })}
+    </div>
+  );
   return (
     <section className="paper-work-list card">
       <div className="section-heading">
-        <span className="label">{collection === "reviews" ? "FEEDBACK" : "RESEARCH GAPS"}</span>
-        <button className="quiet-button" onClick={() => openEditor(collection, defaults)}>
-          Add {collection === "reviews" ? "feedback" : "gap"}
+        <div>
+          <span className="label">
+            {context === "review" ? "FEEDBACK & RESPONSES" : "FEEDBACK & SOLUTIONS"}
+          </span>
+        </div>
+        <button className="quiet-button" onClick={() => openEditor("reviews", defaults)}>
+          Add feedback
         </button>
       </div>
-      {!records.length ? (
-        <EmptyState title={collection === "reviews" ? "No feedback yet" : "No open gaps"} />
-      ) : (
-        <div className="real-record-list">
-          {records.map((item) => (
-            <button key={item.id} onClick={() => openEditor(collection, item)}>
-              <span className={`severity-mark ${(item.severity || "minor").toLowerCase()}`}>!</span>
-              <span>
-                <strong>{item.title}</strong>
-                <small>
-                  {[item.reviewRound, item.reviewSource, item.manuscriptSection, item.type]
-                    .filter(Boolean)
-                    .join(" · ") || "No section recorded"}
-                </small>
-              </span>
-              <b>{item.status || "Active"}</b>
-            </button>
-          ))}
-        </div>
+      {!openRecords.length ? <EmptyState title="No open feedback" /> : renderRecords(openRecords)}
+      {history.length > 0 && (
+        <details className="paper-work-history">
+          <summary>
+            History · {history.length} closed item{history.length === 1 ? "" : "s"}
+          </summary>
+          {renderRecords(history)}
+        </details>
       )}
     </section>
   );
@@ -406,12 +467,14 @@ export function ManuscriptModule({
   state,
   openEditor,
   addEvent,
+  verifyAttempt,
   syncEmail,
   selectedId,
   onSelect,
   initialView,
 }: Pick<DataProps, "state" | "openEditor"> & {
   addEvent: (record: Partial<RecordItem>) => Promise<void>;
+  verifyAttempt: (attemptId: string) => Promise<void>;
   syncEmail: () => Promise<SubmissionSyncResult>;
   selectedId: string;
   onSelect: (id: string) => void;
@@ -447,10 +510,7 @@ export function ManuscriptModule({
       </>
     );
   if (!selected) return null;
-  const openDebts = state["research-debt"].filter(
-    (item) => item.manuscriptId === selected.id && isOpen(item),
-  ).length;
-  const openReviews = state.reviews.filter(
+  const openIssues = [...state.reviews, ...state["research-debt"]].filter(
     (item) => item.manuscriptId === selected.id && isOpen(item),
   ).length;
   return (
@@ -514,9 +574,7 @@ export function ManuscriptModule({
           </span>
           <span>
             <small>Open work</small>
-            <strong>
-              {openDebts} gaps · {openReviews} feedback
-            </strong>
+            <strong>{openIssues} open issues</strong>
           </span>
         </div>
         <button className="quiet-button" onClick={() => openEditor("manuscripts", selected)}>
@@ -548,47 +606,30 @@ export function ManuscriptModule({
                 <h2>Draft & evidence</h2>
                 <p>
                   {(selected.wordCount || 0).toLocaleString()} /{" "}
-                  {(selected.targetWords || 0).toLocaleString()} words · Evidence coverage{" "}
+                  {(selected.targetWords || 0).toLocaleString()} words · Writing progress{" "}
+                  {clampProgress(selected.progress)}% · Evidence coverage{" "}
                   {clampProgress(selected.evidenceCoverage)}%
                 </p>
               </div>
               <ProgressRing value={selected.progress || 0} />
             </div>
-            <p className="record-description">
-              {selected.description ||
-                "Add the paper purpose, design, and current writing context."}
-            </p>
-            <div className="coverage-row">
-              <span>
-                Writing progress <b>{clampProgress(selected.progress)}%</b>
-              </span>
-              <span>
-                Evidence coverage <b>{clampProgress(selected.evidenceCoverage)}%</b>
-              </span>
-            </div>
           </article>
           <LinkedPassages paper={selected} state={state} />
-          <PaperWorkList
-            collection="research-debt"
+          <PaperFeedbackList
             paper={selected}
             state={state}
             openEditor={openEditor}
+            context="develop"
           />
         </>
       )}
       {view === "review" && (
         <>
-          <PaperWorkList
-            collection="reviews"
+          <PaperFeedbackList
             paper={selected}
             state={state}
             openEditor={openEditor}
-          />
-          <PaperWorkList
-            collection="research-debt"
-            paper={selected}
-            state={state}
-            openEditor={openEditor}
+            context="review"
           />
         </>
       )}
@@ -598,6 +639,7 @@ export function ManuscriptModule({
           state={state}
           openEditor={openEditor}
           addEvent={addEvent}
+          verifyAttempt={verifyAttempt}
           syncEmail={syncEmail}
         />
       )}

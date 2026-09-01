@@ -71,7 +71,13 @@ export function Dashboard({
 }) {
   const project = state.projects.find((item) => item.active) || state.projects[0];
   const manuscript = paper || state.manuscripts[0];
-  const debts = state["research-debt"].filter(isOpen);
+  const issues = [
+    ...state.reviews.map((item) => ({ item, collection: "reviews" as const })),
+    ...state["research-debt"].map((item) => ({
+      item,
+      collection: "research-debt" as const,
+    })),
+  ].filter(({ item }) => isOpen(item));
   return (
     <>
       <section className="daily-intro">
@@ -199,31 +205,48 @@ export function Dashboard({
         <article className="research-debt card real-panel">
           <div className="section-heading">
             <div>
-              <span className="label">RESEARCH DEBT / OBSIDIAN</span>
+              <span className="label">PAPER FEEDBACK / OBSIDIAN</span>
             </div>
-            <button className="mini-add" onClick={() => openEditor("research-debt")}>
-              ＋ Debt
+            <button
+              className="mini-add"
+              onClick={() =>
+                openEditor("reviews", {
+                  manuscriptId: manuscript?.id || "",
+                  manuscriptTitle: manuscript?.title || "",
+                  projectId: manuscript?.projectId || "",
+                  projectTitle: manuscript?.projectTitle || "",
+                  status: "Open",
+                })
+              }
+            >
+              ＋ Feedback
             </button>
           </div>
-          {!debts.length ? (
+          {!issues.length ? (
             <EmptyState
-              title="No open research debt"
-              detail="Add evidence, methods, statistics, writing, or reproducibility debt as it appears."
+              title="No open feedback"
+              detail="Feedback appears here beside its planned solution."
             />
           ) : (
-            <div className="real-record-list">
-              {debts.slice(0, 6).map((item) => (
-                <button key={item.id} onClick={() => openEditor("research-debt", item)}>
-                  <span className={`severity-mark ${(item.severity || "minor").toLowerCase()}`}>
+            <div className="real-record-list paper-issue-list">
+              {issues.slice(0, 6).map(({ item, collection }) => (
+                <button
+                  key={`${collection}-${item.id}`}
+                  onClick={() => openEditor(collection, item)}
+                >
+                  <span
+                    className={`severity-mark ${(item.severity || "unspecified").toLowerCase()}`}
+                  >
                     !
                   </span>
                   <span>
-                    <strong>{item.title}</strong>
-                    <small>
-                      {item.type || "Unclassified"} · {item.linkedObject || "No link"}
-                    </small>
+                    <strong>{item.description || item.title}</strong>
+                    <small>{item.manuscriptTitle || "No linked paper"}</small>
+                    {item.actionPlan && (
+                      <small className="issue-response">Plan: {item.actionPlan}</small>
+                    )}
                   </span>
-                  <b>{item.severity || "Minor"}</b>
+                  <b>{item.status || "Open"}</b>
                 </button>
               ))}
             </div>

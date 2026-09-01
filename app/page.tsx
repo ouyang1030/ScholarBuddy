@@ -401,7 +401,7 @@ export default function Home() {
   const addSubmissionEvent = async (record: Partial<RecordItem>) => {
     recordMutationsRef.current += 1;
     stateRequestRef.current?.abort();
-    let event: RecordItem;
+    let event: RecordItem & { verificationOnly?: boolean };
     try {
       const response = await bridgeFetch(`/submissions/event`, {
         method: "POST",
@@ -410,13 +410,13 @@ export default function Home() {
       });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error || "Submission event could not be saved.");
-      event = body.event as RecordItem;
+      event = body.event as RecordItem & { verificationOnly?: boolean };
     } finally {
       recordMutationsRef.current -= 1;
     }
     await loadState();
-    setToast("Submission timeline updated");
-    if (event.status === "Accepted" || event.status === "Published") {
+    setToast(event.verificationOnly ? "Submission check saved" : "Submission timeline updated");
+    if (!event.verificationOnly && (event.status === "Accepted" || event.status === "Published")) {
       const manuscript = state.manuscripts.find((item) => item.id === event.manuscriptId);
       showPaperCelebration(
         manuscript || {
@@ -426,6 +426,23 @@ export default function Home() {
         event.status,
       );
     }
+  };
+  const verifySubmissionAttempt = async (attemptId: string) => {
+    recordMutationsRef.current += 1;
+    stateRequestRef.current?.abort();
+    try {
+      const response = await bridgeFetch(`/submissions/verify`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ attemptId }),
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || "Submission check could not be saved.");
+    } finally {
+      recordMutationsRef.current -= 1;
+    }
+    await loadState();
+    setToast("Submission check saved");
   };
   const syncSubmissionEmail = async () => {
     recordMutationsRef.current += 1;
@@ -484,8 +501,8 @@ export default function Home() {
   };
   const manuscriptAttention =
     visibleSubmissionAlerts.length +
-    state.reviews.filter((item) => item.status !== "Resolved").length +
-    state["research-debt"].filter((item) => item.status !== "Resolved").length;
+    state.reviews.filter(isOpen).length +
+    state["research-debt"].filter(isOpen).length;
   const badges: Partial<Record<ModuleKey, number>> = {
     manuscript: manuscriptAttention || state.manuscripts.length,
     operations: state.operations.filter(isOpen).length,
@@ -650,6 +667,7 @@ export default function Home() {
               state={state}
               openEditor={openEditor}
               addEvent={addSubmissionEvent}
+              verifyAttempt={verifySubmissionAttempt}
               syncEmail={syncSubmissionEmail}
               selectedId={activePaper?.id || ""}
               onSelect={setPaperContextId}

@@ -33,6 +33,12 @@
 .status-event-form label.wide, .status-event-form > div { grid-column: 1 / -1; }
 .status-event-form input, .status-event-form select { height: 40px; border: 1px solid #d2dad1; border-radius: 8px; background: white; padding: 0 10px; color: #35413b; }
 .status-event-form > div { display: flex; justify-content: flex-end; gap: 8px; }
+.status-event-details { grid-column: 1 / -1; border: 1px solid #dce3da; border-radius: 9px; background: rgba(255,255,255,.55); }
+.status-event-details summary { padding: 10px 12px; cursor: pointer; color: #657269; font-size: 11px; font-weight: 750; }
+.status-event-details[open] { padding-bottom: 12px; }
+.status-event-details[open] summary { margin-bottom: 10px; border-bottom: 1px solid #e1e6df; }
+.status-event-details label { margin: 0 12px 10px; }
+.status-event-details label:last-child { margin-bottom: 0; }
 .submission-timeline { margin-top: 24px; padding: 22px; border-radius: 13px; background: #f6f8f4; border: 1px solid #e1e6df; }
 .submission-timeline > article { min-height: 72px; display: grid; grid-template-columns: 13px 100px 1fr; gap: 12px; position: relative; padding: 11px 0; }
 .submission-timeline > article:not(:last-child)::after { content: ""; position: absolute; left: 5px; top: 28px; bottom: -12px; width: 1px; background: #cfd8ce; }

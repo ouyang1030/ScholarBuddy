@@ -97,8 +97,8 @@ const closedStatuses = new Set(
 );
 export const isOpen = (item: RecordItem) => !closedStatuses.has((item.status || "").toLowerCase());
 
-// The workbench knows the paper, its open gaps and its unresolved feedback; until
-// this sent all of it the model was reasoning from a project title alone.
+// Feedback and internal gaps are one user workflow even though older vaults store
+// them in two collections. The model receives the same combined issue view as the UI.
 export function recordContext(state: WorkbenchState, paperId = "") {
   const project = state.projects.find((item) => item.active) || state.projects[0];
   const paper = state.manuscripts.find((item) => item.id === paperId) || state.manuscripts[0];
@@ -107,8 +107,7 @@ export function recordContext(state: WorkbenchState, paperId = "") {
     .slice(0, 4);
   const scoped = (items: RecordItem[]) =>
     items.filter((item) => isOpen(item) && (!paper || item.manuscriptId === paper.id)).slice(0, 6);
-  const gaps = scoped(state["research-debt"]);
-  const feedback = scoped(state.reviews);
+  const feedback = [...scoped(state.reviews), ...scoped(state["research-debt"])].slice(0, 8);
   const operations = state.operations.filter(isOpen).slice(0, 5);
   // Planning a day without knowing what happened in the last few is guesswork,
   // so the recent log and the unjudged ideas travel with the project frame.
@@ -136,17 +135,19 @@ export function recordContext(state: WorkbenchState, paperId = "") {
         .filter(Boolean)
         .join("\n"),
     list(
-      "OPEN RESEARCH GAPS:",
-      gaps.map(
-        (item) =>
-          `- [${item.severity || "Major"}] ${item.id}: ${item.title}${item.manuscriptSection ? ` (${item.manuscriptSection})` : ""}${item.dueDate ? ` · due ${item.dueDate}` : ""}`,
-      ),
-    ),
-    list(
-      "UNRESOLVED FEEDBACK:",
-      feedback.map(
-        (item) =>
-          `- [${item.severity || "Major"}] ${item.id}: ${item.title}${item.reviewRound ? ` (${item.reviewRound}${item.reviewSource ? `, ${item.reviewSource}` : ""})` : ""}`,
+      "OPEN FEEDBACK & PLANNED RESPONSES:",
+      feedback.map((item) =>
+        [
+          `- [${item.severity || "Unspecified"}] ${item.id}: ${item.description || item.title}`,
+          item.manuscriptSection ? `section ${item.manuscriptSection}` : "",
+          item.reviewRound
+            ? `${item.reviewRound}${item.reviewSource ? `, ${item.reviewSource}` : ""}`
+            : "",
+          item.actionPlan ? `plan: ${item.actionPlan}` : "",
+          item.dueDate ? `due ${item.dueDate}` : "",
+        ]
+          .filter(Boolean)
+          .join(" · "),
       ),
     ),
     list(
@@ -304,7 +305,7 @@ export function submissionAlertKey(alert: SubmissionAlert) {
 export function submissionAlerts(state: WorkbenchState): SubmissionAlert[] {
   const alerts: SubmissionAlert[] = [];
   for (const attempt of state["submission-attempts"]) {
-    if (["Accepted", "Rejected", "Withdrawn"].includes(attempt.status || "")) continue;
+    if (["Accepted", "Published", "Rejected", "Withdrawn"].includes(attempt.status || "")) continue;
     const revision = daysUntil(attempt.dueDate);
     const followUp = daysUntil(attempt.followUpDue);
     const expected = daysUntil(attempt.expectedResponseDate);

@@ -1,10 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import { clampProgress } from "../../lib/format";
+import { clampProgress, localDateKey } from "../../lib/format";
 import { CLOSED_RECORD_STATUSES } from "../../../shared/constants.mjs";
 import {
   collectionLabels,
+  manuscriptSections,
   operationTypes,
   statusDefault,
   statusOptions,
@@ -33,9 +34,14 @@ export function RecordEditor({
   const isJournal = editor.collection === "journal";
   const isIdea = editor.collection === "ideas";
   const isReadingQueue = editor.collection === "reading-queue";
+  const isFeedback = editor.collection === "reviews";
+  const isResearchGap = editor.collection === "research-debt";
+  const isPaperWorkItem = isFeedback || isResearchGap;
   const isSubmission =
     editor.collection === "submission-attempts" || editor.collection === "submission-events";
-  const showProgress = !isReadingQueue && !isSubmission && !isJournal && !isIdea;
+  const isSubmissionAttempt = editor.collection === "submission-attempts";
+  const showProgress =
+    !isReadingQueue && !isSubmission && !isJournal && !isIdea && !isPaperWorkItem;
   // A log entry has no status and no percentage, an idea only has the three
   // states its inbox uses, and a reading item is read rather than worked on.
   // None should carry the generic record defaults into the vault, where they
@@ -43,7 +49,11 @@ export function RecordEditor({
   const [form, setForm] = useState<Partial<RecordItem>>({
     ...(isJournal ? {} : { status: statusDefault(editor.collection) }),
     ...(showProgress ? { progress: 0 } : {}),
+    ...(isFeedback ? { issueKind: "Feedback" } : {}),
     ...editor.record,
+    ...(isPaperWorkItem && editor.record?.title && !editor.record.description
+      ? { description: editor.record.title }
+      : {}),
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -51,14 +61,33 @@ export function RecordEditor({
   const set = (key: keyof RecordItem, value: string | number | boolean) =>
     setForm((current) => ({ ...current, [key]: value }));
   const save = async () => {
-    if (!String(form.title || "").trim()) {
+    const feedback = String(form.description || "").trim();
+    if (isPaperWorkItem && !feedback) {
+      setError("Feedback is required.");
+      return;
+    }
+    if (!isPaperWorkItem && !String(form.title || "").trim()) {
       setError("Title is required.");
       return;
     }
     setSaving(true);
     setError("");
     try {
-      const record: Partial<RecordItem> = { ...form, title: String(form.title).trim() };
+      const feedbackTitle = feedback
+        .split(/\r?\n/)
+        .find((line) => line.trim())
+        ?.trim()
+        .slice(0, 160);
+      const record: Partial<RecordItem> = isPaperWorkItem
+        ? {
+            ...form,
+            title: String(form.title || feedbackTitle).trim(),
+            description: feedback,
+            issueKind: "Feedback",
+          }
+        : { ...form, title: String(form.title).trim() };
+      if (isPaperWorkItem && record.status === "Resolved" && !record.resolutionDecision)
+        record.resolutionDecision = "Addressed";
       // A percentage the form never showed is a value the researcher never set.
       if (!showProgress) delete record.progress;
       else record.progress = clampProgress(form.progress);
@@ -86,11 +115,22 @@ export function RecordEditor({
     }
   };
   const existing = Boolean(form.id);
+  const showStatus =
+    !isJournal && (!isPaperWorkItem || existing) && !(isSubmissionAttempt && existing);
+  const showDescription = !isSubmission && !isPaperWorkItem;
+  const descriptionLabel =
+    editor.collection === "manuscripts"
+      ? "Manuscript text · use Markdown section headings"
+      : "Notes";
+  const editorLabel = isPaperWorkItem ? "Feedback & response" : collectionLabels[editor.collection];
   const options = statusOptions(editor.collection);
   // A status the list does not offer still has to be shown and still has to be
   // changeable; left out, the select renders blank and the record looks empty.
+  const offeredStatuses = isSubmissionAttempt && !existing ? options.slice(0, 2) : options;
   const statusChoices =
-    form.status && !options.includes(form.status) ? [...options, form.status] : options;
+    form.status && !offeredStatuses.includes(form.status)
+      ? [...offeredStatuses, form.status]
+      : offeredStatuses;
   // The operation vocabulary was rewritten, so a record filed under an older
   // type has to keep offering it rather than reading as Unclassified while the
   // board card beside it still shows the old label.
@@ -108,6 +148,31 @@ export function RecordEditor({
     "submission-attempts",
     "journal",
   ].includes(editor.collection);
+  const paperLinkField = (
+    <label>
+      <span>Linked paper</span>
+      <select
+        value={form.manuscriptId || ""}
+        onChange={(event) => {
+          const manuscript = state.manuscripts.find((item) => item.id === event.target.value);
+          set("manuscriptId", event.target.value);
+          set("manuscriptTitle", manuscript?.title || "");
+        }}
+      >
+        <option value="">Not linked</option>
+        {state.manuscripts.map((manuscript) => (
+          <option key={manuscript.id} value={manuscript.id}>
+            {manuscript.title}
+          </option>
+        ))}
+        {form.manuscriptId && !state.manuscripts.some((item) => item.id === form.manuscriptId) && (
+          <option value={form.manuscriptId}>
+            {form.manuscriptTitle || form.manuscriptId} · paper not found
+          </option>
+        )}
+      </select>
+    </label>
+  );
   return (
     <div className="drawer-backdrop" onMouseDown={onClose}>
       <aside
@@ -117,7 +182,7 @@ export function RecordEditor({
         aria-modal="true"
         tabIndex={-1}
         onMouseDown={(event) => event.stopPropagation()}
-        aria-label={`Edit ${collectionLabels[editor.collection]}`}
+        aria-label={`Edit ${editorLabel}`}
       >
         <div className="drawer-head">
           <button onClick={onClose}>×</button>
@@ -126,48 +191,71 @@ export function RecordEditor({
         </div>
         <div className="drawer-title">
           {form.id && <span>{form.id}</span>}
-          <h2>
-            {existing
-              ? `Edit ${collectionLabels[editor.collection]}`
-              : `New ${collectionLabels[editor.collection]}`}
-          </h2>
+          <h2>{existing ? `Edit ${editorLabel}` : `New ${editorLabel}`}</h2>
           <p>
             Saved as a readable Markdown record in Obsidian. Manual values remain authoritative
             until you change them.
           </p>
         </div>
         <div className="record-form">
-          <label className="wide">
-            <span>Title</span>
-            <input
-              autoFocus
-              value={form.title || ""}
-              onChange={(event) => set("title", event.target.value)}
-            />
-          </label>
-          <label className="wide">
-            <span>
-              {editor.collection === "manuscripts"
-                ? "Manuscript text · use Markdown section headings"
-                : "Notes"}
-            </span>
-            <textarea
-              value={form.description || ""}
-              onChange={(event) => set("description", event.target.value)}
-              placeholder={
-                editor.collection === "manuscripts"
-                  ? "## Introduction\n\n…\n\n## Methods\n\n…"
-                  : undefined
-              }
-            />
-          </label>
-          {!isJournal && (
+          {isPaperWorkItem ? (
+            <label className="wide">
+              <span>Feedback</span>
+              <textarea
+                autoFocus
+                value={form.description || ""}
+                onChange={(event) => set("description", event.target.value)}
+                placeholder="What needs attention?"
+              />
+            </label>
+          ) : (
+            <label className="wide">
+              <span>Title</span>
+              <input
+                autoFocus
+                value={form.title || ""}
+                onChange={(event) => set("title", event.target.value)}
+              />
+            </label>
+          )}
+          {showDescription && (
+            <label className="wide">
+              <span>{descriptionLabel}</span>
+              <textarea
+                value={form.description || ""}
+                onChange={(event) => set("description", event.target.value)}
+                placeholder={
+                  editor.collection === "manuscripts"
+                    ? "## Introduction\n\n…\n\n## Methods\n\n…"
+                    : undefined
+                }
+              />
+            </label>
+          )}
+          {showStatus && (
             <label>
-              <span>Status</span>
+              <span>
+                {isSubmissionAttempt
+                  ? "Initial state"
+                  : isPaperWorkItem
+                    ? "Workflow status"
+                    : "Status"}
+              </span>
               <select
                 value={form.status || statusDefault(editor.collection)}
                 onChange={(event) => {
                   const nextStatus = event.target.value;
+                  if (isSubmissionAttempt && !existing) {
+                    setForm((current) => ({
+                      ...current,
+                      status: nextStatus,
+                      submittedAt:
+                        nextStatus === "Submitted"
+                          ? current.submittedAt || localDateKey(new Date())
+                          : "",
+                    }));
+                    return;
+                  }
                   if (showProgress && CLOSED_RECORD_STATUSES.includes(nextStatus)) {
                     setForm((current) => ({ ...current, status: nextStatus, progress: 100 }));
                   } else {
@@ -346,78 +434,123 @@ export function RecordEditor({
               </label>
             </>
           )}
-          {supportsPaperLink && (
-            <label>
-              <span>Linked paper</span>
-              <select
-                value={form.manuscriptId || ""}
-                onChange={(event) => {
-                  const manuscript = state.manuscripts.find(
-                    (item) => item.id === event.target.value,
-                  );
-                  set("manuscriptId", event.target.value);
-                  set("manuscriptTitle", manuscript?.title || "");
-                }}
-              >
-                <option value="">Not linked</option>
-                {state.manuscripts.map((manuscript) => (
-                  <option key={manuscript.id} value={manuscript.id}>
-                    {manuscript.title}
-                  </option>
-                ))}
-                {/* A record can point at a paper that no longer exists; show that
-                    instead of silently rendering it as "Not linked". */}
-                {form.manuscriptId &&
-                  !state.manuscripts.some((item) => item.id === form.manuscriptId) && (
-                    <option value={form.manuscriptId}>
-                      {form.manuscriptTitle || form.manuscriptId} · paper not found
-                    </option>
-                  )}
-              </select>
-            </label>
-          )}
-          {editor.collection === "research-debt" && (
+          {supportsPaperLink && !isPaperWorkItem && paperLinkField}
+          {isPaperWorkItem && (
             <>
-              <label>
-                <span>Severity</span>
-                <select
-                  value={form.severity || "Major"}
-                  onChange={(event) => set("severity", event.target.value)}
-                >
-                  <option>Critical</option>
-                  <option>Major</option>
-                  <option>Minor</option>
-                </select>
-              </label>
-              <label>
-                <span>Type</span>
-                <select
-                  value={form.type || "Evidence"}
-                  onChange={(event) => set("type", event.target.value)}
-                >
-                  <option>Evidence</option>
-                  <option>Methods</option>
-                  <option>Statistics</option>
-                  <option>Writing</option>
-                  <option>Reproducibility</option>
-                </select>
-              </label>
-              <label>
-                <span>Paper section</span>
-                <input
-                  value={form.manuscriptSection || ""}
-                  onChange={(event) => set("manuscriptSection", event.target.value)}
-                  placeholder="Methods, Results…"
+              <label className="wide">
+                <span>Solution · optional</span>
+                <textarea
+                  value={form.actionPlan || ""}
+                  onChange={(event) => set("actionPlan", event.target.value)}
+                  placeholder="What will you change, check, or explain?"
                 />
               </label>
-              <label>
-                <span>Due date</span>
-                <input
-                  type="date"
-                  value={form.dueDate || ""}
-                  onChange={(event) => set("dueDate", event.target.value)}
-                />
-              </label>
+              <details className="record-form-details wide">
+                <summary>More details</summary>
+                <div className="record-form-details-grid">
+                  <label>
+                    <span>Priority</span>
+                    <select
+                      value={form.severity || ""}
+                      onChange={(event) => set("severity", event.target.value)}
+                    >
+                      <option value="">Not set</option>
+                      {form.severity === "Critical" && <option>Critical</option>}
+                      <option>Major</option>
+                      <option>Minor</option>
+                      <option>Suggestion</option>
+                    </select>
+                  </label>
+                  {paperLinkField}
+                  <label>
+                    <span>Paper section</span>
+                    <select
+                      value={form.manuscriptSection || ""}
+                      onChange={(event) => set("manuscriptSection", event.target.value)}
+                    >
+                      <option value="">Not set</option>
+                      {manuscriptSections.slice(1).map((section) => (
+                        <option key={section}>{section}</option>
+                      ))}
+                      {form.manuscriptSection &&
+                        !manuscriptSections.includes(form.manuscriptSection) && (
+                          <option>{form.manuscriptSection}</option>
+                        )}
+                    </select>
+                  </label>
+                  <label>
+                    <span>Due date</span>
+                    <input
+                      type="date"
+                      value={form.dueDate || ""}
+                      onChange={(event) => set("dueDate", event.target.value)}
+                    />
+                  </label>
+                  <label>
+                    <span>Category</span>
+                    <select
+                      value={form.type || ""}
+                      onChange={(event) => set("type", event.target.value)}
+                    >
+                      <option value="">Not set</option>
+                      <option>Evidence</option>
+                      <option>Methods</option>
+                      <option>Statistics</option>
+                      <option>Writing</option>
+                      <option>Reproducibility</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>Review round</span>
+                    <select
+                      value={form.reviewRound || ""}
+                      onChange={(event) => set("reviewRound", event.target.value)}
+                    >
+                      <option value="">Not set</option>
+                      <option>Pre-submission</option>
+                      <option>R1</option>
+                      <option>R2</option>
+                      <option>R3</option>
+                      {form.reviewRound &&
+                        !["Pre-submission", "R1", "R2", "R3"].includes(form.reviewRound) && (
+                          <option>{form.reviewRound}</option>
+                        )}
+                    </select>
+                  </label>
+                  <label>
+                    <span>Source</span>
+                    <input
+                      value={form.reviewSource || ""}
+                      onChange={(event) => set("reviewSource", event.target.value)}
+                      placeholder="Reviewer 2, supervisor…"
+                    />
+                  </label>
+                </div>
+              </details>
+              {form.status === "Resolved" && (
+                <>
+                  <label>
+                    <span>Outcome</span>
+                    <select
+                      value={form.resolutionDecision || "Addressed"}
+                      onChange={(event) => set("resolutionDecision", event.target.value)}
+                    >
+                      <option>Addressed</option>
+                      <option>Partially addressed</option>
+                      <option>Accepted as limitation</option>
+                      <option>No change</option>
+                    </select>
+                  </label>
+                  <label className="wide">
+                    <span>Result / response · optional</span>
+                    <textarea
+                      value={form.resolution || ""}
+                      onChange={(event) => set("resolution", event.target.value)}
+                      placeholder="What changed, or why no change was needed"
+                    />
+                  </label>
+                </>
+              )}
             </>
           )}
           {editor.collection === "experiments" && (
@@ -442,59 +575,6 @@ export function RecordEditor({
                     </option>
                   ))}
                 </select>
-              </label>
-            </>
-          )}
-          {editor.collection === "reviews" && (
-            <>
-              <label>
-                <span>Severity</span>
-                <select
-                  value={form.severity || "Major"}
-                  onChange={(event) => set("severity", event.target.value)}
-                >
-                  <option>Major</option>
-                  <option>Minor</option>
-                  <option>Suggestion</option>
-                </select>
-              </label>
-              <label>
-                <span>Review round</span>
-                <select
-                  value={form.reviewRound || "Internal"}
-                  onChange={(event) => set("reviewRound", event.target.value)}
-                >
-                  <option>Internal</option>
-                  <option>Supervisor</option>
-                  <option>Co-author</option>
-                  <option>R1</option>
-                  <option>R2</option>
-                  <option>R3</option>
-                </select>
-              </label>
-              <label>
-                <span>Source</span>
-                <input
-                  value={form.reviewSource || ""}
-                  onChange={(event) => set("reviewSource", event.target.value)}
-                  placeholder="Reviewer 2, supervisor…"
-                />
-              </label>
-              <label>
-                <span>Paper section</span>
-                <input
-                  value={form.manuscriptSection || ""}
-                  onChange={(event) => set("manuscriptSection", event.target.value)}
-                  placeholder="Methods, Results…"
-                />
-              </label>
-              <label className="wide">
-                <span>Resolution note</span>
-                <textarea
-                  value={form.resolution || ""}
-                  onChange={(event) => set("resolution", event.target.value)}
-                  placeholder="What changed, or why no change was made"
-                />
               </label>
             </>
           )}
@@ -557,7 +637,7 @@ export function RecordEditor({
                 />
               </label>
               <label className="wide">
-                <span>Editorial Manager / ScholarOne URL</span>
+                <span>Submission portal URL</span>
                 <input
                   type="url"
                   value={form.portalUrl || ""}
@@ -565,89 +645,84 @@ export function RecordEditor({
                   placeholder="https://…"
                 />
               </label>
-              <label>
-                <span>Corresponding author</span>
-                <input
-                  value={form.correspondingAuthor || ""}
-                  onChange={(event) => set("correspondingAuthor", event.target.value)}
-                />
-              </label>
-              <label>
-                <span>Author email</span>
-                <input
-                  type="email"
-                  value={form.correspondingEmail || ""}
-                  onChange={(event) => set("correspondingEmail", event.target.value)}
-                />
-              </label>
-              <label>
-                <span>Round</span>
-                <select
-                  value={form.round || "Initial"}
-                  onChange={(event) => set("round", event.target.value)}
-                >
-                  <option>Initial</option>
-                  <option>R1</option>
-                  <option>R2</option>
-                  <option>R3</option>
-                </select>
-              </label>
-              <label>
-                <span>Submitted</span>
-                <input
-                  type="date"
-                  value={(form.submittedAt || "").slice(0, 10)}
-                  onChange={(event) => set("submittedAt", event.target.value)}
-                />
-              </label>
-              <label>
-                <span>Current stage since</span>
-                <input
-                  type="date"
-                  value={(form.stageStartedAt || "").slice(0, 10)}
-                  onChange={(event) => set("stageStartedAt", event.target.value)}
-                />
-              </label>
-              <label>
-                <span>Last verified</span>
-                <input
-                  type="date"
-                  value={(form.lastVerifiedAt || "").slice(0, 10)}
-                  onChange={(event) => set("lastVerifiedAt", event.target.value)}
-                />
-              </label>
-              <label>
-                <span>Revision deadline</span>
-                <input
-                  type="date"
-                  value={(form.dueDate || "").slice(0, 10)}
-                  onChange={(event) => set("dueDate", event.target.value)}
-                />
-              </label>
-              <label>
-                <span>Expected response</span>
-                <input
-                  type="date"
-                  value={(form.expectedResponseDate || "").slice(0, 10)}
-                  onChange={(event) => set("expectedResponseDate", event.target.value)}
-                />
-              </label>
-              <label>
-                <span>Next check</span>
-                <input
-                  type="date"
-                  value={(form.nextCheckDate || "").slice(0, 10)}
-                  onChange={(event) => set("nextCheckDate", event.target.value)}
-                />
-              </label>
-              <label>
-                <span>Follow-up due</span>
-                <input
-                  type="date"
-                  value={(form.followUpDue || "").slice(0, 10)}
-                  onChange={(event) => set("followUpDue", event.target.value)}
-                />
-              </label>
+              {!existing && form.status === "Submitted" && (
+                <label>
+                  <span>Submission date</span>
+                  <input
+                    type="date"
+                    value={(form.submittedAt || "").slice(0, 10)}
+                    onChange={(event) => set("submittedAt", event.target.value)}
+                  />
+                </label>
+              )}
+              <details className="record-form-details wide">
+                <summary>More details & reminders</summary>
+                <div className="record-form-details-grid">
+                  <label>
+                    <span>Corresponding author</span>
+                    <input
+                      value={form.correspondingAuthor || ""}
+                      onChange={(event) => set("correspondingAuthor", event.target.value)}
+                    />
+                  </label>
+                  <label>
+                    <span>Author email</span>
+                    <input
+                      type="email"
+                      value={form.correspondingEmail || ""}
+                      onChange={(event) => set("correspondingEmail", event.target.value)}
+                    />
+                  </label>
+                  <label>
+                    <span>Round</span>
+                    <input value={form.round || "Initial"} readOnly />
+                  </label>
+                  {existing && (
+                    <label>
+                      <span>Submitted</span>
+                      <input
+                        type="date"
+                        value={(form.submittedAt || "").slice(0, 10)}
+                        onChange={(event) => set("submittedAt", event.target.value)}
+                      />
+                    </label>
+                  )}
+                  {(form.status === "Revision Required" || form.dueDate) && (
+                    <label>
+                      <span>Revision deadline</span>
+                      <input
+                        type="date"
+                        value={(form.dueDate || "").slice(0, 10)}
+                        onChange={(event) => set("dueDate", event.target.value)}
+                      />
+                    </label>
+                  )}
+                  <label>
+                    <span>Expected response</span>
+                    <input
+                      type="date"
+                      value={(form.expectedResponseDate || "").slice(0, 10)}
+                      onChange={(event) => set("expectedResponseDate", event.target.value)}
+                    />
+                  </label>
+                  <label>
+                    <span>Next check</span>
+                    <input
+                      type="date"
+                      value={(form.nextCheckDate || "").slice(0, 10)}
+                      onChange={(event) => set("nextCheckDate", event.target.value)}
+                    />
+                  </label>
+                  <label>
+                    <span>Follow-up due</span>
+                    <input
+                      type="date"
+                      value={(form.followUpDue || "").slice(0, 10)}
+                      onChange={(event) => set("followUpDue", event.target.value)}
+                    />
+                  </label>
+                </div>
+              </details>
             </>
           )}
           {editor.collection === "submission-events" && (

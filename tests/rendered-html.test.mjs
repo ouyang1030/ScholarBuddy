@@ -47,7 +47,7 @@ test("server-renders the Sports Research OS", async () => {
   assert.match(html, /macOS Calendar \/ Live/i);
   assert.match(html, /Ready for a new focus session/i);
   assert.match(html, /LIVE LIBRARY/i);
-  assert.match(html, /Research debt \/ Obsidian/i);
+  assert.match(html, /Paper feedback \/ Obsidian/i);
   assert.match(html, /Research log \/ Obsidian/i);
   assert.match(html, /Idea inbox \/ Obsidian/i);
   assert.match(html, /What actually changed today/i);

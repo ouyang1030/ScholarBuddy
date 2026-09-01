@@ -1134,6 +1134,36 @@ function submissionEmailCandidate(emailValue, attempts) {
   };
 }
 
+function nextRevisionRound(value) {
+  const match = String(value || "").match(/^R(\d+)$/i);
+  return match ? `R${Number(match[1]) + 1}` : "R1";
+}
+
+async function verifySubmissionAttemptUnlocked(config, incoming) {
+  const attemptId = safeRecordId(requireText(incoming.attemptId, "Submission attempt id", 100));
+  const verifiedAt = requireIsoDate(
+    incoming.verifiedAt || new Date().toISOString(),
+    "Submission verification date",
+  ).toISOString();
+  const attempts = await listRecords(config, "submission-attempts");
+  const attempt = attempts.find((item) => item.id === attemptId);
+  if (!attempt) {
+    const error = new Error("Submission attempt was not found.");
+    error.status = 404;
+    throw error;
+  }
+  if (new Date(verifiedAt) < new Date(attempt.lastVerifiedAt || 0)) return attempt;
+  return saveRecordUnlocked(config, "submission-attempts", {
+    ...attempt,
+    lastVerifiedAt: verifiedAt,
+    rawStatus: incoming.rawStatus || attempt.rawStatus,
+  });
+}
+
+async function verifySubmissionAttempt(config, incoming) {
+  return serializeRecordMutation(() => verifySubmissionAttemptUnlocked(config, incoming));
+}
+
 async function addSubmissionEventUnlocked(config, incoming) {
   const attemptId = safeRecordId(requireText(incoming.attemptId, "Submission attempt id", 100));
   const stage = requireText(incoming.status, "Submission status", 100);
@@ -1152,6 +1182,20 @@ async function addSubmissionEventUnlocked(config, incoming) {
     const error = new Error("Submission attempt was not found.");
     error.status = 404;
     throw error;
+  }
+  if (stage === attempt.status) {
+    const verified = await verifySubmissionAttemptUnlocked(config, {
+      attemptId,
+      verifiedAt: eventDate,
+      rawStatus: incoming.rawStatus,
+    });
+    return {
+      ...verified,
+      eventDate,
+      source: incoming.source || "Manual",
+      confidence: incoming.confidence || "confirmed",
+      verificationOnly: true,
+    };
   }
   const event = await saveRecordUnlocked(config, "submission-events", {
     ...incoming,
@@ -1172,6 +1216,8 @@ async function addSubmissionEventUnlocked(config, incoming) {
       rawStatus: incoming.rawStatus || attempt.rawStatus || stage,
       stageStartedAt: eventDate,
       lastVerifiedAt: eventDate,
+      submittedAt: stage === "Submitted" && !attempt.submittedAt ? eventDate : attempt.submittedAt,
+      round: stage === "Revised Submission" ? nextRevisionRound(attempt.round) : attempt.round,
     });
   }
   return event;
@@ -1183,7 +1229,7 @@ async function addSubmissionEvent(config, incoming) {
 
 async function syncSubmissionEmails(config, suppliedEmails) {
   const attempts = await listRecords(config, "submission-attempts");
-  if (!attempts.length) return { scanned: 0, updated: [], pending: [], ignored: 0 };
+  if (!attempts.length) return { scanned: 0, updated: [], verified: 0, pending: [], ignored: 0 };
   let emails = Array.isArray(suppliedEmails) ? suppliedEmails : null;
   if (!emails) {
     const identifiers = attempts
@@ -1199,19 +1245,26 @@ async function syncSubmissionEmails(config, suppliedEmails) {
     .filter(Boolean)
     .sort((a, b) => a.email.receivedAt.localeCompare(b.email.receivedAt));
   const updated = [];
+  let verified = 0;
   const pending = [];
   for (const candidate of candidates) {
     if (candidate.email.id && knownMessages.has(candidate.email.id)) continue;
+    const attempt = attempts.find((item) => item.id === candidate.attemptId);
+    if (attempt?.status === candidate.status) {
+      if (new Date(candidate.email.receivedAt) <= new Date(attempt.lastVerifiedAt || 0)) continue;
+      await verifySubmissionAttempt(config, {
+        attemptId: candidate.attemptId,
+        verifiedAt: candidate.email.receivedAt,
+        rawStatus: candidate.rawStatus,
+      });
+      attempt.lastVerifiedAt = candidate.email.receivedAt;
+      verified += 1;
+      continue;
+    }
     if (candidate.confidence !== "high" || consequentialSubmissionStages.has(candidate.status)) {
       pending.push(candidate);
       continue;
     }
-    const attempt = attempts.find((item) => item.id === candidate.attemptId);
-    if (
-      attempt?.status === candidate.status &&
-      new Date(candidate.email.receivedAt) <= new Date(attempt.lastVerifiedAt || 0)
-    )
-      continue;
     const event = await addSubmissionEvent(config, {
       attemptId: candidate.attemptId,
       status: candidate.status,
@@ -1228,6 +1281,7 @@ async function syncSubmissionEmails(config, suppliedEmails) {
   return {
     scanned: emails.length,
     updated,
+    verified,
     pending,
     ignored: Math.max(0, emails.length - candidates.length),
   };
@@ -2553,6 +2607,12 @@ async function handle(request, providedConfig) {
   }
   if (url.pathname === "/submissions/event" && request.method === "POST")
     return json(origin, { event: await addSubmissionEvent(config, await readJson(request)) }, 201);
+  if (url.pathname === "/submissions/verify" && request.method === "POST")
+    return json(
+      origin,
+      { attempt: await verifySubmissionAttempt(config, await readJson(request)) },
+      200,
+    );
   if (url.pathname === "/submissions/email-sync" && request.method === "POST") {
     const payload = await readJson(request);
     return json(origin, await syncSubmissionEmails(config, payload.emails));
@@ -2879,5 +2939,6 @@ export {
   searchObsidian,
   submissionEmailCandidate,
   syncSubmissionEmails,
+  verifySubmissionAttempt,
   zoteroItemsByKey,
 };

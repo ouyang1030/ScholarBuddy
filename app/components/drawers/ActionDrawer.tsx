@@ -117,7 +117,7 @@ export function ActionDrawer({
     contract.outcome === "section"
       ? `Update ${section}`
       : contract.outcome === "reviews"
-        ? "Add review items"
+        ? "Add review issues"
         : contract.outcome === "tasks"
           ? "Add plan to Today"
           : "Save with evidence";
@@ -207,8 +207,9 @@ export function ActionDrawer({
         await saveRecord("reviews", {
           title: item.title,
           description: item.detail,
+          issueKind: "Feedback",
           severity: item.severity,
-          status: "Active",
+          status: "Open",
           manuscriptSection: section,
           reviewSource: "AI assist",
           manuscriptId: paper?.id || "",
@@ -217,11 +218,12 @@ export function ActionDrawer({
           projectTitle: paper?.projectTitle || "",
         });
       else if (item.kind === "gap")
-        await saveRecord("research-debt", {
+        await saveRecord("reviews", {
           title: item.title,
           description: item.detail,
+          issueKind: "Feedback",
           severity: item.severity,
-          status: "Active",
+          status: "Open",
           dueDate: item.dueDate,
           manuscriptId: paper?.id || "",
           manuscriptTitle: paper?.title || "",
@@ -291,8 +293,9 @@ export function ActionDrawer({
           await saveRecord("reviews", {
             title: `AI review · ${section}`,
             description: latest.output,
+            issueKind: "Feedback",
             severity: "Major",
-            status: "Active",
+            status: "Open",
             manuscriptSection: section,
             reviewSource: "AI assist",
             manuscriptId: paper?.id || "",
@@ -564,9 +567,9 @@ export function ActionDrawer({
                       <strong>{item.title}</strong>
                       <small>
                         {item.kind === "review"
-                          ? `Review item · ${item.severity}`
+                          ? `Feedback · ${item.severity}`
                           : item.kind === "gap"
-                            ? `Research gap · ${item.severity}`
+                            ? `Feedback · ${item.severity}`
                             : "Task for today"}
                         {item.dueDate ? ` · due ${item.dueDate}` : ""}
                       </small>
@@ -578,11 +581,9 @@ export function ActionDrawer({
                     >
                       {appliedActions.includes(item.title)
                         ? "Added ✓"
-                        : item.kind === "review"
-                          ? "Add review"
-                          : item.kind === "gap"
-                            ? "Add gap"
-                            : "Add to today"}
+                        : item.kind === "review" || item.kind === "gap"
+                          ? "Add feedback"
+                          : "Add to today"}
                     </button>
                   </article>
                 ))}

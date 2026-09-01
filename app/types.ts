@@ -62,6 +62,9 @@ export type RecordItem = {
   reviewRound?: string;
   reviewSource?: string;
   resolution?: string;
+  resolutionDecision?: string;
+  issueKind?: string;
+  actionPlan?: string;
   linkedDebtId?: string;
   originReviewId?: string;
   stage?: string;
@@ -241,5 +244,6 @@ export type SubmissionEmailCandidate = {
 export type SubmissionSyncResult = {
   scanned: number;
   updated: RecordItem[];
+  verified?: number;
   pending: SubmissionEmailCandidate[];
 };
