@@ -154,8 +154,8 @@ export const AI_PROVIDER_DEFINITIONS = [
     base: "DEEPSEEK_BASE_URL",
     model: "DEEPSEEK_MODEL",
     defaultBase: "https://api.deepseek.com",
-    defaultModel: "deepseek-v4-pro",
-    displayModel: "V4 Pro",
+    defaultModel: "deepseek-v4-flash",
+    displayModel: "V4 Flash",
     adapter: "chat-completions",
   },
   {
@@ -190,8 +190,8 @@ export const AI_PROVIDER_DEFINITIONS = [
     base: "ANTHROPIC_BASE_URL",
     model: "ANTHROPIC_MODEL",
     defaultBase: "https://api.anthropic.com",
-    defaultModel: "claude-fable-5-1",
-    displayModel: "Fable 5.1",
+    defaultModel: "claude-sonnet-5",
+    displayModel: "Sonnet 5",
     adapter: "anthropic-messages",
   },
   {

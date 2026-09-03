@@ -334,7 +334,7 @@ test("AI providers use their native request and response formats", () => {
       key: "ANTHROPIC_API_KEY",
       adapter: "anthropic-messages",
       url: "https://api.anthropic.com/v1/messages",
-      model: "claude-fable-5-1",
+      model: "claude-sonnet-5",
     },
     grok: {
       key: "XAI_API_KEY",
