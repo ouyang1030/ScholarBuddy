@@ -39,6 +39,7 @@ npm run setup
 On macOS, setup installs the per-user background Bridge and opens a private page at `http://127.0.0.1:32145/setup`. Use it to:
 
 - Store optional AI credentials in macOS Keychain.
+- Test an exact provider model before saving it; the check sends one short request and does not persist the draft key or model.
 - Choose an Obsidian vault with the system folder picker.
 - Detect Zotero Desktop and request Calendar permission.
 - Return to ScholarBuddy and pair the same browser automatically.

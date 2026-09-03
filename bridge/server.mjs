@@ -1842,6 +1842,62 @@ async function providerFetch(target, request, signal) {
   return response;
 }
 
+function providerTestCall(config, payload) {
+  const provider = String(payload?.provider || "");
+  const definition = providerDefinitions[provider];
+  if (!definition) {
+    const error = new Error("Select a supported AI provider.");
+    error.status = 422;
+    error.code = "provider_invalid";
+    throw error;
+  }
+  const suppliedApiKey = String(payload?.apiKey || "").trim();
+  if (suppliedApiKey && (suppliedApiKey.length < 8 || suppliedApiKey.length > 2_000)) {
+    const error = new Error("Enter a valid API key.");
+    error.status = 422;
+    throw error;
+  }
+  const model = String(
+    payload?.model || config[definition.model] || definition.defaultModel,
+  ).trim();
+  if (!model || model.length > 200 || /[\r\n]/.test(model)) {
+    const error = new Error("Model name is invalid.");
+    error.status = 422;
+    throw error;
+  }
+  const apiKey = suppliedApiKey || config[definition.key];
+  if (!apiKey) {
+    const error = new Error(`Enter or save a ${definition.label} API key before testing.`);
+    error.status = 422;
+    error.code = "provider_not_configured";
+    throw error;
+  }
+  const target = modelConfig(
+    { ...config, [definition.key]: apiKey, [definition.model]: model },
+    provider,
+  );
+  return {
+    target,
+    request: modelRequest(
+      target,
+      "You are checking whether this API model is available.",
+      "Reply with OK.",
+      64,
+    ),
+  };
+}
+
+async function testProviderModel(config, payload, signal) {
+  const { target, request } = providerTestCall(config, payload);
+  const response = await providerFetch(
+    target,
+    request,
+    AbortSignal.any([signal || new AbortController().signal, AbortSignal.timeout(20_000)]),
+  );
+  await response.arrayBuffer();
+  return { provider: target.provider, model: target.model };
+}
+
 async function runModel(config, payload, context, signal) {
   const { target, request } = modelCall(config, payload, context, false);
   const response = await providerFetch(target, request, signal);
@@ -2409,6 +2465,10 @@ async function handleSetup(request, config) {
     );
   if (url.pathname === "/setup/state" && request.method === "GET")
     return json("", await setupState(config));
+  if (url.pathname === "/setup/test/provider" && request.method === "POST") {
+    const payload = await readJson(request);
+    return json("", await testProviderModel(config, payload, request.signal));
+  }
   if (url.pathname === "/setup/provider" && ["POST", "DELETE"].includes(request.method)) {
     const payload = await readJson(request);
     const provider = String(payload.provider || "");
@@ -2939,6 +2999,7 @@ export {
   searchObsidian,
   submissionEmailCandidate,
   syncSubmissionEmails,
+  testProviderModel,
   verifySubmissionAttempt,
   zoteroItemsByKey,
 };
