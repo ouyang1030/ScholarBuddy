@@ -20,6 +20,7 @@ import {
   modelConfig,
   modelRequest,
   modelResponse,
+  testProviderModel,
   normalizeZoteroPassage,
   outlineFromFulltext,
   parseRecord,
@@ -42,6 +43,7 @@ import {
 import { parseActions, systemPrompt } from "../bridge/prompts.mjs";
 import { topicTerms } from "../bridge/search-terms.mjs";
 import { parseEnv, updateLocalConfig } from "../bridge/local-settings.mjs";
+import { setupPage } from "../bridge/setup-page.mjs";
 import { AI_PROVIDER_DEFINITIONS } from "../shared/constants.mjs";
 import {
   manuscriptSectionEntries,
@@ -343,8 +345,8 @@ test("AI providers use their native request and response formats", () => {
     gemini: {
       key: "GEMINI_API_KEY",
       adapter: "gemini-generate-content",
-      url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.7-flash:generateContent",
-      model: "gemini-3.7-flash",
+      url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent",
+      model: "gemini-3.8-flash",
     },
   };
   for (const [provider, expected] of Object.entries(providers)) {
@@ -414,6 +416,51 @@ test("AI providers use their native request and response formats", () => {
     }),
     { output: "Gemini result", usage: { totalTokenCount: 11, total_tokens: 11 } },
   );
+});
+
+test("the local setup tests an exact unsaved model without changing its saved configuration", async () => {
+  let received;
+  const provider = createServer(async (incoming, outgoing) => {
+    let body = "";
+    for await (const chunk of incoming) body += chunk;
+    received = {
+      authorization: incoming.headers.authorization,
+      body: JSON.parse(body),
+    };
+    outgoing.writeHead(200, { "Content-Type": "application/json" });
+    outgoing.end('{"choices":[{"message":{"content":"OK"}}]}');
+  });
+  await new Promise((resolve) => provider.listen(0, "127.0.0.1", resolve));
+  const saved = {
+    DEEPSEEK_API_KEY: "saved-secret",
+    DEEPSEEK_BASE_URL: `http://127.0.0.1:${provider.address().port}`,
+    DEEPSEEK_MODEL: "saved-model",
+  };
+  try {
+    const result = await testProviderModel(saved, {
+      provider: "deepseek",
+      apiKey: "transient-secret",
+      model: "next-model",
+    });
+    assert.deepEqual(result, { provider: "deepseek", model: "next-model" });
+    assert.equal(received.authorization, "Bearer transient-secret");
+    assert.equal(received.body.model, "next-model");
+    assert.equal(received.body.max_tokens, 64);
+    assert.deepEqual(saved, {
+      DEEPSEEK_API_KEY: "saved-secret",
+      DEEPSEEK_BASE_URL: `http://127.0.0.1:${provider.address().port}`,
+      DEEPSEEK_MODEL: "saved-model",
+    });
+  } finally {
+    provider.close();
+  }
+});
+
+test("the local setup exposes a model availability test", () => {
+  const source = setupPage("session", "https://workbench.example");
+  assert.match(source, /data-action="test"[^>]*>Test model</);
+  assert.match(source, /\/setup\/test\/provider/);
+  assert.match(source, /does not save your changes/);
 });
 
 test("AI notes never overwrite a prior save", async () => {
@@ -784,13 +831,14 @@ test("Zotero open links are derived from inert keys under a fixed protocol", () 
   assert.match(url, /annotation=ANN\+1/);
 });
 
-test("the example Gemini configuration matches the shared provider defaults", async () => {
+test("the example provider configuration matches the shared defaults", async () => {
   const example = parseEnv(
     await readFile(new URL("../.env.local.example", import.meta.url), "utf8"),
   );
-  const gemini = AI_PROVIDER_DEFINITIONS.find((provider) => provider.id === "gemini");
-  assert.equal(example.GEMINI_MODEL, gemini.defaultModel);
-  assert.equal(example.GEMINI_BASE_URL, gemini.defaultBase);
+  for (const provider of AI_PROVIDER_DEFINITIONS) {
+    assert.equal(example[provider.model], provider.defaultModel);
+    assert.equal(example[provider.base], provider.defaultBase);
+  }
 });
 
 test("a note's prose never files it, and an unlocatable annotation never throws", () => {

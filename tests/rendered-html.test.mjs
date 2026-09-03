@@ -76,6 +76,20 @@ test("every rendered button declares an interaction handler", async () => {
   assert.doesNotMatch(source, /Command library/);
 });
 
+test("the macOS Calendar brand follows the browser's current day", async () => {
+  const source = await readFile(
+    new URL("../app/components/BrandLogo.tsx", import.meta.url),
+    "utf8",
+  );
+  const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
+  assert.match(source, /Intl\.DateTimeFormat\("en-US", \{ weekday: "short" \}\)/);
+  assert.match(source, /today\.getDate\(\)/);
+  assert.match(source, /nextMidnight/);
+  assert.match(source, /visibilitychange/);
+  assert.match(css, /\.calendar-brand-weekday/);
+  assert.match(css, /\.calendar-brand-date/);
+});
+
 test("submission attention cards persist read state and open the matching submission", async () => {
   const source = await appSource();
   assert.match(source, /workbuddy-read-submission-alerts-v1/);

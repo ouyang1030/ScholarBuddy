@@ -6,6 +6,8 @@ The Bridge is a loopback-only service that connects the hosted ScholarBuddy inte
 
 Run `npm run setup`. On macOS this installs the background Bridge and opens the loopback-only setup page, which stores AI keys in Keychain, selects the Obsidian vault, tests local integrations, and returns to ScholarBuddy for automatic pairing. The ignored `.env.local` remains available for advanced and non-macOS configuration. Supported values include:
 
+Each provider card can test the exact model ID currently in its fields with one short API request. Testing uses the draft key and model without saving either value.
+
 - `DEEPSEEK_API_KEY`, `DEEPSEEK_BASE_URL`, and `DEEPSEEK_MODEL`.
 - `KIMI_API_KEY`, `KIMI_BASE_URL`, and `KIMI_MODEL`.
 - `OPENAI_API_KEY`, `OPENAI_BASE_URL`, and `OPENAI_MODEL` for ChatGPT models.
