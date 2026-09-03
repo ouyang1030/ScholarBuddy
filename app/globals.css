@@ -680,8 +680,11 @@ body { font-size: 17px; line-height: 1.5; }
 .connection-list article:last-child { border-bottom: 0; }
 .brand-logo { flex: 0 0 auto; display: grid; place-items: center; overflow: hidden; border: 1px solid #e0e5df; border-radius: 10px; background: #fff; }
 .brand-logo img { width: 62%; height: 62%; display: block; object-fit: contain; }
-.brand-calendar { border: 0; background: transparent; }
-.brand-calendar img { width: 100%; height: 100%; }
+.brand-calendar,
+.brand-zotero { border: 0; background: transparent; }
+.brand-calendar img,
+.brand-zotero img { width: 100%; height: 100%; }
+.brand-obsidian img { width: 74%; height: 74%; }
 .connection-logo { width: 36px; height: 36px; }
 .connection-list article > div { display: flex; flex-direction: column; gap: 4px; }
 .connection-list article strong { font-size: 13px; }

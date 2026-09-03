@@ -6,7 +6,7 @@ const brandAssets = {
   grok: "/brands/grok.ico",
   gemini: "/brands/gemini.svg",
   calendar: "/brands/calendar.png",
-  zotero: "/brands/zotero.svg",
+  zotero: "/brands/zotero.png",
   obsidian: "/brands/obsidian.svg",
 } as const;
 
