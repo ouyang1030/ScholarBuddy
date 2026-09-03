@@ -178,8 +178,8 @@ export const AI_PROVIDER_DEFINITIONS = [
     base: "OPENAI_BASE_URL",
     model: "OPENAI_MODEL",
     defaultBase: "https://api.openai.com/v1",
-    defaultModel: "gpt-6-astra",
-    displayModel: "GPT-6 Astra",
+    defaultModel: "gpt-5.6-terra",
+    displayModel: "GPT-5.6 Terra",
     adapter: "responses",
   },
   {

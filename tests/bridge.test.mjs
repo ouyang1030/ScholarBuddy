@@ -328,7 +328,7 @@ test("AI providers use their native request and response formats", () => {
       key: "OPENAI_API_KEY",
       adapter: "responses",
       url: "https://api.openai.com/v1/responses",
-      model: "gpt-6-astra",
+      model: "gpt-5.6-terra",
     },
     claude: {
       key: "ANTHROPIC_API_KEY",
@@ -364,7 +364,7 @@ test("AI providers use their native request and response formats", () => {
   const openaiRequest = modelRequest(openai, "system rule", "user task", 777);
   assert.equal(openaiRequest.init.headers.Authorization, "Bearer secret");
   assert.deepEqual(JSON.parse(openaiRequest.init.body), {
-    model: "gpt-6-astra",
+    model: "gpt-5.6-terra",
     instructions: "system rule",
     input: "user task",
     max_output_tokens: 777,
