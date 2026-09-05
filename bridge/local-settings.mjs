@@ -1,5 +1,6 @@
+import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
-import { chmod, readFile, rename, writeFile } from "node:fs/promises";
+import { chmod, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { promisify } from "node:util";
 import { AI_PROVIDER_DEFINITIONS } from "../shared/constants.mjs";
 
@@ -37,7 +38,15 @@ function envValue(value) {
   return clean && /^[A-Za-z0-9_./:@,+-]+$/.test(clean) ? clean : JSON.stringify(clean);
 }
 
-export async function updateLocalConfig(configFile, updates) {
+let configMutationTail = Promise.resolve();
+
+export function updateLocalConfig(configFile, updates) {
+  const result = configMutationTail.then(() => writeLocalConfig(configFile, updates));
+  configMutationTail = result.catch(() => {});
+  return result;
+}
+
+async function writeLocalConfig(configFile, updates) {
   let source = "";
   try {
     source = await readFile(configFile, "utf8");
@@ -55,13 +64,18 @@ export async function updateLocalConfig(configFile, updates) {
   if (lines.length && lines.at(-1) !== "") lines.push("");
   for (const [key, value] of remaining) lines.push(`${key}=${envValue(value)}`);
   lines.push("");
-  const temporary = `${configFile}.tmp`;
+  const temporary = `${configFile}.${randomUUID()}.tmp`;
   await writeFile(temporary, lines.join("\n").replace(/\n{3,}$/g, "\n\n"), {
     encoding: "utf8",
     mode: 0o600,
+    flag: "wx",
   });
-  await rename(temporary, configFile);
-  await chmod(configFile, 0o600);
+  try {
+    await rename(temporary, configFile);
+    await chmod(configFile, 0o600);
+  } finally {
+    await rm(temporary, { force: true });
+  }
 }
 
 function keychainAccount(provider) {

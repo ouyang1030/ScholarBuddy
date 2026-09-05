@@ -1,6 +1,18 @@
 import assert from "node:assert/strict";
-import { createServer } from "node:http";
-import { mkdir, mkdtemp, readFile, readdir, rm, stat, utimes, writeFile } from "node:fs/promises";
+import { createServer, request as httpRequest } from "node:http";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  realpath,
+  rm,
+  stat,
+  utimes,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -8,10 +20,13 @@ import {
   addSubmissionEvent,
   authorize,
   calendarContext,
+  createBridgeServer,
+  rotateBridgeToken,
   deleteRecord,
   detectPassageSection,
   detectSubmissionStatus,
   evidenceManifest,
+  ensureBridgeToken,
   fulltextIndex,
   handle,
   invalidReferenceIds,
@@ -559,10 +574,16 @@ test("permanent deletion removes both the live record and every history version"
     });
     const second = await saveRecord(config(vault), "projects", { ...first, title: "Second" });
     await assert.rejects(
-      deleteRecord(config(vault), "projects", second.id, first.version),
+      deleteRecord(config(vault), "projects", second.id, first.version, first.contentHash),
       (error) => error.status === 409 && error.code === "version_conflict",
     );
-    const result = await deleteRecord(config(vault), "projects", second.id, second.version);
+    const result = await deleteRecord(
+      config(vault),
+      "projects",
+      second.id,
+      second.version,
+      second.contentHash,
+    );
     assert.deepEqual(result, { deleted: true, id: second.id, historyPurged: true });
     await assert.rejects(
       stat(path.join(vault, "ScholarBuddy", "projects", "PRJ-delete.md")),
@@ -2054,7 +2075,7 @@ test("a streamed provider failure preserves safe upstream diagnostics", async ()
     const failed = JSON.parse(stream.match(/event: failed\ndata: (.+)/)?.[1] || "{}");
     assert.equal(failed.code, "provider_error");
     assert.match(failed.error, /DeepSeek request failed \(HTTP 429, rate_limit\)/);
-    assert.match(failed.error, /Rate limit exceeded/);
+    assert.doesNotMatch(failed.error, /Rate limit exceeded/);
     assert.doesNotMatch(failed.error, /sk-secret123456/);
   } finally {
     provider.close();
@@ -2171,10 +2192,407 @@ test("a streamed run emits deltas, audits the finished answer, and keeps a follo
       seen[1].messages.map((message) => message.role),
       ["system", "user", "assistant", "user"],
     );
-    // The sources travelled in turn one, so the follow-up does not resend them.
-    assert.doesNotMatch(seen[1].messages.at(-1).content, /Sprint counts rose 12%/);
+    // Each provider call is stateless: assert the actual evidence, not just IDs.
+    for (let index = 0; index < 6; index += 1)
+      await frames(await ask({ input: `Follow-up ${index}`, conversationId: done.conversationId }));
+    for (const sent of seen.slice(1)) {
+      const prompt = sent.messages.at(-1).content;
+      assert.match(prompt, /Sprint counts rose 12%/);
+      assert.match(prompt, /Effect size reporting for sprint studies/);
+      assert.match(prompt, /PROJECT PRJ-1: Pace of Play/);
+      assert.match(prompt, /\[P1\]/);
+      assert.match(prompt, /\[O1\]/);
+    }
+    assert.ok(seen.at(-1).messages.length <= 10);
   } finally {
     provider.close();
     await rm(vault, { recursive: true, force: true });
+  }
+});
+
+test("token initialization and authorization reject damaged credentials", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "scholarbuddy-token-"));
+  const file = path.join(directory, "token");
+  try {
+    const token = await ensureBridgeToken({}, file);
+    assert.ok(token.length >= 32);
+    assert.equal(await ensureBridgeToken({}, file), token);
+    assert.equal((await stat(file)).mode & 0o777, 0o600);
+    for (const invalid of ["", "short", " ".repeat(40)]) {
+      await writeFile(file, invalid);
+      await assert.rejects(ensureBridgeToken({}, file), /token is invalid/);
+      await assert.rejects(
+        ensureBridgeToken({ WORKBUDDY_BRIDGE_TOKEN: invalid }, file),
+        /token is invalid/,
+      );
+      assert.equal(
+        authorize(
+          new Request("http://127.0.0.1/health", {
+            headers: { Origin: allowedOrigin },
+          }),
+          { ...config(directory), _bridgeToken: invalid },
+        ).status,
+        401,
+      );
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("external Obsidian edits conflict with stale saves and deletes even at the same version", async () => {
+  const vault = await mkdtemp(path.join(os.tmpdir(), "scholarbuddy-external-edit-"));
+  try {
+    const first = await saveRecord(config(vault), "ideas", {
+      title: "Idea",
+      description: "Original",
+    });
+    const file = path.join(vault, "ScholarBuddy", "ideas", `${first.id}.md`);
+    const original = await readFile(file, "utf8");
+    assert.doesNotMatch(original, /contentHash:/);
+    const edited = original.replace("Original", "Edited in Obsidian");
+    await writeFile(file, edited);
+    await assert.rejects(
+      saveRecord(config(vault), "ideas", { ...first, title: "Stale" }),
+      (error) => error.code === "content_conflict",
+    );
+    await assert.rejects(
+      deleteRecord(config(vault), "ideas", first.id, first.version, first.contentHash),
+      (error) => error.code === "content_conflict",
+    );
+    assert.equal(await readFile(file, "utf8"), edited);
+    const state = await (await handle(request("/workbench/state"), config(vault))).json();
+    assert.equal(state.ideas[0].version, first.version);
+    assert.notEqual(state.ideas[0].contentHash, first.contentHash);
+    const { contentHash: omitted, ...withoutHash } = state.ideas[0];
+    assert.ok(omitted);
+    await assert.rejects(
+      saveRecord(config(vault), "ideas", withoutHash),
+      (error) => error.code === "content_hash_required",
+    );
+    const saved = await saveRecord(config(vault), "ideas", { ...state.ideas[0], title: "Fresh" });
+    assert.equal(saved.description, "Edited in Obsidian");
+    assert.notEqual(saved.contentHash, state.ideas[0].contentHash);
+    await deleteRecord(config(vault), "ideas", saved.id, saved.version, saved.contentHash);
+    await assert.rejects(
+      saveRecord(config(vault), "ideas", saved),
+      (error) => error.code === "content_conflict",
+    );
+  } finally {
+    await rm(vault, { recursive: true, force: true });
+  }
+});
+
+test("concurrent configuration updates preserve every field and recover after validation failure", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "scholarbuddy-config-race-"));
+  const file = path.join(directory, "settings");
+  try {
+    await writeFile(file, "# Keep comment\nEXISTING=yes\n");
+    await Promise.all(
+      Array.from({ length: 12 }, (_, index) =>
+        updateLocalConfig(file, { [`SETTING_${index}`]: String(index) }),
+      ),
+    );
+    const parsed = parseEnv(await readFile(file, "utf8"));
+    assert.equal(parsed.EXISTING, "yes");
+    for (let index = 0; index < 12; index += 1)
+      assert.equal(parsed[`SETTING_${index}`], String(index));
+    const results = await Promise.allSettled([
+      updateLocalConfig(file, { BAD: "line\nbreak" }),
+      updateLocalConfig(file, { RECOVERED: "yes" }),
+    ]);
+    assert.equal(results[0].status, "rejected");
+    assert.equal(results[1].status, "fulfilled");
+    assert.equal(parseEnv(await readFile(file, "utf8")).RECOVERED, "yes");
+    assert.deepEqual(await readdir(directory), ["settings"]);
+    assert.equal((await stat(file)).mode & 0o777, 0o600);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("submission retries complete a partial commit without duplicate events or revision rounds", async () => {
+  const vault = await mkdtemp(path.join(os.tmpdir(), "scholarbuddy-submission-recovery-"));
+  try {
+    await saveRecord(config(vault), "submission-attempts", {
+      id: "SUB-retry",
+      title: "Paper",
+      status: "Revision Required",
+      round: "Initial",
+      stageStartedAt: "2026-08-01T00:00:00.000Z",
+    });
+    const history = path.join(vault, "ScholarBuddy", ".history");
+    await mkdir(history);
+    const blocker = path.join(history, "submission-attempts");
+    await writeFile(blocker, "Simulate failure of the second write");
+    const incoming = {
+      attemptId: "SUB-retry",
+      status: "Revised Submission",
+      eventDate: "2026-08-02T00:00:00.000Z",
+    };
+    await assert.rejects(
+      addSubmissionEvent(config(vault), incoming),
+      (error) => error.code === "ENOTDIR",
+    );
+    const state = async () => (await handle(request("/workbench/state"), config(vault))).json();
+    const partial = await state();
+    assert.equal(partial["submission-events"].length, 1);
+    assert.equal(partial["submission-attempts"][0].status, "Revision Required");
+    await rm(blocker);
+    await addSubmissionEvent(config(vault), incoming);
+    await addSubmissionEvent(config(vault), incoming);
+    const recovered = await state();
+    assert.equal(recovered["submission-events"].length, 1);
+    assert.equal(recovered["submission-attempts"][0].status, "Revised Submission");
+    assert.equal(recovered["submission-attempts"][0].round, "R1");
+    assert.equal((await syncSubmissionEmails(config(vault), [])).updated.length, 0);
+  } finally {
+    await rm(vault, { recursive: true, force: true });
+  }
+});
+
+test("email sync recovers its persisted event after a failed attempt write", async () => {
+  const vault = await mkdtemp(path.join(os.tmpdir(), "scholarbuddy-mail-recovery-"));
+  try {
+    await saveRecord(config(vault), "submission-attempts", {
+      id: "SUB-mail",
+      title: "Paper",
+      submissionId: "J-101",
+      status: "Submitted",
+      stageStartedAt: "2026-08-01T00:00:00.000Z",
+    });
+    const history = path.join(vault, "ScholarBuddy", ".history");
+    await mkdir(history);
+    const blocker = path.join(history, "submission-attempts");
+    await writeFile(blocker, "Fail attempt write");
+    const emails = [
+      {
+        id: "mail-retry",
+        subject: "J-101 is now under review",
+        receivedAt: "2026-08-02T00:00:00.000Z",
+      },
+    ];
+    await assert.rejects(
+      syncSubmissionEmails(config(vault), emails),
+      (error) => error.code === "ENOTDIR",
+    );
+    await rm(blocker);
+    // No in-memory retry state or original mail is needed.
+    assert.equal((await syncSubmissionEmails({ ...config(vault) }, [])).updated.length, 1);
+    assert.equal((await syncSubmissionEmails(config(vault), emails)).updated.length, 0);
+    const state = await (await handle(request("/workbench/state"), config(vault))).json();
+    assert.equal(state["submission-events"].length, 1);
+    assert.equal(state["submission-attempts"][0].status, "Under Review");
+  } finally {
+    await rm(vault, { recursive: true, force: true });
+  }
+});
+
+test("submission recovery leaves later edits and same-day stage changes intact", async () => {
+  const vault = await mkdtemp(path.join(os.tmpdir(), "scholarbuddy-replay-order-"));
+  try {
+    await saveRecord(config(vault), "submission-attempts", {
+      id: "SUB-order",
+      title: "Paper",
+      status: "Submitted",
+      round: "Initial",
+      stageStartedAt: "2026-08-01T00:00:00.000Z",
+    });
+    for (const status of [
+      "Revision Required",
+      "Revised Submission",
+      "Under Review",
+      "Revision Required",
+      "Revised Submission",
+    ])
+      await addSubmissionEvent(config(vault), {
+        attemptId: "SUB-order",
+        status,
+        eventDate: "2026-08-02",
+      });
+    assert.equal((await syncSubmissionEmails(config(vault), [])).updated.length, 0);
+    const state = await (await handle(request("/workbench/state"), config(vault))).json();
+    assert.equal(state["submission-attempts"][0].round, "R2");
+    assert.equal(state["submission-attempts"][0].status, "Revised Submission");
+    assert.equal(state["submission-events"].length, 5);
+    const edited = await saveRecord(config(vault), "submission-attempts", {
+      ...state["submission-attempts"][0],
+      status: "Accepted",
+    });
+    await syncSubmissionEmails(config(vault), []);
+    const after = await (await handle(request("/workbench/state"), config(vault))).json();
+    assert.deepEqual(after["submission-attempts"][0], edited);
+  } finally {
+    await rm(vault, { recursive: true, force: true });
+  }
+});
+
+test("HTTP transport rejects hostile Host headers before all routes", async () => {
+  const server = createBridgeServer(Promise.resolve(config("/tmp/unused")));
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = server.address().port;
+  const send = (host, pathname, method = "GET") =>
+    new Promise((resolve, reject) => {
+      const req = httpRequest(
+        {
+          hostname: "127.0.0.1",
+          port,
+          path: pathname,
+          method,
+          setHost: false,
+          headers: host === null ? {} : { Host: host },
+        },
+        (res) => {
+          let body = "";
+          res.setEncoding("utf8");
+          res.on("data", (chunk) => {
+            body += chunk;
+          });
+          res.on("end", () => resolve({ status: res.statusCode, body }));
+        },
+      );
+      req.on("error", reject);
+      req.end();
+    });
+  try {
+    for (const host of [
+      "evil.example",
+      "localhost.evil.example",
+      "127.0.0.1.evil.example",
+      "localhost:99999",
+      "localhost:0",
+      "localhost@evil.example",
+    ]) {
+      for (const route of ["/setup", "/pair", "/health", "/pair/exchange"]) {
+        const response = await send(host, route);
+        assert.equal(response.status, 400);
+        assert.equal(JSON.parse(response.body).code, "host_denied");
+      }
+      assert.equal((await send(host, "/setup/provider", "POST")).status, 400);
+      assert.equal((await send(host, "/health", "OPTIONS")).status, 400);
+    }
+    assert.equal((await send(null, "/setup")).status, 400);
+    for (const host of [`localhost:${port}`, `127.0.0.1:${port}`, `LOCALHOST:${port}`]) {
+      assert.equal((await send(host, "/setup")).status, 200);
+      assert.equal((await send(host, "/pair")).status, 200);
+      assert.equal((await send(host, "/health")).status, 403);
+    }
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("provider diagnostics redact exact opaque credentials in messages and codes", async (t) => {
+  let key = "";
+  let logs = "";
+  const status = { value: 400 };
+  t.mock.method(process.stderr, "write", (chunk) => {
+    logs += String(chunk);
+    return true;
+  });
+  const provider = createServer((incoming, outgoing) => {
+    outgoing.writeHead(status.value, { "Content-Type": "application/json" });
+    outgoing.end(
+      JSON.stringify({ error: { code: `bad_${key}`, message: `PRIVATE-PROMPT ${key} ${key}` } }),
+    );
+  });
+  await new Promise((resolve) => provider.listen(0, "127.0.0.1", resolve));
+  try {
+    for (const credential of [
+      "AIzaFakeCredentialForRegression123456",
+      "opaque_token_no_known_prefix",
+      "literal.+[credential]$12345",
+    ]) {
+      key = credential;
+      for (const httpStatus of [400, 401, 403, 429, 500]) {
+        status.value = httpStatus;
+        logs = "";
+        await assert.rejects(
+          testProviderModel(
+            { DEEPSEEK_BASE_URL: `http://127.0.0.1:${provider.address().port}` },
+            { provider: "deepseek", apiKey: key, model: "test" },
+          ),
+          (error) => {
+            assert.equal(error.status, 502);
+            assert.ok(!error.message.includes(key));
+            assert.ok(!error.publicMessage.includes(key));
+            assert.doesNotMatch(error.message, /PRIVATE-PROMPT|bad_/);
+            return true;
+          },
+        );
+        assert.ok(!logs.includes(key));
+        assert.match(logs, /\[redacted\]/);
+      }
+    }
+  } finally {
+    await new Promise((resolve) => provider.close(resolve));
+    t.mock.restoreAll();
+  }
+});
+
+test("token rotation refuses overrides and preserves the existing token file", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "scholarbuddy-rotation-"));
+  const file = path.join(directory, "token");
+  try {
+    await writeFile(file, "old-token\n");
+    for (const override of ["", "fixed-credential-that-must-not-be-logged"]) {
+      await assert.rejects(
+        rotateBridgeToken({ WORKBUDDY_BRIDGE_TOKEN: override }, file),
+        (error) => {
+          assert.match(error.message, /WORKBUDDY_BRIDGE_TOKEN overrides/);
+          if (override) assert.ok(!error.message.includes(override));
+          return true;
+        },
+      );
+      assert.equal(await readFile(file, "utf8"), "old-token\n");
+    }
+    const rotated = await rotateBridgeToken({}, file);
+    assert.ok(rotated.length >= 32);
+    assert.equal(await readFile(file, "utf8"), `${rotated}\n`);
+    assert.equal((await stat(file)).mode & 0o777, 0o600);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("rotation CLI detects overrides from both env file and process environment", async () => {
+  const directory = await realpath(
+    await mkdtemp(path.join(os.tmpdir(), "scholarbuddy-rotation-cli-")),
+  );
+  try {
+    for (const folder of ["bridge", "shared"]) {
+      await mkdir(path.join(directory, folder));
+      const source = new URL(`../${folder}/`, import.meta.url);
+      for (const name of (await readdir(source)).filter((name) => name.endsWith(".mjs")))
+        await writeFile(path.join(directory, folder, name), await readFile(new URL(name, source)));
+    }
+    const file = path.join(directory, "bridge", ".workbuddy-token");
+    await writeFile(file, "existing-token\n");
+    for (const fromFile of [true, false]) {
+      const secret = "override-value-must-not-appear-in-output";
+      await writeFile(
+        path.join(directory, ".env.local"),
+        fromFile ? `WORKBUDDY_BRIDGE_TOKEN=${secret}\n` : "",
+      );
+      const env = { ...process.env };
+      delete env.WORKBUDDY_BRIDGE_TOKEN;
+      if (!fromFile) env.WORKBUDDY_BRIDGE_TOKEN = secret;
+      await assert.rejects(
+        promisify(execFile)(
+          process.execPath,
+          [path.join(directory, "bridge", "server.mjs"), "--rotate-token"],
+          { env },
+        ),
+        (error) => {
+          assert.match(error.stderr, /WORKBUDDY_BRIDGE_TOKEN overrides/);
+          assert.ok(!error.stderr.includes(secret));
+          assert.doesNotMatch(error.stdout, /token rotated/i);
+          return true;
+        },
+      );
+      assert.equal(await readFile(file, "utf8"), "existing-token\n");
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
   }
 });

@@ -27,7 +27,7 @@ export function RecordEditor({
   onSave: (collection: CollectionKey, record: Partial<RecordItem>) => Promise<RecordItem>;
   onDelete: (
     collection: CollectionKey,
-    record: Pick<RecordItem, "id" | "version">,
+    record: Pick<RecordItem, "id" | "version" | "contentHash">,
   ) => Promise<void>;
   ref?: React.Ref<HTMLElement>;
 }) {
@@ -102,10 +102,18 @@ export function RecordEditor({
   };
   const remove = async () => {
     if (!form.id || !form.version) return;
+    if (!form.contentHash) {
+      setError("Reload this record before deleting it.");
+      return;
+    }
     setSaving(true);
     setError("");
     try {
-      await onDelete(editor.collection, { id: form.id, version: form.version });
+      await onDelete(editor.collection, {
+        id: form.id,
+        version: form.version,
+        contentHash: form.contentHash,
+      });
       onClose();
     } catch (deleteError) {
       setError(
