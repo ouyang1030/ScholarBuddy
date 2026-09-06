@@ -19,6 +19,7 @@ export type Action = { label: string; meta: string; tone: string; command: strin
 export type RecordItem = {
   id: string;
   version: number;
+  contentHash: string;
   collection?: CollectionKey;
   title: string;
   description?: string;

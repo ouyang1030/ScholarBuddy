@@ -377,7 +377,7 @@ export default function Home() {
   };
   const deleteRecord = async (
     collection: CollectionKey,
-    record: Pick<RecordItem, "id" | "version">,
+    record: Pick<RecordItem, "id" | "version" | "contentHash">,
   ) => {
     recordMutationsRef.current += 1;
     stateRequestRef.current?.abort();
@@ -385,7 +385,12 @@ export default function Home() {
       const response = await bridgeFetch(`/workbench/record`, {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ collection, id: record.id, version: record.version }),
+        body: JSON.stringify({
+          collection,
+          id: record.id,
+          version: record.version,
+          contentHash: record.contentHash,
+        }),
       });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error || "Record could not be deleted.");

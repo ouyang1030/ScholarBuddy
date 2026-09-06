@@ -14,7 +14,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { constants } from "node:fs";
-import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
@@ -57,6 +57,7 @@ const pairingCodes = new Map();
 const setupSessions = new Map();
 let activeAiRequests = 0;
 let recordMutationTail = Promise.resolve();
+let setupMutationTail = Promise.resolve();
 
 function serializeRecordMutation(operation) {
   const result = recordMutationTail.then(operation, operation);
@@ -67,31 +68,47 @@ function serializeRecordMutation(operation) {
   return result;
 }
 
-async function ensureBridgeToken(config) {
-  if (config.WORKBUDDY_BRIDGE_TOKEN) return config.WORKBUDDY_BRIDGE_TOKEN;
+function validBridgeToken(value) {
+  return typeof value === "string" && value.length >= 32 && !/\s/.test(value);
+}
+
+function requireBridgeToken(value) {
+  if (!validBridgeToken(value))
+    throw new Error("Bridge token is invalid. Rotate the token before starting the Bridge.");
+  return value;
+}
+
+export async function ensureBridgeToken(config, file = tokenFile) {
+  if (config.WORKBUDDY_BRIDGE_TOKEN !== undefined)
+    return requireBridgeToken(config.WORKBUDDY_BRIDGE_TOKEN);
   try {
-    const existing = (await readFile(tokenFile, "utf8")).trim();
-    if (existing.length >= 32) {
-      await chmod(tokenFile, 0o600);
-      return existing;
-    }
-  } catch {
-    /* generate below */
+    const existing = requireBridgeToken((await readFile(file, "utf8")).trim());
+    await chmod(file, 0o600);
+    return existing;
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
   }
   const token = randomBytes(32).toString("base64url");
-  await writeFile(tokenFile, `${token}\n`, { encoding: "utf8", mode: 0o600, flag: "wx" }).catch(
-    async (error) => {
+  await writeFile(file, `${token}\n`, { encoding: "utf8", mode: 0o600, flag: "wx" }).catch(
+    (error) => {
       if (error?.code !== "EEXIST") throw error;
     },
   );
-  await chmod(tokenFile, 0o600);
-  return (await readFile(tokenFile, "utf8")).trim();
+  const stored = requireBridgeToken((await readFile(file, "utf8")).trim());
+  await chmod(file, 0o600);
+  return stored;
 }
 
-async function rotateBridgeToken() {
+export async function rotateBridgeToken(config, file = tokenFile) {
+  config ??= await readConfigValues();
+  if (config.WORKBUDDY_BRIDGE_TOKEN !== undefined) {
+    throw new Error(
+      "WORKBUDDY_BRIDGE_TOKEN overrides the token file. Change or remove it in .env.local or the Bridge process environment, then restart the Bridge and re-pair every browser. No token file was changed.",
+    );
+  }
   const token = randomBytes(32).toString("base64url");
-  await atomicWrite(tokenFile, `${token}\n`);
-  await chmod(tokenFile, 0o600);
+  await atomicWrite(file, `${token}\n`);
+  await chmod(file, 0o600);
   pairingCodes.clear();
   return token;
 }
@@ -116,17 +133,21 @@ async function restartInstalledBridgeService() {
   );
 }
 
-async function getConfig() {
+async function readConfigValues() {
   let local = {};
   try {
     local = parseEnv(await readFile(configFile, "utf8"));
-  } catch {
-    /* process environment only */
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
   }
-  const config = await hydrateProviderSecrets({
+  return {
     ...local,
     ...Object.fromEntries(Object.entries(process.env).filter(([, value]) => value !== undefined)),
-  });
+  };
+}
+
+async function getConfig() {
+  const config = await hydrateProviderSecrets(await readConfigValues());
   return { ...config, _bridgeToken: await ensureBridgeToken(config) };
 }
 
@@ -235,7 +256,7 @@ function authorize(request, config) {
   if (request.method === "OPTIONS") return { ok: true, origin, preflight: true };
   const authorization = request.headers.get("authorization") || "";
   const token = authorization.startsWith("Bearer ") ? authorization.slice(7) : "";
-  if (!safeEqual(token, config._bridgeToken))
+  if (!validBridgeToken(config._bridgeToken) || !token || !safeEqual(token, config._bridgeToken))
     return { ok: false, status: 401, origin, code: "pairing_required" };
   return { ok: true, origin };
 }
@@ -795,6 +816,7 @@ function serializeRecord(record) {
   const metadata = { ...record };
   delete metadata.description;
   delete metadata.content;
+  delete metadata.contentHash;
   if (metadata.collection === "projects") delete metadata.active;
   const lines = Object.entries(metadata).map(
     ([key, value]) => `${key}: ${JSON.stringify(value ?? null)}`,
@@ -824,21 +846,45 @@ async function readStoredRecord(file, id, collection) {
   const content = await readFile(file, "utf8");
   try {
     const parsed = parseRecord(content, id);
-    return decodeRecord(collection, {
-      ...parsed,
-      version: Number.isInteger(parsed.version) ? parsed.version : 1,
-    });
+    return {
+      ...decodeRecord(collection, {
+        ...parsed,
+        version: Number.isInteger(parsed.version) ? parsed.version : 1,
+      }),
+      contentHash: recordHash(content),
+    };
   } catch (error) {
     error.message = `Invalid ScholarBuddy record ${collection}/${id}: ${error.message}`;
     throw error;
   }
 }
 
-async function atomicWrite(file, content) {
+function recordHash(content) {
+  return createHash("sha256").update(content).digest("hex");
+}
+
+function checkRecordHash(expected, actual) {
+  if (!expected || expected !== actual) {
+    const error = new Error(
+      "This file changed or needs to be reloaded. Reload before saving or deleting.",
+    );
+    error.status = expected ? 409 : 428;
+    error.code = expected ? "content_conflict" : "content_hash_required";
+    throw error;
+  }
+}
+
+async function atomicWrite(file, content, expectedHash) {
   await mkdir(path.dirname(file), { recursive: true });
   const temporary = path.join(path.dirname(file), `.${path.basename(file)}.${randomUUID()}.tmp`);
   await writeFile(temporary, content, { encoding: "utf8", mode: 0o600 });
-  await rename(temporary, file);
+  try {
+    if (expectedHash !== undefined)
+      checkRecordHash(expectedHash, recordHash(await readFile(file, "utf8")));
+    await rename(temporary, file);
+  } finally {
+    await rm(temporary, { force: true });
+  }
 }
 
 // Snapshots are an audit trail, not a backup: cap them so a heavily edited
@@ -939,6 +985,7 @@ async function saveRecordUnlocked(config, collectionValue, incoming) {
   const requestedActive = collection === "projects" ? incoming.active : undefined;
   const input = { ...incoming };
   delete input.version;
+  delete input.contentHash;
   if (collection === "projects") delete input.active;
   let previous = {};
   let exists = false;
@@ -960,6 +1007,13 @@ async function saveRecordUnlocked(config, collectionValue, incoming) {
     error.code = "version_conflict";
     throw error;
   }
+  if (exists) checkRecordHash(incoming.contentHash, previous.contentHash);
+  else if (requestedVersion || incoming.contentHash) {
+    const error = new Error("That record no longer exists. Reload before saving.");
+    error.status = 409;
+    error.code = "content_conflict";
+    throw error;
+  }
   const previousTime = new Date(previous.updatedAt || 0).getTime();
   const candidate = {
     ...previous,
@@ -976,7 +1030,7 @@ async function saveRecordUnlocked(config, collectionValue, incoming) {
   if (!record.createdAt) record.createdAt = record.updatedAt;
   if (exists) await archiveVersion(config, collection, id, file);
   const content = serializeRecord(record);
-  await atomicWrite(file, content);
+  await atomicWrite(file, content, exists ? previous.contentHash : undefined);
   let active = false;
   if (collection === "projects") {
     const workspace = await readWorkspaceState(config);
@@ -997,6 +1051,7 @@ async function saveRecordUnlocked(config, collectionValue, incoming) {
   }
   return {
     ...record,
+    contentHash: recordHash(content),
     ...(collection === "projects" ? { active } : {}),
   };
 }
@@ -1005,7 +1060,7 @@ async function saveRecord(config, collectionValue, incoming) {
   return serializeRecordMutation(() => saveRecordUnlocked(config, collectionValue, incoming));
 }
 
-async function deleteRecordUnlocked(config, collectionValue, idValue, version) {
+async function deleteRecordUnlocked(config, collectionValue, idValue, version, contentHash) {
   const collection = safeCollection(collectionValue);
   const id = safeRecordId(idValue);
   const file = path.join(recordRoot(config), collection, `${id}.md`);
@@ -1030,6 +1085,8 @@ async function deleteRecordUnlocked(config, collectionValue, idValue, version) {
     error.code = "version_conflict";
     throw error;
   }
+  checkRecordHash(contentHash, record.contentHash);
+  checkRecordHash(contentHash, recordHash(await readFile(file, "utf8")));
   await unlink(file);
   await rm(path.join(recordRoot(config), ".history", collection, id), {
     recursive: true,
@@ -1042,9 +1099,9 @@ async function deleteRecordUnlocked(config, collectionValue, idValue, version) {
   return { deleted: true, id, historyPurged: true };
 }
 
-async function deleteRecord(config, collectionValue, idValue, version) {
+async function deleteRecord(config, collectionValue, idValue, version, contentHash) {
   return serializeRecordMutation(() =>
-    deleteRecordUnlocked(config, collectionValue, idValue, version),
+    deleteRecordUnlocked(config, collectionValue, idValue, version, contentHash),
   );
 }
 
@@ -1164,6 +1221,37 @@ async function verifySubmissionAttempt(config, incoming) {
   return serializeRecordMutation(() => verifySubmissionAttemptUnlocked(config, incoming));
 }
 
+// Events are committed first. Replaying an existing event completes a failed
+// attempt write; the date/status guard makes a successful replay a no-op.
+async function applySubmissionEventUnlocked(config, attempt, event) {
+  // A later Bridge edit must not be overwritten by replaying older history.
+  if (event.attemptVersion !== undefined && attempt.version !== event.attemptVersion) return false;
+  const existingTime = new Date(attempt.stageStartedAt || attempt.submittedAt || 0).getTime();
+  const eventTime = new Date(event.eventDate).getTime();
+  if (
+    Number.isFinite(existingTime) &&
+    (eventTime < existingTime || (eventTime === existingTime && attempt.status === event.status))
+  )
+    return false;
+  const saved = await saveRecordUnlocked(config, "submission-attempts", {
+    ...attempt,
+    status: event.status,
+    rawStatus: event.rawStatus || attempt.rawStatus || event.status,
+    stageStartedAt: event.eventDate,
+    lastVerifiedAt: new Date(
+      Math.max(eventTime, new Date(attempt.lastVerifiedAt || 0).getTime()),
+    ).toISOString(),
+    submittedAt:
+      event.status === "Submitted" && !attempt.submittedAt ? event.eventDate : attempt.submittedAt,
+    round:
+      event.status === "Revised Submission" && attempt.status !== event.status
+        ? nextRevisionRound(attempt.round)
+        : attempt.round,
+  });
+  Object.assign(attempt, saved);
+  return true;
+}
+
 async function addSubmissionEventUnlocked(config, incoming) {
   const attemptId = safeRecordId(requireText(incoming.attemptId, "Submission attempt id", 100));
   const stage = requireText(incoming.status, "Submission status", 100);
@@ -1182,6 +1270,28 @@ async function addSubmissionEventUnlocked(config, incoming) {
     const error = new Error("Submission attempt was not found.");
     error.status = 404;
     throw error;
+  }
+  const existing = (await listRecords(config, "submission-events")).find(
+    (event) =>
+      event.attemptId === attemptId &&
+      (incoming.id
+        ? event.id === incoming.id
+        : incoming.emailMessageId
+          ? event.emailMessageId === incoming.emailMessageId
+          : event.attemptVersion === attempt.version &&
+            event.status === stage &&
+            (event.eventDate === eventDate ||
+              (!incoming.eventDate && event.attemptVersion === attempt.version)) &&
+            event.source === (incoming.source || "Manual")),
+  );
+  if (existing) {
+    if (existing.status !== stage || (incoming.eventDate && existing.eventDate !== eventDate)) {
+      const error = new Error("This submission event already exists with different details.");
+      error.status = 409;
+      throw error;
+    }
+    await applySubmissionEventUnlocked(config, attempt, existing);
+    return existing;
   }
   if (stage === attempt.status) {
     const verified = await verifySubmissionAttemptUnlocked(config, {
@@ -1203,23 +1313,13 @@ async function addSubmissionEventUnlocked(config, incoming) {
     title: incoming.title || `${stage} · ${eventDate.slice(0, 10)}`,
     attemptId,
     manuscriptId: attempt.manuscriptId || "",
+    attemptVersion: attempt.version,
     eventDate,
     status: stage,
     source: incoming.source || "Manual",
     confidence: incoming.confidence || "confirmed",
   });
-  const existingStageDate = new Date(attempt.stageStartedAt || attempt.submittedAt || 0).getTime();
-  if (!Number.isFinite(existingStageDate) || new Date(eventDate).getTime() >= existingStageDate) {
-    await saveRecordUnlocked(config, "submission-attempts", {
-      ...attempt,
-      status: stage,
-      rawStatus: incoming.rawStatus || attempt.rawStatus || stage,
-      stageStartedAt: eventDate,
-      lastVerifiedAt: eventDate,
-      submittedAt: stage === "Submitted" && !attempt.submittedAt ? eventDate : attempt.submittedAt,
-      round: stage === "Revised Submission" ? nextRevisionRound(attempt.round) : attempt.round,
-    });
-  }
+  await applySubmissionEventUnlocked(config, attempt, event);
   return event;
 }
 
@@ -1228,6 +1328,25 @@ async function addSubmissionEvent(config, incoming) {
 }
 
 async function syncSubmissionEmails(config, suppliedEmails) {
+  // Recovery uses persisted events, so a retry can finish even if the original
+  // message is no longer in the inbox. Keep it inside the record mutation queue.
+  const recovered = await serializeRecordMutation(async () => {
+    const attempts = await listRecords(config, "submission-attempts");
+    const events = (await listRecords(config, "submission-events")).sort((a, b) =>
+      a.eventDate.localeCompare(b.eventDate),
+    );
+    const completed = [];
+    for (const event of events) {
+      const attempt = attempts.find((item) => item.id === event.attemptId);
+      if (
+        attempt &&
+        event.attemptVersion !== undefined &&
+        (await applySubmissionEventUnlocked(config, attempt, event))
+      )
+        completed.push(event);
+    }
+    return completed;
+  });
   const attempts = await listRecords(config, "submission-attempts");
   if (!attempts.length) return { scanned: 0, updated: [], verified: 0, pending: [], ignored: 0 };
   let emails = Array.isArray(suppliedEmails) ? suppliedEmails : null;
@@ -1244,7 +1363,7 @@ async function syncSubmissionEmails(config, suppliedEmails) {
     .map((email) => submissionEmailCandidate(email, attempts))
     .filter(Boolean)
     .sort((a, b) => a.email.receivedAt.localeCompare(b.email.receivedAt));
-  const updated = [];
+  const updated = [...recovered];
   let verified = 0;
   const pending = [];
   for (const candidate of candidates) {
@@ -1774,17 +1893,20 @@ function modelCall(config, payload, context, stream) {
     throw error;
   }
   const history = Array.isArray(payload.history) ? payload.history : [];
-  // The sources are already in the first user message of the conversation, so a
-  // follow-up carries the question alone rather than paying for them again.
+  // Provider requests are stateless: history contains questions and answers,
+  // not the retrieved excerpts. Resend the fixed evidence on every turn.
+  const evidencePrompt =
+    payload.evidencePrompt ||
+    buildPrompt(
+      payload,
+      context.zotero,
+      context.obsidian,
+      context.passages,
+      context.calendar || [],
+    );
   const prompt = history.length
-    ? `${payload.command}\n\nFOLLOW-UP:\n${payload.input}\n\nAnswer from the research sources supplied earlier in this conversation, keeping the same [Z1], [O1] and [P1] identifiers.`
-    : buildPrompt(
-        payload,
-        context.zotero,
-        context.obsidian,
-        context.passages,
-        context.calendar || [],
-      );
+    ? `${evidencePrompt}\n\nFOLLOW-UP:\n${payload.input}\n\nAnswer from the research sources above, keeping the same [Z1], [O1] and [P1] identifiers.`
+    : evidencePrompt;
   const request = modelRequest(
     target,
     systemPrompt(payload.command),
@@ -1819,17 +1941,34 @@ async function providerFetch(target, request, signal) {
     } catch {
       /* some providers return a plain-text error page */
     }
-    const providerCode = String(body?.error?.code || body?.code || "").slice(0, 80);
-    const detail = String(body?.error?.message || body?.message || "")
-      .replace(/[\r\n\t]+/g, " ")
-      .replace(/\s+/g, " ")
-      .replace(/(?:sk|key)-[A-Za-z0-9_-]{8,}/gi, "[redacted]")
-      .trim()
-      .slice(0, 300);
+    const redact = (value) => {
+      const text = String(value || "");
+      // Remove the exact credential before normalization or truncation; provider
+      // keys need not follow any particular prefix or alphabet.
+      return (target.apiKey ? text.split(target.apiKey).join("[redacted]") : text)
+        .replace(/(?:sk|key)-[A-Za-z0-9_-]{8,}/gi, "[redacted]")
+        .replace(/[\x00-\x1f\x7f]/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+    };
+    const providerCode = redact(body?.error?.code || body?.code).slice(0, 80);
+    const detail = redact(body?.error?.message || body?.message).slice(0, 300);
+    // Public errors include only recognized diagnostic codes, never arbitrary
+    // upstream text, which may echo prompts or other private input.
+    const publicCode = new Set([
+      "rate_limit",
+      "rate_limit_exceeded",
+      "insufficient_quota",
+      "model_not_found",
+      "invalid_api_key",
+      "authentication_error",
+    ]).has(providerCode)
+      ? providerCode
+      : "";
     const authenticationFailure = response.status === 401 || response.status === 403;
     const summary = authenticationFailure
       ? `${target.label} rejected its credentials.`
-      : `${target.label} request failed (HTTP ${response.status}${providerCode ? `, ${providerCode}` : ""})${detail ? `: ${detail}` : "."}`;
+      : `${target.label} request failed (HTTP ${response.status}${publicCode ? `, ${publicCode}` : ""}).`;
     process.stderr.write(
       `${target.label} provider failure: HTTP ${response.status}${providerCode ? ` ${providerCode}` : ""}${detail ? ` — ${detail}` : ""}\n`,
     );
@@ -2176,6 +2315,7 @@ async function prepareAiRun(config, payload, signal) {
       input,
       focus,
       history: previous.messages.slice(-8),
+      evidencePrompt: previous.evidencePrompt,
       conversationId: String(payload.conversationId).slice(0, 100),
       retrieval: previous.retrieval,
       context: {
@@ -2487,28 +2627,31 @@ async function handleSetup(request, config) {
     const updates = {};
     const apiKey = String(payload.apiKey || "").trim();
     const model = String(payload.model || "").trim();
-    if (apiKey) {
-      if (process.platform === "darwin") {
-        await saveKeychainSecret(provider, apiKey);
-        updates[definition.key] = "";
-      } else updates[definition.key] = apiKey;
-      config[definition.key] = apiKey;
+    if (apiKey && (apiKey.length < 8 || apiKey.length > 2_000 || /[\r\n]/.test(apiKey))) {
+      const error = new Error("Enter a valid API key.");
+      error.status = 422;
+      throw error;
     }
-    if (model) {
-      if (model.length > 200 || /[\r\n]/.test(model)) {
-        const error = new Error("Model name is invalid.");
-        error.status = 422;
-        throw error;
-      }
-      updates[definition.model] = model;
-      config[definition.model] = model;
+    if (model && (model.length > 200 || /[\r\n]/.test(model))) {
+      const error = new Error("Model name is invalid.");
+      error.status = 422;
+      throw error;
     }
     if (!apiKey && !model) {
       const error = new Error("Enter an API key or model name.");
       error.status = 422;
       throw error;
     }
+    if (apiKey) {
+      if (process.platform === "darwin") {
+        await saveKeychainSecret(provider, apiKey);
+        updates[definition.key] = "";
+      } else updates[definition.key] = apiKey;
+    }
+    if (model) updates[definition.model] = model;
     await updateLocalConfig(configFile, updates);
+    if (apiKey) config[definition.key] = apiKey;
+    if (model) config[definition.model] = model;
     return json("", {
       configured: Boolean(config[definition.key]),
       model: modelConfig(config, provider).model,
@@ -2593,8 +2736,17 @@ function readQuota(pathname) {
 async function handle(request, providedConfig) {
   const config = providedConfig || (await getConfig());
   const url = new URL(request.url);
-  if (url.pathname === "/setup" || url.pathname.startsWith("/setup/"))
+  if (url.pathname === "/setup" || url.pathname.startsWith("/setup/")) {
+    if (
+      ["/setup/provider", "/setup/config"].includes(url.pathname) &&
+      ["POST", "DELETE"].includes(request.method)
+    ) {
+      const result = setupMutationTail.then(() => handleSetup(request, config));
+      setupMutationTail = result.catch(() => {});
+      return result;
+    }
     return handleSetup(request, config);
+  }
   if (url.pathname === "/pair" && request.method === "GET") {
     if (request.headers.get("origin"))
       return json("", { error: "Direct local navigation is required." }, 403);
@@ -2662,7 +2814,13 @@ async function handle(request, providedConfig) {
     const payload = await readJson(request);
     return json(
       origin,
-      await deleteRecord(config, payload.collection, payload.id, payload.version),
+      await deleteRecord(
+        config,
+        payload.collection,
+        payload.id,
+        payload.version,
+        payload.contentHash,
+      ),
     );
   }
   if (url.pathname === "/submissions/event" && request.method === "POST")
@@ -2740,6 +2898,15 @@ async function handle(request, providedConfig) {
           ? String(payload.projectContext || "").slice(0, 12_000)
           : "",
     };
+    turn.evidencePrompt =
+      prepared.evidencePrompt ||
+      buildPrompt(
+        turn,
+        prepared.context.zotero,
+        prepared.context.obsidian,
+        prepared.context.passages,
+        prepared.context.calendar,
+      );
     const manifest = evidenceManifest(prepared.context);
     const settle = (result) => {
       const { output, actions } = parseActions(result.output);
@@ -2748,6 +2915,7 @@ async function handle(request, providedConfig) {
       rememberConversation(prepared.conversationId, {
         ...prepared.context,
         retrieval: prepared.retrieval,
+        evidencePrompt: turn.evidencePrompt,
         // Bounded per message as well as per turn: the history is resent with every
         // follow-up, so an unbounded transcript would quietly eat the token budget.
         messages: [
@@ -2880,10 +3048,14 @@ export function createBridgeServer(configPromise = getConfig()) {
       const config = await configPromise;
       origin = String(incoming.headers.origin || "");
       const requestedHost = String(incoming.headers.host || "");
-      const safeHost = /^(127\.0\.0\.1|localhost)(:\d{1,5})?$/.test(requestedHost)
-        ? requestedHost
-        : "127.0.0.1";
-      const url = `http://${safeHost}${incoming.url}`;
+      const host = /^(127\.0\.0\.1|localhost)(?::(\d{1,5}))?$/i.exec(requestedHost);
+      if (!host || (host[2] && (Number(host[2]) < 1 || Number(host[2]) > 65535))) {
+        const error = new Error("Host must be localhost or 127.0.0.1 with a valid port.");
+        error.status = 400;
+        error.code = "host_denied";
+        throw error;
+      }
+      const url = `http://${requestedHost}${incoming.url}`;
       const pathname = new URL(url).pathname;
       const preliminary = new Request(url, {
         method: incoming.method,

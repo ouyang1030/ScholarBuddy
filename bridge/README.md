@@ -39,3 +39,35 @@ The service binds only to `127.0.0.1`. Pairing uses a five-minute, one-time code
 - AI requests use only the sources selected for that workflow. Credentials remain inside the Bridge.
 - Each provider uses its native API protocol; changing providers does not expose one provider's key to another.
 - AI rate and token limits reset when the Bridge restarts and should not be treated as billing controls.
+
+## Updating the Bridge and browser together
+
+Record reads and saves now return a `contentHash` computed from the Markdown file.
+Updates and deletes require that hash as well as `version`; it is transport metadata
+and is not written into frontmatter. Restart the updated Bridge and reload the
+updated web interface before editing. An older browser receives a reload error
+instead of overwriting an external Obsidian edit. Existing Markdown needs no migration.
+The hash check is optimistic concurrency protection, not a lock on Obsidian or sync tools.
+
+An empty or malformed Bridge token now stops startup. For a damaged generated token,
+run `npm run bridge:token:rotate` and restart/re-pair as instructed. If
+`WORKBUDDY_BRIDGE_TOKEN` is explicitly set, correct that configuration value instead.
+
+AI follow-ups resend the original evidence snapshot with each provider request,
+including after older conversation turns are trimmed. This increases follow-up input
+usage compared with the previous incomplete prompts.
+
+New submission events record the attempt version they were created against. Retrying
+an event or running email sync can finish an interrupted attempt update without
+creating a second event. Recovery does not overwrite a later Bridge edit. Legacy
+events without this version are not automatically replayed during email sync.
+Configuration saves are serialized within the running Bridge; external edits and
+multiple Bridge processes are not coordinated by that queue.
+
+The HTTP transport rejects non-loopback Host headers before routing, including the
+setup and pairing pages. Provider errors returned to the browser contain a status
+and recognized diagnostic code, not arbitrary upstream messages. Local diagnostic
+logs redact the exact credential used for the request, including draft setup keys.
+The token rotation command now refuses to change the token file when
+`WORKBUDDY_BRIDGE_TOKEN` is present in local configuration or the process environment;
+it reports how to change the active credential instead of claiming revocation.
