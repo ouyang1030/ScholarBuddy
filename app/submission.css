@@ -23,7 +23,7 @@
 .submission-stage > span { color: var(--lime); font: 10px var(--font-geist-mono); letter-spacing: .12em; }
 .submission-stage h3 { margin: 15px 0 7px; font-size: 24px; line-height: 1.15; }
 .submission-stage p { margin: 0; color: #96a29b; font-size: 11px; line-height: 1.5; }
-.submission-facts { display: grid; grid-template-columns: repeat(3, 1fr); }
+.submission-facts { display: grid; grid-template-columns: repeat(2, 1fr); }
 .submission-facts > span { min-width: 0; min-height: 76px; padding: 14px; border-left: 1px solid #e0e5df; border-bottom: 1px solid #e0e5df; display: flex; flex-direction: column; gap: 5px; }
 .submission-facts small { color: #8b9690; font-size: 10px; }
 .submission-facts strong { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12px; }

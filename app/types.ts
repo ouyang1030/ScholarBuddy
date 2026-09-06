@@ -1,4 +1,5 @@
-export type ModuleKey = "dashboard" | "projects" | "manuscript" | "library" | "operations";
+export type ModuleKey =
+  "dashboard" | "projects" | "manuscript" | "library" | "operations" | "about";
 export type CollectionKey =
   | "projects"
   | "research-questions"

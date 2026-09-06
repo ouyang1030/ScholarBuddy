@@ -241,14 +241,6 @@ export function SubmissionTracker({
                     <strong>{attempt.correspondingAuthor || "Not set"}</strong>
                   </span>
                   <span>
-                    <small>Expected response</small>
-                    <strong>{shortDate(attempt.expectedResponseDate)}</strong>
-                  </span>
-                  <span>
-                    <small>Next check</small>
-                    <strong>{shortDate(attempt.nextCheckDate)}</strong>
-                  </span>
-                  <span>
                     <small>Follow-up</small>
                     <strong>{shortDate(attempt.followUpDue)}</strong>
                   </span>
@@ -264,14 +256,16 @@ export function SubmissionTracker({
                     className="quiet-button"
                     disabled={!attempt.portalUrl}
                     onClick={() => {
-                      if (attempt.portalUrl && /^https?:\/\//i.test(attempt.portalUrl))
-                        window.open(attempt.portalUrl, "_blank", "noopener,noreferrer");
+                      if (attempt.portalUrl) {
+                        const targetUrl = /^https?:\/\//i.test(attempt.portalUrl)
+                          ? attempt.portalUrl
+                          : `https://${attempt.portalUrl}`;
+                        window.open(targetUrl, "_blank", "noopener,noreferrer");
+                        void markChecked();
+                      }
                     }}
                   >
                     Open portal ↗
-                  </button>
-                  <button className="quiet-button" onClick={markChecked}>
-                    Mark checked today
                   </button>
                   <button
                     className="primary-button"

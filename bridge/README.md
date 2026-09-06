@@ -71,3 +71,37 @@ logs redact the exact credential used for the request, including draft setup key
 The token rotation command now refuses to change the token file when
 `WORKBUDDY_BRIDGE_TOKEN` is present in local configuration or the process environment;
 it reports how to change the active credential instead of claiming revocation.
+
+## Reminder runtime
+
+The Bridge entry point starts a serialized reminder worker at 60-second intervals.
+`GET /reminders`, `PUT /reminders`, and `POST /reminders/test` use the existing
+exact-origin and bearer-token boundary. `GET /reminders/events?date=YYYY-MM-DD`
+resolves a clicked notification against current calendar data without prompting.
+The update endpoint takes only boolean `enabled`, `calendar`, and `operations`
+patches. Its navigation origin comes from the authenticated request, never the body.
+
+`bridge/notifications/ReminderHelper.swift` is compiled lazily on explicit enable
+into the ignored `bridge/.notifications/ScholarBuddy Reminders.app`. It uses
+UserNotifications and read-only EventKit queries (which expand recurring events).
+You can prepare it without requesting permissions using
+`node scripts/build-reminder-helper.mjs`. Apple Command Line Tools are required
+for a source installation. No notification/calendar permission is requested by
+startup, status reads, or background retries.
+
+Settings, a transient delivery outbox, and expiring deduplication keys are stored
+atomically under `bridge/.notifications/state` with private file permissions. The
+outbox is revalidated against live sources before retries. Retries reuse a stable
+notification identifier; the helper checks Notification Center for prior delivery.
+A crash after OS delivery and dismissal but before the Bridge records success can
+still cause a retry notification; exactly-once delivery cannot be guaranteed across
+that OS/filesystem boundary. Different Bridge processes must not share this state;
+the supported background service runs one instance on the configured loopback port.
+
+Only currently due reminders are submitted to macOS, so stale future schedules do
+not survive source edits while the Bridge is offline. After restart/wake, upcoming
+items with missed nodes are combined once. Source failures are shown in the reminder
+panel and retried; Calendar failure does not block Operation reminders. Notification
+clicks use URL fragments with identifiers, so those identifiers are not sent to the
+hosted server. System notification content and the transient local outbox contain
+the item title and date; no reminder data is sent to an AI provider.

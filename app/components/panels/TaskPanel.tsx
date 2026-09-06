@@ -39,7 +39,17 @@ export function TaskPanel() {
   useEffect(() => {
     if (ready) window.localStorage.setItem("workbuddy-daily-tasks-en-v3", JSON.stringify(tasks));
   }, [ready, tasks]);
-  const visibleTasks = tasks.filter((task) => task.date === today);
+  const visibleTasks = tasks
+    .filter((task) => task.date === today)
+    .sort((a, b) => Number(a.done) - Number(b.done));
+  const toggleTask = (id: number) => {
+    const update = () =>
+      setTasks((items) =>
+        items.map((item) => (item.id === id ? { ...item, done: !item.done } : item)),
+      );
+    if (document.startViewTransition) document.startViewTransition(update);
+    else update();
+  };
   const add = () => {
     if (newTask.trim()) {
       setTasks((items) => [
@@ -96,15 +106,12 @@ export function TaskPanel() {
       </div>
       <div className="daily-task-list">
         {visibleTasks.map((task) => (
-          <div className={task.done ? "done" : ""} key={task.id}>
-            <button
-              className="task-check"
-              onClick={() =>
-                setTasks((items) =>
-                  items.map((item) => (item.id === task.id ? { ...item, done: !item.done } : item)),
-                )
-              }
-            >
+          <div
+            className={task.done ? "done" : ""}
+            key={task.id}
+            style={{ viewTransitionName: `daily-task-${task.id}` }}
+          >
+            <button className="task-check" onClick={() => toggleTask(task.id)}>
               {task.done ? "✓" : ""}
             </button>
             <input

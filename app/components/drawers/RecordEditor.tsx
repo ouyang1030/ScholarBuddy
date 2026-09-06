@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { clampProgress, localDateKey } from "../../lib/format";
 import { CLOSED_RECORD_STATUSES } from "../../../shared/constants.mjs";
 import {
@@ -11,6 +11,7 @@ import {
   statusOptions,
 } from "../../lib/workbench";
 import type { CollectionKey, RecordItem, WorkbenchState } from "../../types";
+import { closeWithTransition, DrawerHeader, SaveFeedback } from "../primitives";
 
 export type EditorState = { collection: CollectionKey; record?: Partial<RecordItem> } | null;
 export function RecordEditor({
@@ -56,6 +57,12 @@ export function RecordEditor({
       : {}),
   });
   const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  // The success tick is shown before the drawer closes; if the editor goes away
+  // first (Cancel, Esc, backdrop), the pending close must not fire on whatever
+  // record is open by then.
+  const closeTimerRef = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(closeTimerRef.current), []);
   const [error, setError] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
   const set = (key: keyof RecordItem, value: string | number | boolean) =>
@@ -93,7 +100,8 @@ export function RecordEditor({
       else record.progress = clampProgress(form.progress);
       if (isJournal) delete record.status;
       await onSave(editor.collection, record);
-      onClose();
+      setSaved(true);
+      closeTimerRef.current = window.setTimeout(onClose, 650);
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "Could not save this record.");
     } finally {
@@ -182,7 +190,10 @@ export function RecordEditor({
     </label>
   );
   return (
-    <div className="drawer-backdrop" onMouseDown={onClose}>
+    <div
+      className="drawer-backdrop"
+      onMouseDown={(event) => closeWithTransition(onClose, event.currentTarget)}
+    >
       <aside
         ref={ref}
         className="action-drawer record-editor"
@@ -192,19 +203,14 @@ export function RecordEditor({
         onMouseDown={(event) => event.stopPropagation()}
         aria-label={`Edit ${editorLabel}`}
       >
-        <div className="drawer-head">
-          <button onClick={onClose}>×</button>
-          <span className="label">OBSIDIAN / {editor.collection.toUpperCase()}</span>
-          <span className="action-mark mint">✎</span>
-        </div>
-        <div className="drawer-title">
-          {form.id && <span>{form.id}</span>}
-          <h2>{existing ? `Edit ${editorLabel}` : `New ${editorLabel}`}</h2>
-          <p>
-            Saved as a readable Markdown record in Obsidian. Manual values remain authoritative
-            until you change them.
-          </p>
-        </div>
+        <DrawerHeader
+          label={`Obsidian / ${editor.collection}`}
+          mark="✎"
+          eyebrow={form.id}
+          title={existing ? `Edit ${editorLabel}` : `New ${editorLabel}`}
+          description="Saved as a readable Markdown record in Obsidian. Manual values remain authoritative until you change them."
+          onClose={onClose}
+        />
         <div className="record-form">
           {isPaperWorkItem ? (
             <label className="wide">
@@ -706,22 +712,6 @@ export function RecordEditor({
                     </label>
                   )}
                   <label>
-                    <span>Expected response</span>
-                    <input
-                      type="date"
-                      value={(form.expectedResponseDate || "").slice(0, 10)}
-                      onChange={(event) => set("expectedResponseDate", event.target.value)}
-                    />
-                  </label>
-                  <label>
-                    <span>Next check</span>
-                    <input
-                      type="date"
-                      value={(form.nextCheckDate || "").slice(0, 10)}
-                      onChange={(event) => set("nextCheckDate", event.target.value)}
-                    />
-                  </label>
-                  <label>
                     <span>Follow-up due</span>
                     <input
                       type="date"
@@ -795,10 +785,11 @@ export function RecordEditor({
             <span />
           )}
           <span>
+            <SaveFeedback state={saving ? "saving" : saved ? "saved" : error ? "error" : "idle"} />
             <button className="quiet-button" onClick={onClose}>
               Cancel
             </button>
-            <button className="primary-button" disabled={saving} onClick={save}>
+            <button className="primary-button" disabled={saving || saved} onClick={save}>
               {saving ? "Saving…" : "Save to Obsidian"}
             </button>
           </span>

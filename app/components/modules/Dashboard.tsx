@@ -5,7 +5,7 @@ import { isOpen, quickActions } from "../../lib/workbench";
 import type { DataProps, SubmissionAlert } from "../../lib/workbench";
 import type { RecordItem } from "../../types";
 import { LiveTimestamp } from "../LiveTimestamp";
-import { EmptyState } from "../primitives";
+import { EmptyState, PageHeader } from "../primitives";
 import { PanelBoundary } from "../PanelBoundary";
 import { CalendarPanel } from "../panels/CalendarPanel";
 import { FocusPanel } from "../panels/FocusPanel";
@@ -80,24 +80,22 @@ export function Dashboard({
   ].filter(({ item }) => isOpen(item));
   return (
     <>
-      <section className="daily-intro">
-        <div>
-          <LiveTimestamp />
-          <h1>Move one thing forward.</h1>
-          <p>
-            Choose the next concrete output, work without switching tools, and leave a clear handoff
-            for tomorrow.
-          </p>
-        </div>
-        <div className="daily-intro-actions">
-          <button className="quiet-button" onClick={openContext}>
-            ◇ View real context
-          </button>
-          <button className="primary-button" onClick={() => runAction(quickActions[4])}>
-            Plan today with AI <b>✦</b>
-          </button>
-        </div>
-      </section>
+      <PageHeader
+        eyebrow="TODAY"
+        title="Move one thing forward."
+        description={<LiveTimestamp />}
+        compact
+        actions={
+          <div className="daily-intro-actions">
+            <button className="quiet-button" onClick={openContext}>
+              ◇ View real context
+            </button>
+            <button className="primary-button" onClick={() => runAction(quickActions[4])}>
+              Plan today with AI <b>✦</b>
+            </button>
+          </div>
+        }
+      />
       <SubmissionWatch alerts={submissionAlerts} onOpen={openSubmissionAlert} />
       <section className="daily-command-grid">
         <PanelBoundary label="Primary focus">

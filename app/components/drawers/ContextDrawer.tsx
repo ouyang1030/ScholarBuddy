@@ -1,6 +1,7 @@
 "use client";
 
 import type { BridgeStatus, WorkbenchState } from "../../types";
+import { closeWithTransition, DrawerHeader } from "../primitives";
 
 export function ContextDrawer({
   state,
@@ -20,7 +21,10 @@ export function ContextDrawer({
   const recentLog = state.journal[0];
   const inbox = state.ideas.filter((item) => (item.status || "Inbox") === "Inbox");
   return (
-    <div className="drawer-backdrop" onMouseDown={onClose}>
+    <div
+      className="drawer-backdrop"
+      onMouseDown={(event) => closeWithTransition(onClose, event.currentTarget)}
+    >
       <aside
         ref={ref}
         className="action-drawer context-drawer"
@@ -30,19 +34,19 @@ export function ContextDrawer({
         tabIndex={-1}
         onMouseDown={(e) => e.stopPropagation()}
       >
-        <div className="drawer-head">
-          <button onClick={onClose}>×</button>
-          <span className="label">REAL CONTEXT</span>
-          <span className="action-mark mint">◇</span>
-        </div>
-        <div className="drawer-title">
-          <span>OBSIDIAN + ZOTERO</span>
-          <h2>
-            What ScholarBuddy
-            <br />
-            can use now
-          </h2>
-        </div>
+        <DrawerHeader
+          label="Real context"
+          mark="◇"
+          eyebrow="OBSIDIAN + ZOTERO"
+          title={
+            <>
+              What ScholarBuddy
+              <br />
+              can use now
+            </>
+          }
+          onClose={onClose}
+        />
         <div className="context-groups">
           <section>
             <div>

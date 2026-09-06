@@ -7,7 +7,7 @@ import type {
   WorkbenchState,
   ZoteroPassage,
 } from "../types";
-import { daysSince, daysUntil, localDateKey, shortDate } from "./format";
+import { daysSince, daysUntil, localDateKey } from "./format";
 import {
   AI_PROVIDER_DEFINITIONS,
   CLOSED_RECORD_STATUSES,
@@ -287,12 +287,7 @@ export type DataProps = {
 };
 export type SubmissionAlert = {
   attempt: RecordItem;
-  kind:
-    | "revision-deadline"
-    | "follow-up"
-    | "expected-response"
-    | "status-verification"
-    | "stale-verification";
+  kind: "revision-deadline" | "follow-up" | "stale-verification";
   tone: "critical" | "warning" | "quiet";
   title: string;
   detail: string;
@@ -308,8 +303,6 @@ export function submissionAlerts(state: WorkbenchState): SubmissionAlert[] {
     if (["Accepted", "Published", "Rejected", "Withdrawn"].includes(attempt.status || "")) continue;
     const revision = daysUntil(attempt.dueDate);
     const followUp = daysUntil(attempt.followUpDue);
-    const expected = daysUntil(attempt.expectedResponseDate);
-    const nextCheck = daysUntil(attempt.nextCheckDate);
     if (attempt.status === "Revision Required" && revision !== null && revision <= 14)
       alerts.push({
         attempt,
@@ -325,22 +318,6 @@ export function submissionAlerts(state: WorkbenchState): SubmissionAlert[] {
         tone: "warning",
         title: "Follow-up is due",
         detail: `${attempt.status || "Submission"} · ${daysSince(attempt.stageStartedAt || attempt.submittedAt)} days in stage`,
-      });
-    else if (expected !== null && expected < 0)
-      alerts.push({
-        attempt,
-        kind: "expected-response",
-        tone: "warning",
-        title: "Expected response window passed",
-        detail: `${attempt.status || "Submission"} · expected ${shortDate(attempt.expectedResponseDate)}`,
-      });
-    else if (nextCheck !== null && nextCheck <= 0)
-      alerts.push({
-        attempt,
-        kind: "status-verification",
-        tone: "quiet",
-        title: "Status verification due",
-        detail: `Last verified ${shortDate(attempt.lastVerifiedAt)}`,
       });
     else if (daysSince(attempt.lastVerifiedAt || attempt.submittedAt) >= 21)
       alerts.push({

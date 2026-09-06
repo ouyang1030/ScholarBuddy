@@ -18,3 +18,11 @@ When a user runs an AI workflow, the prompt and selected Zotero or Obsidian cont
 ## Public deployments
 
 Opening the hosted interface does not grant access to another person's computer. Each browser must reach and pair with a Bridge on its own machine. Site operators should publish an audience-appropriate privacy notice and comply with applicable requirements if they add analytics, accounts, storage, or other data collection.
+
+Optional reminders run locally and are off by default. When enabled, ScholarBuddy
+Reminders reads calendar event metadata and PhD Operations deadlines to send macOS
+notifications. macOS may retain notification titles/dates in Notification Center.
+The Bridge stores reminder settings, an expiring deduplication ledger, and a
+transient retry payload locally under `bridge/.notifications`. Notification links
+carry navigation identifiers in a URL fragment, which is not sent to the hosted
+server. These reminder inputs are not sent to AI providers.

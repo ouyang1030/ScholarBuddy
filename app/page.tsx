@@ -28,11 +28,13 @@ import { SourceDot } from "./components/primitives";
 import { useOverlayFocus } from "./components/useOverlayFocus";
 import { RecordEditor, type EditorState } from "./components/drawers/RecordEditor";
 import { ActionDrawer } from "./components/drawers/ActionDrawer";
+import { ReminderDetails, type ReminderLink } from "./components/drawers/ReminderDetails";
 import { ConnectionsDrawer } from "./components/drawers/ConnectionsDrawer";
 import { ContextDrawer } from "./components/drawers/ContextDrawer";
 import { GuideDrawer } from "./components/drawers/GuideDrawer";
 import { Dashboard } from "./components/modules/Dashboard";
 import { LibraryModule } from "./components/modules/LibraryModule";
+import { LandingModule } from "./components/modules/LandingModule";
 import { ManuscriptModule } from "./components/modules/ManuscriptModule";
 import { OperationsModule } from "./components/modules/OperationsModule";
 import { ProjectsModule } from "./components/modules/ProjectsModule";
@@ -73,6 +75,7 @@ export default function Home() {
   const [bridgeIssue, setBridgeIssue] = useState<BridgeIssue>(null);
   const [contextOpen, setContextOpen] = useState(false);
   const [connectionsOpen, setConnectionsOpen] = useState(false);
+  const [reminderLinks, setReminderLinks] = useState<ReminderLink[]>([]);
   const [guideOpen, setGuideOpen] = useState(false);
   const [mobileNav, setMobileNav] = useState(false);
   const [commandOpen, setCommandOpen] = useState(false);
@@ -246,6 +249,7 @@ export default function Home() {
         setContextOpen(false);
         setConnectionsOpen(false);
         setGuideOpen(false);
+        setReminderLinks([]);
         setPaperCelebration(null);
         if (paperCelebrationTimerRef.current) window.clearTimeout(paperCelebrationTimerRef.current);
       }
@@ -272,23 +276,70 @@ export default function Home() {
     ? "celebration"
     : commandOpen
       ? "command"
-      : guideOpen
-        ? "guide"
-        : connectionsOpen
-          ? "connections"
-          : contextOpen
-            ? "context"
-            : action
-              ? "action"
-              : editor
-                ? "editor"
-                : "";
+      : reminderLinks.length
+        ? "reminderDetails"
+        : guideOpen
+          ? "guide"
+          : connectionsOpen
+            ? "connections"
+            : contextOpen
+              ? "context"
+              : action
+                ? "action"
+                : editor
+                  ? "editor"
+                  : "";
   useOverlayFocus(overlayRef, topOverlay);
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.hash.slice(1));
+    const kind = params.get("reminder");
+    if (!kind) return;
+    const timer = window.setTimeout(() => {
+      try {
+        const raw =
+          kind === "summary"
+            ? JSON.parse(params.get("items") || "[]")
+            : [{ category: kind, id: params.get("id"), date: params.get("date") }];
+        if (Array.isArray(raw))
+          setReminderLinks(
+            raw
+              .filter(
+                (item) =>
+                  item &&
+                  ["operations", "calendar"].includes(item.category) &&
+                  typeof item.id === "string" &&
+                  item.id.length < 500 &&
+                  (item.category !== "calendar" || /^\d{4}-\d{2}-\d{2}$/.test(item.date || "")),
+              )
+              .slice(0, 100),
+          );
+      } catch {
+        /* Ignore malformed navigation data. */
+      }
+      const url = new URL(window.location.href);
+      url.hash = "";
+      window.history.replaceState(null, "", url);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, []);
+
   useEffect(() => {
     if (!toast) return;
     const timer = window.setTimeout(() => setToast(""), 2400);
     return () => window.clearTimeout(timer);
   }, [toast]);
+  useEffect(() => {
+    const link = reminderLinks.length === 1 ? reminderLinks[0] : null;
+    if (loading || link?.category !== "operations") return;
+    const record = state.operations.find((item) => item.id === link.id);
+    if (!record) return;
+    const timer = window.setTimeout(() => {
+      setActive("operations");
+      setEditor({ collection: "operations", record });
+      setReminderLinks([]);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [loading, reminderLinks, state.operations]);
   const showPaperCelebration = (
     paper: { id?: string; title?: string; journal?: string },
     milestone: "Accepted" | "Published",
@@ -479,7 +530,10 @@ export default function Home() {
   };
   const openEditor = (collection: CollectionKey, record?: Partial<RecordItem>) =>
     setEditor({ collection, record });
-  const activeLabel = navItems.find((item) => item.key === active)?.label || "Today";
+  const activeLabel =
+    active === "about"
+      ? "About ScholarBuddy"
+      : navItems.find((item) => item.key === active)?.label || "Today";
   const activePaper =
     state.manuscripts.find((item) => item.id === paperContextId) || state.manuscripts[0];
   const openPaper = (
@@ -570,13 +624,15 @@ export default function Home() {
         </nav>
         <div className="sidebar-bottom">
           <button
+            className={active === "about" ? "active" : ""}
             onClick={() => {
-              setGuideOpen(true);
+              setActive("about");
               setMobileNav(false);
+              window.scrollTo({ top: 0, behavior: "smooth" });
             }}
           >
-            <span className="nav-icon">?</span>
-            <span>User Guide</span>
+            <span className="nav-icon">◇</span>
+            <span>About ScholarBuddy</span>
           </button>
           <button onClick={() => setConnectionsOpen(true)}>
             <span className="nav-icon">⚙</span>
@@ -617,7 +673,7 @@ export default function Home() {
           </div>
           <button className="command-trigger" onClick={() => setCommandOpen(true)}>
             <span>⌕</span>
-            <span>Search or run an AI assist…</span>
+            <span>Search commands or AI assists…</span>
             <kbd>⌘ K</kbd>
           </button>
           <div className="top-actions">
@@ -643,53 +699,63 @@ export default function Home() {
           </div>
         </header>
         <main className="content">
-          {dataError && (
-            <div className="data-banner compact-banner">
-              <span>!</span>
-              <p>{dataError} Today’s local focus tools remain available.</p>
-              <button onClick={loadState}>Retry</button>
-            </div>
-          )}
-          {loading && !Object.values(state).flat().length && (
-            <div className="loading-bar">
-              <i />
-              Loading Obsidian records…
-            </div>
-          )}
-          {active === "dashboard" && (
-            <Dashboard
-              {...props}
-              openContext={() => setContextOpen(true)}
-              openManuscripts={() => openPaper()}
-              submissionAlerts={visibleSubmissionAlerts}
-              openSubmissionAlert={openSubmissionAlert}
-              paper={activePaper}
-            />
-          )}
-          {active === "projects" && <ProjectsModule state={state} openEditor={openEditor} />}
-          {active === "manuscript" && (
-            <ManuscriptModule
-              state={state}
-              openEditor={openEditor}
-              addEvent={addSubmissionEvent}
-              verifyAttempt={verifySubmissionAttempt}
-              syncEmail={syncSubmissionEmail}
-              selectedId={activePaper?.id || ""}
-              onSelect={setPaperContextId}
-              initialView={manuscriptInitialView}
-            />
-          )}
-          {active === "library" && (
-            <LibraryModule
-              state={state}
-              saveRecord={saveRecord}
-              openEditor={openEditor}
-              paper={activePaper}
-            />
-          )}
-          {active === "operations" && (
-            <OperationsModule state={state} openEditor={openEditor} paper={activePaper} />
-          )}
+          <div className="module-view" key={active}>
+            {dataError && (
+              <div className="data-banner compact-banner">
+                <span>!</span>
+                <p>{dataError} Today’s local focus tools remain available.</p>
+                <button onClick={loadState}>Retry</button>
+              </div>
+            )}
+            {loading && !Object.values(state).flat().length && (
+              <div className="loading-bar">
+                <i />
+                Loading Obsidian records…
+              </div>
+            )}
+            {active === "dashboard" && (
+              <Dashboard
+                {...props}
+                openContext={() => setContextOpen(true)}
+                openManuscripts={() => openPaper()}
+                submissionAlerts={visibleSubmissionAlerts}
+                openSubmissionAlert={openSubmissionAlert}
+                paper={activePaper}
+              />
+            )}
+            {active === "projects" && <ProjectsModule state={state} openEditor={openEditor} />}
+            {active === "manuscript" && (
+              <ManuscriptModule
+                state={state}
+                openEditor={openEditor}
+                addEvent={addSubmissionEvent}
+                verifyAttempt={verifySubmissionAttempt}
+                syncEmail={syncSubmissionEmail}
+                selectedId={activePaper?.id || ""}
+                onSelect={setPaperContextId}
+                initialView={manuscriptInitialView}
+              />
+            )}
+            {active === "library" && (
+              <LibraryModule
+                state={state}
+                saveRecord={saveRecord}
+                openEditor={openEditor}
+                paper={activePaper}
+              />
+            )}
+            {active === "operations" && (
+              <OperationsModule state={state} openEditor={openEditor} paper={activePaper} />
+            )}
+            {active === "about" && (
+              <LandingModule
+                enterWorkbench={() => setActive("dashboard")}
+                openModule={setActive}
+                openConnections={() => setConnectionsOpen(true)}
+                openGuide={() => setGuideOpen(true)}
+              />
+            )}
+          </div>
         </main>
       </div>
       {editor && (
@@ -738,6 +804,19 @@ export default function Home() {
           openConnections={() => setConnectionsOpen(true)}
         />
       )}
+      {reminderLinks.length > 0 && (
+        <ReminderDetails
+          ref={topOverlay === "reminderDetails" ? overlayRef : undefined}
+          items={reminderLinks}
+          operations={state.operations}
+          onClose={() => setReminderLinks([])}
+          onOpenOperation={(record) => {
+            setReminderLinks([]);
+            setActive("operations");
+            openEditor("operations", record);
+          }}
+        />
+      )}
       {commandOpen && (
         <div className="command-backdrop" onMouseDown={() => setCommandOpen(false)}>
           <div
@@ -745,7 +824,7 @@ export default function Home() {
             className="command-palette"
             role="dialog"
             aria-modal="true"
-            aria-label="Contextual AI assists"
+            aria-label="Commands and AI assists"
             tabIndex={-1}
             onMouseDown={(e) => e.stopPropagation()}
           >
@@ -755,7 +834,7 @@ export default function Home() {
                 autoFocus
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search AI assists…"
+                placeholder="Search commands or AI assists…"
               />
               <kbd>ESC</kbd>
             </div>

@@ -42,6 +42,7 @@ import { compareRecords } from "../shared/records.mjs";
 import { TOP_LEVEL_NUMBER, headingWords, sectionForWords } from "../shared/section-headings.mjs";
 import { workflowContract } from "../shared/workflows.mjs";
 import { setupPage } from "./setup-page.mjs";
+import { createReminderService } from "./reminders.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const configFile = path.join(repoRoot, ".env.local");
@@ -226,7 +227,7 @@ function html(body, headers = {}) {
 function corsHeaders(origin = "") {
   return {
     ...(origin ? { "Access-Control-Allow-Origin": origin } : {}),
-    "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+    "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
     "Access-Control-Allow-Headers": "Authorization, Content-Type",
     "Access-Control-Allow-Private-Network": "true",
     "Access-Control-Max-Age": "600",
@@ -2784,6 +2785,44 @@ async function handle(request, providedConfig) {
     );
   if (auth.preflight) return new Response(null, { status: 204, headers: corsHeaders(auth.origin) });
   const origin = auth.origin;
+  if (
+    url.pathname === "/reminders" ||
+    url.pathname === "/reminders/test" ||
+    url.pathname === "/reminders/events"
+  ) {
+    if (!config._reminders)
+      return json(
+        origin,
+        { error: "Restart the local Bridge to finish setting up reminders." },
+        503,
+      );
+    try {
+      if (url.pathname === "/reminders/events" && request.method === "GET") {
+        const date = url.searchParams.get("date") || "";
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(+new Date(`${date}T00:00:00`)))
+          return json(origin, { error: "Invalid calendar date." }, 422);
+        return json(origin, await config._reminders.events(date));
+      }
+      if (url.pathname === "/reminders" && request.method === "GET")
+        return json(origin, await config._reminders.status());
+      if (url.pathname === "/reminders" && request.method === "PUT")
+        return json(origin, await config._reminders.update(await readJson(request), origin));
+      if (url.pathname === "/reminders/test" && request.method === "POST")
+        return json(origin, await config._reminders.test(origin));
+      return json(origin, { error: "Method not allowed." }, 405);
+    } catch (error) {
+      return json(
+        origin,
+        {
+          error:
+            error.status === 422 || error.code === "reminder_setup"
+              ? error.message
+              : "Reminders could not complete this action. Check notification and Calendar permissions in System Settings, then try again.",
+        },
+        error.status || 503,
+      );
+    }
+  }
   if (!readQuota(url.pathname))
     return json(
       origin,
@@ -3147,7 +3186,16 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
         initialConfig.NEXT_PUBLIC_WORKBUDDY_BRIDGE_PORT ||
         32145,
     );
+    const { nativeReminders } = await import("./reminder-native.mjs");
+    const reminderDirectory = path.join(repoRoot, "bridge", ".notifications", "state");
+    initialConfig._reminders = createReminderService({
+      directory: reminderDirectory,
+      native: nativeReminders(reminderDirectory),
+      readOperations: async () => listRecords(await readConfigValues(), "operations"),
+    });
     const server = createBridgeServer(Promise.resolve(initialConfig));
+    server.on("listening", () => initialConfig._reminders.start());
+    server.on("close", () => initialConfig._reminders.stop());
     server.listen(port, "127.0.0.1", () =>
       process.stdout.write(`ScholarBuddy bridge ready at http://127.0.0.1:${port}\n`),
     );

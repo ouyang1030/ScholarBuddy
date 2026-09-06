@@ -1,5 +1,7 @@
 "use client";
 
+import { closeWithTransition, DrawerHeader } from "../primitives";
+
 export function GuideDrawer({
   onClose,
   openConnections,
@@ -32,7 +34,10 @@ export function GuideDrawer({
     ],
   ];
   return (
-    <div className="drawer-backdrop" onMouseDown={onClose}>
+    <div
+      className="drawer-backdrop"
+      onMouseDown={(event) => closeWithTransition(onClose, event.currentTarget)}
+    >
       <aside
         ref={ref}
         className="action-drawer guide-drawer"
@@ -42,16 +47,14 @@ export function GuideDrawer({
         onMouseDown={(event) => event.stopPropagation()}
         aria-label="ScholarBuddy user guide"
       >
-        <div className="drawer-head">
-          <button onClick={onClose}>×</button>
-          <span className="label">USER GUIDE</span>
-          <span className="action-mark mint">?</span>
-        </div>
-        <div className="drawer-title">
-          <span>SCHOLARBUDDY / SPORTS RESEARCH OS</span>
-          <h2>How to use your workbench</h2>
-          <p>A practical guide to the daily workflow, real data sources, editing, and AI tools.</p>
-        </div>
+        <DrawerHeader
+          label="User guide"
+          mark="?"
+          eyebrow="SCHOLARBUDDY / SPORTS RESEARCH OS"
+          title="How to use your workbench"
+          description="A practical guide to the daily workflow, real data sources, editing, and AI tools."
+          onClose={onClose}
+        />
         <nav className="guide-jump" aria-label="Guide sections">
           <a href="#guide-start">Start here</a>
           <a href="#guide-daily">Daily routine</a>
@@ -498,7 +501,7 @@ export function GuideDrawer({
         </section>
         <div className="drawer-footer guide-footer">
           <span className="small-note">
-            ⌘ K runs an AI workflow · ⌘ J writes the log · ⌘ I captures an idea
+            ⌘ K opens commands · ⌘ J writes the log · ⌘ I captures an idea
           </span>
           <button className="primary-button" onClick={onClose}>
             Done

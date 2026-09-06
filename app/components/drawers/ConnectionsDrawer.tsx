@@ -5,6 +5,8 @@ import { bridgeBaseUrl, bridgeSetupUrl, exchangeBridgePairingCode } from "../../
 import { aiProviders } from "../../lib/workbench";
 import type { BridgeIssue, BridgeStatus } from "../../types";
 import { BrandLogo } from "../BrandLogo";
+import { closeWithTransition, DrawerHeader, SaveFeedback } from "../primitives";
+import { ReminderSettings } from "./ReminderSettings";
 
 export function ConnectionsDrawer({
   status,
@@ -22,6 +24,7 @@ export function ConnectionsDrawer({
   const [token, setToken] = useState("");
   const [pairingError, setPairingError] = useState("");
   const [pairing, setPairing] = useState(false);
+  const [checking, setChecking] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const connection = (connected?: boolean) => (
     <b className={`connection-state ${connected ? "connected" : "missing"}`}>
       {connected ? "Connected" : "Setup needed"}
@@ -48,6 +51,12 @@ export function ConnectionsDrawer({
     } finally {
       setPairing(false);
     }
+  };
+  const checkConnection = async () => {
+    setChecking("saving");
+    const result = await refresh();
+    setChecking(result ? "saved" : "error");
+    window.setTimeout(() => setChecking("idle"), 1800);
   };
   const issueCopy =
     issue === "unreachable"
@@ -85,7 +94,10 @@ export function ConnectionsDrawer({
     );
   });
   return (
-    <div className="drawer-backdrop" onMouseDown={onClose}>
+    <div
+      className="drawer-backdrop"
+      onMouseDown={(event) => closeWithTransition(onClose, event.currentTarget)}
+    >
       <aside
         ref={ref}
         className="action-drawer connections-drawer"
@@ -95,19 +107,14 @@ export function ConnectionsDrawer({
         tabIndex={-1}
         onMouseDown={(e) => e.stopPropagation()}
       >
-        <div className="drawer-head">
-          <button onClick={onClose}>×</button>
-          <span className="label">CONNECTIONS</span>
-          <span className="action-mark mint">⌁</span>
-        </div>
-        <div className="drawer-title">
-          <span>LOCAL RESEARCH BRIDGE</span>
-          <h2>Real tools, private context.</h2>
-          <p>
-            A short-lived pairing code prevents other websites from using your local research
-            systems.
-          </p>
-        </div>
+        <DrawerHeader
+          label="Connections"
+          mark="⌁"
+          eyebrow="LOCAL RESEARCH BRIDGE"
+          title="Real tools, private context."
+          description="A short-lived pairing code prevents other websites from using your local research systems."
+          onClose={onClose}
+        />
         {!status && (
           <div className="pairing-card">
             <b>Pair this browser</b>
@@ -151,12 +158,24 @@ export function ConnectionsDrawer({
           </div>
         )}
         <div className={`bridge-banner ${status ? "online" : "offline"}`}>
-          <span>{status ? "✓" : "!"}</span>
+          <span className="bridge-status-icon">{status ? "✓" : "!"}</span>
           <div>
             <strong>{status ? "Research bridge is paired" : issueCopy.title}</strong>
             <small>{status ? "Listening only on this Mac" : issueCopy.detail}</small>
           </div>
-          <button onClick={() => void refresh()}>Test again</button>
+          <div className="connection-check">
+            <SaveFeedback
+              state={checking}
+              labels={{ saving: "Testing…", saved: "Connected", error: "No response" }}
+            />
+            <button
+              type="button"
+              disabled={checking === "saving"}
+              onClick={() => void checkConnection()}
+            >
+              Test again
+            </button>
+          </div>
         </div>
         {status && (
           <button
@@ -193,6 +212,7 @@ export function ConnectionsDrawer({
             {connection(status?.obsidian.connected)}
           </article>
         </div>
+        <ReminderSettings paired={Boolean(status)} />
       </aside>
     </div>
   );

@@ -4,7 +4,7 @@ import { useState } from "react";
 import { clampProgress, shortDate } from "../../lib/format";
 import { isOpen, statusDefault, type DataProps } from "../../lib/workbench";
 import type { RecordItem } from "../../types";
-import { EmptyState, MetaPill } from "../primitives";
+import { EmptyState, MetaPill, ModuleTabs, PageHeader } from "../primitives";
 import { RecordModule } from "./RecordModule";
 
 const OPEN_STATUS = statusDefault("operations");
@@ -33,6 +33,23 @@ function sortOperations(operations: RecordItem[]): RecordItem[] {
   });
 }
 
+function deadlineState(dueDate?: string) {
+  if (!dueDate) return { label: "No deadline", tone: "neutral", days: null };
+  const [year, month, day] = dueDate.split("-").map(Number);
+  const today = new Date();
+  const start = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate());
+  const target = Date.UTC(year, month - 1, day);
+  const days = Math.round((target - start) / 86_400_000);
+  // Records are hand-editable Markdown, so a malformed date reads as no deadline
+  // rather than "NaNd left" — the same call the bridge makes when it validates.
+  if (!Number.isFinite(days)) return { label: "No deadline", tone: "neutral", days: null };
+  if (days < 0) return { label: `${Math.abs(days)}d overdue`, tone: "overdue", days };
+  if (days === 0) return { label: "Due today", tone: "overdue", days };
+  if (days <= 7) return { label: `${days}d left`, tone: "urgent", days };
+  if (days <= 30) return { label: `${days}d left`, tone: "soon", days };
+  return { label: `${days}d left`, tone: "neutral", days };
+}
+
 function OperationsBoard({
   state,
   openEditor,
@@ -53,33 +70,36 @@ function OperationsBoard({
 
   return (
     <>
-      <section className="page-intro compact">
-        <div>
-          <p className="eyebrow">DEADLINES + COMMITMENTS</p>
-          <h1>
+      <PageHeader
+        eyebrow="DEADLINES + COMMITMENTS"
+        title={
+          <>
             PhD <em>operations.</em>
-          </h1>
-          <p>Track supervision, teaching, ethics, funding, and administrative deadlines.</p>
-        </div>
-        <button
-          className="primary-button"
-          onClick={() =>
-            openEditor(
-              "operations",
-              paper
-                ? {
-                    manuscriptId: paper.id,
-                    manuscriptTitle: paper.title,
-                    projectId: paper.projectId || "",
-                    projectTitle: paper.projectTitle || "",
-                  }
-                : undefined,
-            )
-          }
-        >
-          New operation <b>+</b>
-        </button>
-      </section>
+          </>
+        }
+        description="Supervision, teaching, ethics, funding, and administration — ordered by deadline."
+        compact
+        actions={
+          <button
+            className="primary-button"
+            onClick={() =>
+              openEditor(
+                "operations",
+                paper
+                  ? {
+                      manuscriptId: paper.id,
+                      manuscriptTitle: paper.title,
+                      projectId: paper.projectId || "",
+                      projectTitle: paper.projectTitle || "",
+                    }
+                  : undefined,
+              )
+            }
+          >
+            New operation <b>+</b>
+          </button>
+        }
+      />
       {types.length > 1 && (
         <div className="record-filters" aria-label="Filter operations by type">
           <button className={active ? "" : "active"} onClick={() => setTypeFilter("")}>
@@ -96,7 +116,7 @@ function OperationsBoard({
           ))}
         </div>
       )}
-      <section className="record-board">
+      <section className="record-board operations-board">
         {!operations.length ? (
           <EmptyState title="No operations yet" />
         ) : (
@@ -104,47 +124,47 @@ function OperationsBoard({
             const isCompleted = isFinished(item);
             const hasProgress =
               !isCompleted && item.progress !== undefined && Number(item.progress) > 0;
+            const deadline = deadlineState(item.dueDate);
 
             return (
               <article
-                className={`record-card card ${isCompleted ? "is-completed" : ""}`}
+                className={`record-card operation-card card ${isCompleted ? "is-completed" : ""}`}
                 key={item.id}
               >
-                <div className="record-card-head">
-                  <div className="record-card-tags">
-                    <span className="object-id">{item.id}</span>
-                    <MetaPill
-                      tone={
-                        isCompleted
-                          ? item.status === "Archived"
-                            ? "neutral"
-                            : "lime"
-                          : item.status === "Blocked"
-                            ? "orange"
-                            : item.status === "Planned"
-                              ? "neutral"
-                              : "blue"
-                      }
-                    >
-                      {item.status || OPEN_STATUS}
-                    </MetaPill>
+                <div className="operation-main">
+                  <span className="object-id">{item.type || item.id}</span>
+                  <h2>{item.title}</h2>
+                  <div className={`operation-deadline ${isCompleted ? "complete" : deadline.tone}`}>
+                    <span>{item.dueDate ? shortDate(item.dueDate) : "Not scheduled"}</span>
+                    <strong>{isCompleted ? "Completed" : deadline.label}</strong>
                   </div>
+                </div>
+
+                <div className="operation-status">
+                  <MetaPill
+                    tone={
+                      isCompleted
+                        ? item.status === "Archived"
+                          ? "neutral"
+                          : "lime"
+                        : item.status === "Blocked"
+                          ? "orange"
+                          : item.status === "Planned"
+                            ? "neutral"
+                            : "blue"
+                    }
+                  >
+                    {item.status || OPEN_STATUS}
+                  </MetaPill>
                   {hasProgress && (
                     <span className="record-card-progress">{clampProgress(item.progress)}%</span>
                   )}
                 </div>
 
-                <h2>{item.title}</h2>
-                {item.description && <p>{item.description}</p>}
-
-                {(item.type || item.manuscriptTitle || item.projectTitle) && (
-                  <div className="record-meta-vertical">
-                    {item.type && (
-                      <div className="record-meta-item">
-                        <span className="meta-tag">Type</span>
-                        <strong>{item.type}</strong>
-                      </div>
-                    )}
+                {(item.description || item.manuscriptTitle || item.projectTitle) && (
+                  <details className="operation-details">
+                    <summary>Details</summary>
+                    {item.description && <p>{item.description}</p>}
                     {item.manuscriptTitle && (
                       <div className="record-meta-item">
                         <span className="meta-tag">Paper</span>
@@ -157,19 +177,13 @@ function OperationsBoard({
                         <strong title={item.projectTitle}>{item.projectTitle}</strong>
                       </div>
                     )}
-                  </div>
+                  </details>
                 )}
 
                 <div className="record-card-footer">
                   <button className="quiet-button" onClick={() => openEditor("operations", item)}>
                     Edit operation
                   </button>
-                  {item.dueDate && (
-                    <span className="record-due-date">
-                      <small>Due</small>
-                      <b>{shortDate(item.dueDate)}</b>
-                    </span>
-                  )}
                 </div>
               </article>
             );
@@ -188,34 +202,34 @@ export function OperationsModule({
   const [tab, setTab] = useState<"operations" | "journal">("operations");
   return (
     <>
-      <div className="module-tabs">
-        <button
-          className={tab === "operations" ? "active" : ""}
-          onClick={() => setTab("operations")}
-        >
-          Operations
-        </button>
-        <button className={tab === "journal" ? "active" : ""} onClick={() => setTab("journal")}>
-          Research log
-        </button>
+      <ModuleTabs
+        label="PhD Operations views"
+        active={tab}
+        onSelect={setTab}
+        tabs={[
+          { key: "operations", label: "Operations" },
+          { key: "journal", label: "Research log" },
+        ]}
+      />
+      <div role="tabpanel" id={`tabpanel-${tab}`} aria-labelledby={`tab-${tab}`}>
+        {tab === "operations" ? (
+          <OperationsBoard state={state} openEditor={openEditor} paper={paper} />
+        ) : (
+          <RecordModule
+            collection="journal"
+            title={
+              <>
+                Research <em>log.</em>
+              </>
+            }
+            eyebrow="DAILY RECORD"
+            description="Every entry captured on Today, newest first. Nothing here is a task — it is what actually happened."
+            state={state}
+            openEditor={openEditor}
+            showProgress={false}
+          />
+        )}
       </div>
-      {tab === "operations" ? (
-        <OperationsBoard state={state} openEditor={openEditor} paper={paper} />
-      ) : (
-        <RecordModule
-          collection="journal"
-          title={
-            <>
-              Research <em>log.</em>
-            </>
-          }
-          eyebrow="DAILY RECORD"
-          description="Every entry captured on Today, newest first. Nothing here is a task — it is what actually happened."
-          state={state}
-          openEditor={openEditor}
-          showProgress={false}
-        />
-      )}
     </>
   );
 }

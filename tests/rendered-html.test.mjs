@@ -54,7 +54,7 @@ test("server-renders the Sports Research OS", async () => {
   assert.match(html, /Catch it now, judge it later/i);
   assert.match(html, /No active project/i);
   assert.match(html, /Loading Obsidian records/i);
-  assert.match(html, /User Guide/i);
+  assert.match(html, /About ScholarBuddy/i);
   assert.match(html, /Manuscripts/i);
   assert.match(html, /Operations/i);
   assert.match(html, /Library/i);

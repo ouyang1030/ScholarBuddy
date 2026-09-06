@@ -18,6 +18,7 @@ import {
   sectionBody,
 } from "../../../shared/manuscript-text.mjs";
 import { workflowContract } from "../../../shared/workflows.mjs";
+import { closeWithTransition, DrawerHeader } from "../primitives";
 import type {
   Action,
   AiProvider,
@@ -353,7 +354,10 @@ export function ActionDrawer({
     return body.path as string;
   };
   return (
-    <div className="drawer-backdrop" onMouseDown={onClose}>
+    <div
+      className="drawer-backdrop"
+      onMouseDown={(event) => closeWithTransition(onClose, event.currentTarget)}
+    >
       <aside
         ref={ref}
         className="action-drawer"
@@ -363,16 +367,15 @@ export function ActionDrawer({
         tabIndex={-1}
         onMouseDown={(e) => e.stopPropagation()}
       >
-        <div className="drawer-head">
-          <button onClick={onClose}>×</button>
-          <span className="label">STRUCTURED AI WORKFLOW</span>
-          <span className={`action-mark ${action.tone}`}>✦</span>
-        </div>
-        <div className="drawer-title">
-          <span>{action.command}</span>
-          <h2>{action.label}</h2>
-          <p>Selected sources must be retrieved successfully before the model runs.</p>
-        </div>
+        <DrawerHeader
+          label="Structured AI workflow"
+          mark="✦"
+          tone={action.tone}
+          eyebrow={action.command}
+          title={action.label}
+          description="Selected sources must be retrieved successfully before the model runs."
+          onClose={onClose}
+        />
         <div className="provider-switch">
           {aiProviders.map((item) => (
             <button
