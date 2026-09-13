@@ -43,7 +43,7 @@ export function LandingModule({
           <section>
             <span>NEXT OUTPUT</span>
             <h2>Revise the discussion around match-load uncertainty</h2>
-            <p>50-minute focus block · linked to Paper 02</p>
+            <p>Flexible focus block · linked to Paper 02</p>
             <i>
               <em />
             </i>

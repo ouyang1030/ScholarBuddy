@@ -38,6 +38,8 @@ export function FocusPanel() {
   const [elapsed, setElapsed] = useState(0);
   const [startedAt, setStartedAt] = useState<number | null>(null);
   const [target, setTarget] = useState("");
+  const [activeTaskId, setActiveTaskId] = useState<number | null>(null);
+  const [plannedMinutes, setPlannedMinutes] = useState<number | null>(null);
   const [focusDate, setFocusDate] = useState(() => localDateKey(new Date()));
   const [pending, setPending] = useState<FocusCalendarBlock[]>([]);
   const [ready, setReady] = useState(false);
@@ -69,6 +71,8 @@ export function FocusPanel() {
           setElapsed(Number(saved.elapsed) || 0);
           setStartedAt(Number(saved.startedAt) || null);
           setTarget(String(saved.target || ""));
+          setActiveTaskId(Number(saved.activeTaskId) || null);
+          setPlannedMinutes(Number(saved.plannedMinutes) || null);
           setFocusDate(today);
           setPending(savedPending);
         } else {
@@ -87,6 +91,8 @@ export function FocusPanel() {
           setElapsed(0);
           setStartedAt(null);
           setTarget(String(saved.target || ""));
+          setActiveTaskId(null);
+          setPlannedMinutes(null);
           setFocusDate(today);
           setPending(pendingItems);
         }
@@ -121,15 +127,61 @@ export function FocusPanel() {
     if (ready)
       window.localStorage.setItem(
         FOCUS_STATE_KEY,
-        JSON.stringify({ date: focusDate, elapsed, startedAt, target, pending }),
+        JSON.stringify({
+          date: focusDate,
+          elapsed,
+          startedAt,
+          target,
+          activeTaskId,
+          plannedMinutes,
+          pending,
+        }),
       );
-  }, [elapsed, focusDate, pending, ready, startedAt, target]);
+  }, [activeTaskId, elapsed, focusDate, pending, plannedMinutes, ready, startedAt, target]);
   useEffect(() => {
     const start = (event: Event) => {
-      const detail = (event as CustomEvent<{ target?: string }>).detail;
-      if (detail?.target) setTarget(detail.target);
+      const detail = (
+        event as CustomEvent<{
+          target?: string;
+          taskId?: number | null;
+          plannedMinutes?: number | null;
+        }>
+      ).detail;
+      if (!detail?.target) return;
       const currentTime = Date.now();
       const currentDay = localDateKey(new Date(currentTime));
+      const nextTaskId = Number(detail.taskId) || null;
+      const nextMinutes = Number(detail.plannedMinutes) || null;
+      const changingTarget =
+        (activeTaskId && nextTaskId && activeTaskId !== nextTaskId) ||
+        (!activeTaskId && target.trim() && target.trim() !== detail.target.trim());
+
+      if (
+        (startedAt || elapsed) &&
+        changingTarget &&
+        !window.confirm("Switch focus target? The current session will be paused and saved first.")
+      ) {
+        event.preventDefault();
+        return;
+      }
+
+      if (startedAt && changingTarget) {
+        setPending((items) => [
+          ...items,
+          {
+            id: `focus-${crypto.randomUUID()}`,
+            start: new Date(startedAt).toISOString(),
+            end: new Date(Math.max(currentTime, startedAt + 1000)).toISOString(),
+            target: target.trim(),
+          },
+        ]);
+        setCalendarMessage("Switched target · saving previous focus block…");
+      }
+
+      if (changingTarget) setElapsed(0);
+      setTarget(detail.target);
+      setActiveTaskId(nextTaskId);
+      setPlannedMinutes(nextMinutes ? Math.max(1, Math.min(480, Math.round(nextMinutes))) : null);
       setFocusDate((prevDate) => {
         if (prevDate !== currentDay) {
           setElapsed(0);
@@ -137,11 +189,11 @@ export function FocusPanel() {
         }
         return prevDate;
       });
-      setStartedAt((current) => current || currentTime);
+      setStartedAt((current) => (changingTarget ? currentTime : current || currentTime));
     };
     window.addEventListener("workbuddy-start-focus", start);
     return () => window.removeEventListener("workbuddy-start-focus", start);
-  }, []);
+  }, [activeTaskId, elapsed, startedAt, target]);
   const syncPending = useCallback(async (blocks: FocusCalendarBlock[]) => {
     if (!blocks.length || syncingRef.current) return;
     syncingRef.current = true;
@@ -216,10 +268,14 @@ export function FocusPanel() {
         setElapsed(0);
         setFocusDate(currentDate);
         setStartedAt(midnight.getTime());
+        setActiveTaskId(null);
+        setPlannedMinutes(null);
         setCalendarMessage("New day · previous focus block queued for Calendar…");
       } else {
         setElapsed(0);
         setFocusDate(currentDate);
+        setActiveTaskId(null);
+        setPlannedMinutes(null);
         setCalendarMessage("");
       }
       const celebration = readFocusCelebration();
@@ -293,7 +349,50 @@ export function FocusPanel() {
       window.removeEventListener("keydown", onKeyDown);
     };
   }, [finishCelebration, scheduleCelebration]);
-  const label = `${String(Math.floor(seconds / 3600)).padStart(2, "0")}:${String(Math.floor((seconds % 3600) / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
+  const plannedSeconds = plannedMinutes ? plannedMinutes * 60 : null;
+  const goalReached = plannedSeconds !== null && seconds >= plannedSeconds;
+  const displaySeconds = plannedSeconds ? Math.max(0, plannedSeconds - seconds) : seconds;
+  const label = `${String(Math.floor(displaySeconds / 3600)).padStart(2, "0")}:${String(Math.floor((displaySeconds % 3600) / 60)).padStart(2, "0")}:${String(displaySeconds % 60).padStart(2, "0")}`;
+
+  useEffect(() => {
+    const detail = {
+      running,
+      seconds,
+      target,
+      taskId: activeTaskId,
+      plannedMinutes,
+    };
+    const emit = () => window.dispatchEvent(new CustomEvent("workbuddy-focus-state", { detail }));
+    emit();
+    window.addEventListener("workbuddy-request-focus-state", emit);
+    return () => window.removeEventListener("workbuddy-request-focus-state", emit);
+  }, [activeTaskId, plannedMinutes, running, seconds, target]);
+
+  useEffect(() => {
+    if (!running || !plannedSeconds || seconds < plannedSeconds || !startedAt) return;
+    const completionTimer = window.setTimeout(() => {
+      const endedAt = Date.now();
+      setPending((items) => [
+        ...items,
+        {
+          id: `focus-${crypto.randomUUID()}`,
+          start: new Date(startedAt).toISOString(),
+          end: new Date(Math.max(endedAt, startedAt + 1000)).toISOString(),
+          target: target.trim(),
+        },
+      ]);
+      setElapsed(plannedSeconds);
+      setStartedAt(null);
+      setCalendarMessage("Goal reached · saving to Calendar…");
+      window.dispatchEvent(
+        new CustomEvent("workbuddy-focus-completed", {
+          detail: { taskId: activeTaskId, target, plannedMinutes },
+        }),
+      );
+    }, 0);
+    return () => window.clearTimeout(completionTimer);
+  }, [activeTaskId, plannedMinutes, plannedSeconds, running, seconds, startedAt, target]);
+
   const toggle = () => {
     const rightNow = Date.now();
     const nextDate = localDateKey(new Date(rightNow));
@@ -310,6 +409,10 @@ export function FocusPanel() {
       setPending((items) => [...items, block]);
       setCalendarMessage("Paused · saving to Calendar…");
     } else {
+      if (goalReached) {
+        setElapsed(0);
+        setPlannedMinutes(null);
+      }
       if (focusDate !== nextDate) {
         setElapsed(0);
         const celebration = readFocusCelebration();
@@ -324,13 +427,19 @@ export function FocusPanel() {
     }
   };
   const statusText = running
-    ? `Started at ${timeLabel(new Date(startedAt || now.getTime()).toISOString())}`
-    : syncing
-      ? "Paused · saving to Calendar…"
-      : pending.length
-        ? `Paused · ${pending.length} Calendar sync pending`
-        : calendarMessage ||
-          (seconds ? "Paused · saved to Calendar" : "Ready for a new focus session");
+    ? plannedMinutes
+      ? `Started at ${timeLabel(new Date(startedAt || now.getTime()).toISOString())} · ${plannedMinutes} min goal`
+      : `Started at ${timeLabel(new Date(startedAt || now.getTime()).toISOString())}`
+    : goalReached
+      ? syncing || pending.length
+        ? "Goal reached · saving to Calendar…"
+        : "Goal reached · choose what to do next"
+      : syncing
+        ? "Paused · saving to Calendar…"
+        : pending.length
+          ? `Paused · ${pending.length} Calendar sync pending`
+          : calendarMessage ||
+            (seconds ? "Paused · saved to Calendar" : "Ready for a new focus session");
   return (
     <>
       <article className="focus-session card">
@@ -348,8 +457,11 @@ export function FocusPanel() {
             onChange={(e) => setTarget(e.target.value)}
             placeholder="What are you focusing on?"
           />
+          <small>
+            {plannedMinutes ? `${plannedMinutes}-minute countdown` : "Open-ended session"}
+          </small>
         </label>
-        <h2>{label}</h2>
+        <h2 aria-label={plannedMinutes ? `${label} remaining` : `${label} elapsed`}>{label}</h2>
         <p>{statusText}</p>
         <div className={`focus-wave ${running ? "active" : ""}`} aria-hidden="true">
           {[
@@ -364,9 +476,11 @@ export function FocusPanel() {
             aria-label={
               running
                 ? "Pause focus session"
-                : seconds
-                  ? "Resume focus session"
-                  : "Start focus session"
+                : goalReached
+                  ? "Continue focus session without a time limit"
+                  : seconds
+                    ? "Resume focus session"
+                    : "Start focus session"
             }
             title={running ? "Pause session" : seconds ? "Resume session" : "Start session"}
             aria-pressed={running}
@@ -396,6 +510,8 @@ export function FocusPanel() {
               onClick={() => {
                 setElapsed(0);
                 setStartedAt(null);
+                setActiveTaskId(null);
+                setPlannedMinutes(null);
                 setCalendarMessage("");
               }}
             >

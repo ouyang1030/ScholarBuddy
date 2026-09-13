@@ -143,6 +143,10 @@ test("client routes all bridge calls through pairing auth and keeps daily and so
   assert.match(source, /projectId/);
   assert.match(source, /One paper, <em>one context/);
   assert.match(source, /workbuddy-focus-en-v2/);
+  assert.match(source, /Focus session length/);
+  assert.match(source, /workbuddy-focus-completed/);
+  assert.match(source, /Set as Primary/);
+  assert.doesNotMatch(source, /NEXT OUTPUT · 50 MIN/);
   assert.match(source, /externalId: block\.id/);
   assert.match(source, /workbuddy-calendar-refresh/);
   assert.match(source, /focus-wave \$\{running \? "active" : ""\}/);
