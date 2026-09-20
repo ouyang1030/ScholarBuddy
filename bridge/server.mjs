@@ -184,9 +184,9 @@ function setupReturnOrigin(config, requested = "") {
     return requested;
   const hosted = allowed.filter((origin) => origin.startsWith("https://"));
   return (
-    hosted.find((origin) => origin === "https://scholarbuddy.tech") ||
+    hosted.find((origin) => origin === "https://www.scholarbuddy.tech") ||
     hosted[0] ||
-    "https://scholarbuddy.tech"
+    "https://www.scholarbuddy.tech"
   );
 }
 
@@ -2771,9 +2771,18 @@ async function handle(request, providedConfig) {
     return json(origin, { token });
   }
   const auth = authorize(request, config);
+  // /health alone answers a denied origin readably, so the browser can report
+  // "site not allowed" instead of mistaking the missing CORS header for an
+  // unreachable Bridge. It still reveals nothing beyond the denial itself.
+  const deniedHealthOrigin =
+    auth.code === "origin_denied" && url.pathname === "/health"
+      ? request.headers.get("origin") || ""
+      : "";
+  if (deniedHealthOrigin && request.method === "OPTIONS")
+    return new Response(null, { status: 204, headers: corsHeaders(deniedHealthOrigin) });
   if (!auth.ok)
     return json(
-      auth.origin,
+      auth.origin || deniedHealthOrigin,
       {
         error:
           auth.code === "pairing_required"

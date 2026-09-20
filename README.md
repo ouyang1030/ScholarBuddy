@@ -107,7 +107,7 @@ category choices but stops future reminders. There is no global OS keyboard shor
 
 This repository preserves the ChatGPT Sites-compatible Vinext/Cloudflare Worker build. `.openai/hosting.json` identifies the production ScholarBuddy Site; maintainers of a fork should replace that project binding with their own deployment.
 
-The intended public custom domain is `https://scholarbuddy.tech`. That exact origin is included in the example Bridge allowlist. After connecting the domain, restart the Bridge and pair again from ScholarBuddy because changing origins does not transfer browser storage.
+The public custom domain is `https://scholarbuddy.tech`, which redirects to `https://www.scholarbuddy.tech`. Both exact origins are included in the example Bridge allowlist. After connecting the domain, restart the Bridge and pair again from ScholarBuddy because changing origins does not transfer browser storage.
 
 Publishing source code, making a Site public, and connecting a custom domain are separate decisions. A public repository can still back a private Site.
 

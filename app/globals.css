@@ -839,25 +839,25 @@ body { font-size: 17px; line-height: 1.5; }
 .record-card.is-completed p { color: #8e9a92; }
 .record-card.is-completed .object-id { color: #a4aca6; }
 .record-card.is-completed .record-card-footer { border-top-color: #e8ede6; }
-.operation-card { min-height: 0; padding: 18px 20px; display: grid; grid-template-columns: minmax(0,1fr) auto auto auto; align-items: center; gap: 14px 24px; border-left: 4px solid #d9dfd8; transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease; }
+.operation-card { min-height: 0; padding: 18px 20px; display: grid; grid-template-columns: minmax(0,1fr) auto auto; align-items: center; gap: 14px 24px; border-left: 4px solid #d9dfd8; transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease; }
 .operation-card:has(.operation-deadline.soon) { border-left-color: #e5a056; }
 .operation-card:has(.operation-deadline.urgent), .operation-card:has(.operation-deadline.overdue) { border-left-color: #c96845; }
 .operation-main { min-width: 0; display: grid; grid-template-columns: minmax(0,1fr); align-items: center; gap: 5px 18px; }
 .operation-main > .object-id { grid-column: 1 / -1; }
 .operation-card .operation-main h2 { min-width: 0; margin: 0; font-size: 17px; }
-.operation-deadline { grid-column: 3; grid-row: 1; min-width: 132px; display: flex; flex-direction: column; align-items: flex-end; gap: 2px; color: #65726a; }
+.operation-deadline { grid-column: 2; grid-row: 1; min-width: 132px; display: flex; flex-direction: column; align-items: flex-end; gap: 2px; color: #65726a; }
 .operation-deadline span { font: 13px var(--font-geist-mono); }
 .operation-deadline strong { font-size: 13px; font-weight: 720; }
 .operation-deadline.soon { color: #a76127; }
 .operation-deadline.urgent, .operation-deadline.overdue { color: #aa452b; }
 .operation-deadline.complete { color: #718078; }
-.operation-status { grid-column: 2; grid-row: 1; min-width: 112px; display: flex; flex-direction: column; align-items: flex-start; gap: 7px; }
+.operation-status { min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 7px; margin-top: 5px; }
 .operation-details { grid-column: 1 / -1; padding-top: 12px; border-top: 1px solid #edf0eb; }
 .operation-details summary { width: max-content; cursor: pointer; color: #68756d; font-size: 13px; font-weight: 680; }
 .operation-details[open] summary { margin-bottom: 10px; color: #435049; }
 .operation-details p { max-width: 860px; margin: 0 0 10px; }
 .operation-details .record-meta-item { margin-top: 5px; }
-.operation-card .record-card-footer { grid-column: 4; grid-row: 1; justify-self: end; margin: 0; padding: 0; border: 0; }
+.operation-card .record-card-footer { grid-column: 3; grid-row: 1; justify-self: end; margin: 0; padding: 0; border: 0; }
 .operation-card .record-card-footer .quiet-button { min-height: 38px; white-space: nowrap; }
 .editable-section { margin-top: 22px; padding: 24px; }
 .editable-section > .section-heading { margin-bottom: 18px; }
@@ -1048,7 +1048,7 @@ small { font-size: 13px !important; line-height: 1.45; }
   .page-header-actions, .page-header-actions > *, .page-header-actions button { width: 100%; }
   .daily-intro-actions { display: grid; grid-template-columns: 1fr; }
   .operation-card { grid-template-columns: 1fr auto; gap: 14px; }
-  .operation-main { grid-column: 1; grid-row: 1; }
+  .operation-main { grid-column: 1 / -1; grid-row: 1; }
   .operation-deadline { grid-column: 1; grid-row: 2; align-items: flex-start; min-width: 0; }
   .operation-status { min-width: 0; }
   .operation-card .record-card-footer { grid-column: 2; grid-row: 2; justify-self: end; }
@@ -1328,6 +1328,6 @@ small { font-size: 13px !important; line-height: 1.45; }
 }
 
 .record-form-heading { grid-column: 1 / -1; display: flex; align-items: flex-start; flex-wrap: wrap; gap: 15px; }
-.record-form-heading > .record-title-field { flex: 1 1 180px; min-width: 0; }
-.record-form-heading > label:not(.record-title-field) { flex: 0 1 130px; }
+.record-form-heading > .record-title-field { flex: 1 1 100%; min-width: 0; }
+.record-form-heading > label:not(.record-title-field) { flex: 1 1 130px; }
 .operation-main h2 { overflow-wrap: anywhere; }

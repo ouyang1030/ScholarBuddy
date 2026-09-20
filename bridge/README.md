@@ -21,7 +21,7 @@ Each provider card can test the exact model ID currently in its fields with one 
 - Optional concurrency, request, token, and output limits documented in `.env.local.example`.
 
 Do not use wildcard origins. Add the deployed `https://` origin exactly, restart the Bridge, and pair once on that browser origin.
-The project default includes `https://scholarbuddy.tech`; add a `www` origin separately only if that hostname is also configured.
+The project default includes both `https://scholarbuddy.tech` and `https://www.scholarbuddy.tech`. The bare domain redirects to `www`, so the `www` origin is the one browsers actually present; pair once there.
 
 ## Running
 

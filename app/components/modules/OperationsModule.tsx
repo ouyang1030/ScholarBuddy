@@ -133,27 +133,26 @@ function OperationsBoard({
                 <div className="operation-main">
                   <span className="object-id">{item.type || item.id}</span>
                   <h2>{item.title}</h2>
-                </div>
-
-                <div className="operation-status">
-                  <MetaPill
-                    tone={
-                      isCompleted
-                        ? item.status === "Archived"
-                          ? "neutral"
-                          : "lime"
-                        : item.status === "Blocked"
-                          ? "orange"
-                          : item.status === "Planned"
+                  <div className="operation-status">
+                    <MetaPill
+                      tone={
+                        isCompleted
+                          ? item.status === "Archived"
                             ? "neutral"
-                            : "blue"
-                    }
-                  >
-                    {item.status || OPEN_STATUS}
-                  </MetaPill>
-                  {hasProgress && (
-                    <span className="record-card-progress">{clampProgress(item.progress)}%</span>
-                  )}
+                            : "lime"
+                          : item.status === "Blocked"
+                            ? "orange"
+                            : item.status === "Planned"
+                              ? "neutral"
+                              : "blue"
+                      }
+                    >
+                      {item.status || OPEN_STATUS}
+                    </MetaPill>
+                    {hasProgress && (
+                      <span className="record-card-progress">{clampProgress(item.progress)}%</span>
+                    )}
+                  </div>
                 </div>
 
                 <div className={`operation-deadline ${isCompleted ? "complete" : deadline.tone}`}>

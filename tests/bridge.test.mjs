@@ -143,6 +143,35 @@ test("bridge rejects hostile origins and missing pairing tokens before routing",
   );
 });
 
+test("health reports denied origins readably while other routes stay opaque", async () => {
+  const settings = config("/tmp/unused");
+  const denied = "https://attacker.example";
+  const preflight = await handle(
+    new Request("http://127.0.0.1/health", {
+      method: "OPTIONS",
+      headers: { Origin: denied, "Access-Control-Request-Headers": "authorization" },
+    }),
+    settings,
+  );
+  assert.equal(preflight.status, 204);
+  assert.equal(preflight.headers.get("access-control-allow-origin"), denied);
+  const health = await handle(
+    new Request("http://127.0.0.1/health", { headers: { Origin: denied } }),
+    settings,
+  );
+  assert.equal(health.status, 403);
+  assert.equal(health.headers.get("access-control-allow-origin"), denied);
+  assert.equal((await health.json()).code, "origin_denied");
+  for (const method of ["GET", "OPTIONS"]) {
+    const other = await handle(
+      new Request("http://127.0.0.1/state", { method, headers: { Origin: denied } }),
+      settings,
+    );
+    assert.equal(other.status, 403);
+    assert.equal(other.headers.get("access-control-allow-origin"), null);
+  }
+});
+
 test("pairing exchanges one-time codes without exposing the permanent token", async () => {
   const settings = config("/tmp/unused");
   const page = await handle(new Request("http://127.0.0.1:32145/pair"), settings);
