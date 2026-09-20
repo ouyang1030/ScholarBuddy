@@ -122,8 +122,7 @@ function OperationsBoard({
         ) : (
           operations.map((item) => {
             const isCompleted = isFinished(item);
-            const hasProgress =
-              !isCompleted && item.progress !== undefined && Number(item.progress) > 0;
+            const hasProgress = !isCompleted && item.progress !== undefined;
             const deadline = deadlineState(item.dueDate);
 
             return (
@@ -134,10 +133,6 @@ function OperationsBoard({
                 <div className="operation-main">
                   <span className="object-id">{item.type || item.id}</span>
                   <h2>{item.title}</h2>
-                  <div className={`operation-deadline ${isCompleted ? "complete" : deadline.tone}`}>
-                    <span>{item.dueDate ? shortDate(item.dueDate) : "Not scheduled"}</span>
-                    <strong>{isCompleted ? "Completed" : deadline.label}</strong>
-                  </div>
                 </div>
 
                 <div className="operation-status">
@@ -161,6 +156,17 @@ function OperationsBoard({
                   )}
                 </div>
 
+                <div className={`operation-deadline ${isCompleted ? "complete" : deadline.tone}`}>
+                  <span>{item.dueDate ? shortDate(item.dueDate) : "Not scheduled"}</span>
+                  <strong>{isCompleted ? "Completed" : deadline.label}</strong>
+                </div>
+
+                <div className="record-card-footer">
+                  <button className="quiet-button" onClick={() => openEditor("operations", item)}>
+                    Edit operation
+                  </button>
+                </div>
+
                 {(item.description || item.manuscriptTitle || item.projectTitle) && (
                   <details className="operation-details">
                     <summary>Details</summary>
@@ -179,12 +185,6 @@ function OperationsBoard({
                     )}
                   </details>
                 )}
-
-                <div className="record-card-footer">
-                  <button className="quiet-button" onClick={() => openEditor("operations", item)}>
-                    Edit operation
-                  </button>
-                </div>
               </article>
             );
           })

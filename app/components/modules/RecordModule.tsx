@@ -117,7 +117,7 @@ export function RecordModule({
               </div>
               {showProgress && (
                 <div className="manual-progress">
-                  <span>Manual progress</span>
+                  <span>Progress</span>
                   <b>{clampProgress(item.progress)}%</b>
                   <i>
                     <em style={{ width: `${clampProgress(item.progress)}%` }} />

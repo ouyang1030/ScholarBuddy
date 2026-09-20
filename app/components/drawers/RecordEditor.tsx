@@ -212,26 +212,77 @@ export function RecordEditor({
           onClose={onClose}
         />
         <div className="record-form">
-          {isPaperWorkItem ? (
-            <label className="wide">
-              <span>Feedback</span>
-              <textarea
-                autoFocus
-                value={form.description || ""}
-                onChange={(event) => set("description", event.target.value)}
-                placeholder="What needs attention?"
-              />
-            </label>
-          ) : (
-            <label className="wide">
-              <span>Title</span>
-              <input
-                autoFocus
-                value={form.title || ""}
-                onChange={(event) => set("title", event.target.value)}
-              />
-            </label>
-          )}
+          <div className="record-form-heading">
+            {isPaperWorkItem ? (
+              <label className="record-title-field">
+                <span>Feedback</span>
+                <textarea
+                  autoFocus
+                  value={form.description || ""}
+                  onChange={(event) => set("description", event.target.value)}
+                  placeholder="What needs attention?"
+                />
+              </label>
+            ) : (
+              <label className="record-title-field">
+                <span>Title</span>
+                <input
+                  autoFocus
+                  value={form.title || ""}
+                  onChange={(event) => set("title", event.target.value)}
+                />
+              </label>
+            )}
+            {showStatus && (
+              <label>
+                <span>
+                  {isSubmissionAttempt
+                    ? "Initial state"
+                    : isPaperWorkItem
+                      ? "Workflow status"
+                      : "Status"}
+                </span>
+                <select
+                  value={form.status || statusDefault(editor.collection)}
+                  onChange={(event) => {
+                    const nextStatus = event.target.value;
+                    if (isSubmissionAttempt && !existing) {
+                      setForm((current) => ({
+                        ...current,
+                        status: nextStatus,
+                        submittedAt:
+                          nextStatus === "Submitted"
+                            ? current.submittedAt || localDateKey(new Date())
+                            : "",
+                      }));
+                      return;
+                    }
+                    if (showProgress && CLOSED_RECORD_STATUSES.includes(nextStatus)) {
+                      setForm((current) => ({ ...current, status: nextStatus, progress: 100 }));
+                    } else {
+                      set("status", nextStatus);
+                    }
+                  }}
+                >
+                  {statusChoices.map((status) => (
+                    <option key={status}>{status}</option>
+                  ))}
+                </select>
+              </label>
+            )}
+            {showProgress && (
+              <label>
+                <span>Progress · {clampProgress(form.progress)}%</span>
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  value={clampProgress(form.progress)}
+                  onChange={(event) => set("progress", Number(event.target.value))}
+                />
+              </label>
+            )}
+          </div>
           {showDescription && (
             <label className="wide">
               <span>{descriptionLabel}</span>
@@ -244,43 +295,6 @@ export function RecordEditor({
                     : undefined
                 }
               />
-            </label>
-          )}
-          {showStatus && (
-            <label>
-              <span>
-                {isSubmissionAttempt
-                  ? "Initial state"
-                  : isPaperWorkItem
-                    ? "Workflow status"
-                    : "Status"}
-              </span>
-              <select
-                value={form.status || statusDefault(editor.collection)}
-                onChange={(event) => {
-                  const nextStatus = event.target.value;
-                  if (isSubmissionAttempt && !existing) {
-                    setForm((current) => ({
-                      ...current,
-                      status: nextStatus,
-                      submittedAt:
-                        nextStatus === "Submitted"
-                          ? current.submittedAt || localDateKey(new Date())
-                          : "",
-                    }));
-                    return;
-                  }
-                  if (showProgress && CLOSED_RECORD_STATUSES.includes(nextStatus)) {
-                    setForm((current) => ({ ...current, status: nextStatus, progress: 100 }));
-                  } else {
-                    set("status", nextStatus);
-                  }
-                }}
-              >
-                {statusChoices.map((status) => (
-                  <option key={status}>{status}</option>
-                ))}
-              </select>
             </label>
           )}
           {isJournal && (
@@ -297,18 +311,6 @@ export function RecordEditor({
             <label>
               <span>Promoted to</span>
               <input value={form.promotedTo} readOnly />
-            </label>
-          )}
-          {showProgress && (
-            <label>
-              <span>Manual progress · {clampProgress(form.progress)}%</span>
-              <input
-                type="range"
-                min="0"
-                max="100"
-                value={clampProgress(form.progress)}
-                onChange={(event) => set("progress", Number(event.target.value))}
-              />
             </label>
           )}
           {editor.collection === "projects" && (

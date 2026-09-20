@@ -10,15 +10,19 @@ export const helperApp = path.join(root, "bridge/.notifications/ScholarBuddy Rem
 export async function buildReminderHelper() {
   if (process.platform !== "darwin") throw new Error("System reminders currently require macOS.");
   const source = path.join(root, "bridge/notifications/ReminderHelper.swift");
+  const iconSource = path.join(root, "bridge/notifications/ReminderIcon.swift");
+  const icon = path.join(helperApp, "Contents/Resources/ScholarBuddy.icns");
   const fingerprint = createHash("sha256")
     .update(await readFile(source))
-    .update("v3")
+    .update(await readFile(iconSource))
+    .update("v4")
     .digest("hex");
   const marker = path.join(helperApp, "Contents/Resources/source-hash");
   const binary = path.join(helperApp, "Contents/MacOS/ScholarBuddyReminders");
   try {
     if ((await readFile(marker, "utf8")) === fingerprint) {
       await access(binary);
+      await access(icon);
       await exec("/usr/bin/codesign", ["--verify", helperApp], { timeout: 15_000 });
       return helperApp;
     }
@@ -35,6 +39,7 @@ export async function buildReminderHelper() {
 <plist version="1.0"><dict>
 <key>CFBundleIdentifier</key><string>tech.scholarbuddy.reminders</string>
 <key>CFBundleName</key><string>ScholarBuddy Reminders</string>
+<key>CFBundleIconFile</key><string>ScholarBuddy.icns</string>
 <key>CFBundleExecutable</key><string>ScholarBuddyReminders</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleVersion</key><string>1</string>
@@ -61,6 +66,24 @@ export async function buildReminderHelper() {
     ],
     { timeout: 120_000 },
   );
+  const iconset = path.join(root, "bridge/.notifications/ScholarBuddy.iconset");
+  await mkdir(iconset, { recursive: true });
+  try {
+    await exec(
+      "/usr/bin/xcrun",
+      [
+        "swift",
+        "-module-cache-path",
+        path.join(root, "bridge/.notifications/module-cache"),
+        iconSource,
+        iconset,
+      ],
+      { timeout: 120_000 },
+    );
+    await exec("/usr/bin/iconutil", ["-c", "icns", iconset, "-o", icon], { timeout: 15_000 });
+  } finally {
+    await rm(iconset, { recursive: true, force: true });
+  }
   await writeFile(marker, fingerprint);
   await exec("/usr/bin/codesign", ["--force", "--sign", "-", helperApp], { timeout: 15_000 });
   return helperApp;
