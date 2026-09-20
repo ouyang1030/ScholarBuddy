@@ -146,7 +146,7 @@ export function Dashboard({
               <h2>{project.title}</h2>
               <p>{project.description || "No project description yet."}</p>
               <div className="manual-progress">
-                <span>Manual progress</span>
+                <span>Progress</span>
                 <b>{clampProgress(project.progress)}%</b>
                 <i>
                   <em style={{ width: `${clampProgress(project.progress)}%` }} />
