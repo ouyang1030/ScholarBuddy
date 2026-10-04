@@ -76,6 +76,7 @@ function config(vault) {
   return {
     WORKBUDDY_ORIGINS: allowedOrigin,
     OBSIDIAN_VAULT_PATH: vault,
+    _activityDirectory: path.join(vault, ".test-activity"),
     _bridgeToken: bridgeToken,
     // The request window and the token budget are process-wide, so a suite with
     // more AI tests than the production ceiling would fail whichever ones

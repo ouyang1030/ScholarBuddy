@@ -43,6 +43,8 @@ import { TOP_LEVEL_NUMBER, headingWords, sectionForWords } from "../shared/secti
 import { workflowContract } from "../shared/workflows.mjs";
 import { setupPage } from "./setup-page.mjs";
 import { createReminderService } from "./reminders.mjs";
+import { createActivityStore } from "./activity-store.mjs";
+import { normalizeUsage } from "./usage-normalizer.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const configFile = path.join(repoRoot, ".env.local");
@@ -53,6 +55,12 @@ const execFileAsync = promisify(execFile);
 const MAX_BODY_BYTES = 250_000;
 const REQUEST_TIMEOUT_MS = 15_000;
 const PAIRING_CODE_TTL_MS = 5 * 60_000;
+const activityStores = new Map();
+function activityStore(config) {
+  const directory = config._activityDirectory || path.join(repoRoot, "bridge", ".activity");
+  if (!activityStores.has(directory)) activityStores.set(directory, createActivityStore(directory));
+  return activityStores.get(directory);
+}
 const aiClients = new Map();
 const pairingCodes = new Map();
 const setupSessions = new Map();
@@ -227,7 +235,7 @@ function html(body, headers = {}) {
 function corsHeaders(origin = "") {
   return {
     ...(origin ? { "Access-Control-Allow-Origin": origin } : {}),
-    "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+    "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
     "Access-Control-Allow-Headers": "Authorization, Content-Type",
     "Access-Control-Allow-Private-Network": "true",
     "Access-Control-Max-Age": "600",
@@ -1778,6 +1786,7 @@ function modelRequest(target, system, prompt, maxOutputTokens, options = {}) {
 // it, its reasoning.
 export function streamDelta(target, data) {
   if (target.adapter === "anthropic-messages") {
+    if (data?.type === "message_start" && data.message?.usage) return { usage: data.message.usage };
     if (data?.type === "content_block_delta")
       return data.delta?.type === "thinking_delta"
         ? { reasoning: data.delta.thinking || "" }
@@ -1802,7 +1811,7 @@ export function streamDelta(target, data) {
         ? {
             usage: {
               ...data.usageMetadata,
-              total_tokens: Number(data.usageMetadata.totalTokenCount || 0),
+              total_tokens: data.usageMetadata.totalTokenCount ?? null,
             },
           }
         : {}),
@@ -1873,7 +1882,7 @@ function modelResponse(target, body) {
       .map((part) => part?.text || "")
       .join("\n");
     usage = body?.usageMetadata
-      ? { ...body.usageMetadata, total_tokens: Number(body.usageMetadata.totalTokenCount || 0) }
+      ? { ...body.usageMetadata, total_tokens: body.usageMetadata.totalTokenCount ?? null }
       : null;
   } else if (target.adapter === "responses") {
     output = (body?.output || [])
@@ -2038,11 +2047,12 @@ async function testProviderModel(config, payload, signal) {
   return { provider: target.provider, model: target.model };
 }
 
-async function runModel(config, payload, context, signal) {
+async function runModelResult(config, payload, context, signal, reportUsage) {
   const { target, request } = modelCall(config, payload, context, false);
   const response = await providerFetch(target, request, signal);
   const body = await response.json().catch(() => ({}));
   const parsed = modelResponse(target, body);
+  reportUsage(parsed.usage);
   if (!parsed.output) {
     const error = new Error(`${target.label} returned no text.`);
     error.status = 502;
@@ -2060,7 +2070,7 @@ async function runModel(config, payload, context, signal) {
 // Same contract as runModel, but the caller receives the answer in pieces. The
 // citation audit can only run on the finished text, so onDelta is display-only:
 // the verdict still travels with the completed result.
-async function streamModel(config, payload, context, signal, onDelta) {
+async function streamModelResult(config, payload, context, signal, onDelta, reportUsage) {
   const { target, request } = modelCall(config, payload, context, true);
   const response = await providerFetch(target, request, signal);
   let output = "";
@@ -2069,7 +2079,12 @@ async function streamModel(config, payload, context, signal, onDelta) {
   let finishReason = "";
   for await (const frame of sseFrames(response.body, signal)) {
     const delta = streamDelta(target, frame);
-    if (delta.usage) usage = delta.usage;
+    if (delta.usage) {
+      usage = { ...usage, ...delta.usage };
+      const normalized = normalizeUsage(target.adapter, usage);
+      usage.total_tokens = normalized.totalTokens;
+      reportUsage(usage);
+    }
     if (delta.finishReason) finishReason = delta.finishReason;
     if (delta.text) {
       output += delta.text;
@@ -2099,6 +2114,50 @@ async function streamModel(config, payload, context, signal, onDelta) {
     usage,
   };
 }
+
+async function trackedModel(config, payload, context, signal, onDelta) {
+  const store = activityStore(config);
+  const target = modelConfig(config, payload.provider);
+  const entry = {
+    requestId: randomUUID(),
+    conversationId: payload.conversationId || randomUUID(),
+    startedAt: new Date().toISOString(),
+    status: "started",
+    provider: target.provider,
+    model: target.model,
+    command: payload.command,
+  };
+  let usage = null,
+    result,
+    status = "failed";
+  await store.recordAI(entry);
+  try {
+    const reportUsage = (value) => {
+      usage = value;
+    };
+    result = onDelta
+      ? await streamModelResult(config, payload, context, signal, onDelta, reportUsage)
+      : await runModelResult(config, payload, context, signal, reportUsage);
+    status = "success";
+    const normalized = normalizeUsage(target.adapter, usage);
+    return { ...result, usage: usage ? { ...usage, total_tokens: normalized.totalTokens } : null };
+  } catch (error) {
+    if (signal?.aborted) status = "cancelled";
+    throw error;
+  } finally {
+    await store.recordAI({
+      ...entry,
+      status,
+      model: result?.model || target.model,
+      finishedAt: new Date().toISOString(),
+      ...normalizeUsage(target.adapter, usage),
+    });
+  }
+}
+const runModel = (config, payload, context, signal) =>
+  trackedModel(config, payload, context, signal);
+const streamModel = (config, payload, context, signal, onDelta) =>
+  trackedModel(config, payload, context, signal, onDelta);
 
 function evidenceManifest(context) {
   const { zotero, obsidian, passages = [], query, retrievedAt } = context;
@@ -2794,6 +2853,54 @@ async function handle(request, providedConfig) {
     );
   if (auth.preflight) return new Response(null, { status: 204, headers: corsHeaders(auth.origin) });
   const origin = auth.origin;
+  if (url.pathname === "/profile" || url.pathname.startsWith("/profile/")) {
+    const store = activityStore(config);
+    await store.initialize();
+    if (url.pathname === "/profile" && request.method === "GET")
+      return json(origin, await store.profile());
+    if (url.pathname === "/profile/identity" && request.method === "GET")
+      return json(origin, await store.identity());
+    if (url.pathname === "/profile" && request.method === "PATCH") {
+      await store.updateProfile(await readJson(request));
+      return json(origin, await store.profile());
+    }
+    if (url.pathname === "/profile/focus/events" && request.method === "POST")
+      return json(origin, await store.saveFocus(await readJson(request)));
+    if (url.pathname === "/profile/focus/days" && request.method === "GET") {
+      const profile = await store.profile();
+      const from = url.searchParams.get("from") || "2020-01-01";
+      const to = url.searchParams.get("to") || profile.today;
+      const cursor = Number(url.searchParams.get("cursor") || 0);
+      const validDate = (value) =>
+        /^\d{4}-\d{2}-\d{2}$/.test(value) &&
+        Number.isFinite(Date.parse(value)) &&
+        new Date(value).toISOString().slice(0, 10) === value;
+      if (
+        !validDate(from) ||
+        !validDate(to) ||
+        from > to ||
+        !Number.isSafeInteger(cursor) ||
+        cursor < 0
+      )
+        return json(origin, { error: "Invalid focus date range." }, 400);
+      const days = profile.focus.days.filter((day) => day.date >= from && day.date <= to).reverse();
+      return json(origin, {
+        days: days.slice(cursor, cursor + 100),
+        nextCursor: cursor + 100 < days.length ? cursor + 100 : null,
+        timeZone: profile.timeZone,
+      });
+    }
+    if (url.pathname === "/profile/activity" && request.method === "GET")
+      return json(
+        origin,
+        await store.series(
+          url.searchParams.get("metric") || "focus",
+          url.searchParams.get("view") || "daily",
+          url.searchParams.get("range") || "30d",
+        ),
+      );
+    return json(origin, { error: "Profile endpoint not found." }, 404);
+  }
   if (
     url.pathname === "/reminders" ||
     url.pathname === "/reminders/test" ||
@@ -2938,6 +3045,7 @@ async function handle(request, providedConfig) {
     const turn = {
       ...payload,
       command: payload.command,
+      conversationId: prepared.conversationId,
       input: prepared.input,
       focus: prepared.focus,
       history: prepared.history,

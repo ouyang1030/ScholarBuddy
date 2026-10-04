@@ -32,6 +32,8 @@ import { ReminderDetails, type ReminderLink } from "./components/drawers/Reminde
 import { ConnectionsDrawer } from "./components/drawers/ConnectionsDrawer";
 import { ContextDrawer } from "./components/drawers/ContextDrawer";
 import { GuideDrawer } from "./components/drawers/GuideDrawer";
+import { ProfileModule } from "./components/modules/ProfileModule";
+import { FocusProvider } from "./components/panels/FocusPanel";
 import { Dashboard } from "./components/modules/Dashboard";
 import { LibraryModule } from "./components/modules/LibraryModule";
 import { LandingModule } from "./components/modules/LandingModule";
@@ -63,7 +65,21 @@ function storeReadSubmissionAlertKeys(keys: string[]) {
 }
 
 export default function Home() {
+  return (
+    <FocusProvider>
+      <Workbench />
+    </FocusProvider>
+  );
+}
+
+function Workbench() {
   const [active, setActive] = useState<ModuleKey>("dashboard");
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("view") === "profile") {
+      const timer = window.setTimeout(() => setActive("profile"), 0);
+      return () => window.clearTimeout(timer);
+    }
+  }, []);
   const [state, setState] = useState<WorkbenchState>(emptyState);
   const [loading, setLoading] = useState(true);
   const [dataError, setDataError] = useState("");
@@ -531,9 +547,11 @@ export default function Home() {
   const openEditor = (collection: CollectionKey, record?: Partial<RecordItem>) =>
     setEditor({ collection, record });
   const activeLabel =
-    active === "about"
-      ? "About ScholarBuddy"
-      : navItems.find((item) => item.key === active)?.label || "Today";
+    active === "profile"
+      ? "Profile"
+      : active === "about"
+        ? "About ScholarBuddy"
+        : navItems.find((item) => item.key === active)?.label || "Today";
   const activePaper =
     state.manuscripts.find((item) => item.id === paperContextId) || state.manuscripts[0];
   const openPaper = (
@@ -624,6 +642,16 @@ export default function Home() {
         </nav>
         <div className="sidebar-bottom">
           <button
+            className={active === "profile" ? "active" : ""}
+            onClick={() => {
+              setActive("profile");
+              setMobileNav(false);
+            }}
+          >
+            <span className="nav-icon">◉</span>
+            <span>Profile</span>
+          </button>
+          <button
             className={active === "about" ? "active" : ""}
             onClick={() => {
               setActive("about");
@@ -693,25 +721,35 @@ export default function Home() {
                 <strong>{Object.values(state).flat().length} records</strong>
               </span>
             </button>
-            <button className="profile-button" onClick={() => setConnectionsOpen(true)}>
+            <button
+              className="profile-button"
+              aria-label="Open Profile"
+              onClick={() => setActive("profile")}
+            >
               DR
             </button>
           </div>
         </header>
         <main className="content">
           <div className="module-view" key={active}>
-            {dataError && (
+            {active !== "profile" && dataError && (
               <div className="data-banner compact-banner">
                 <span>!</span>
                 <p>{dataError} Today’s local focus tools remain available.</p>
                 <button onClick={loadState}>Retry</button>
               </div>
             )}
-            {loading && !Object.values(state).flat().length && (
+            {active !== "profile" && loading && !Object.values(state).flat().length && (
               <div className="loading-bar">
                 <i />
                 Loading Obsidian records…
               </div>
+            )}
+            {active === "profile" && (
+              <ProfileModule
+                openConnections={() => setConnectionsOpen(true)}
+                startFocus={() => setActive("dashboard")}
+              />
             )}
             {active === "dashboard" && (
               <Dashboard

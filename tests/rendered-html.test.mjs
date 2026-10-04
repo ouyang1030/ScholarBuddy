@@ -45,7 +45,7 @@ test("server-renders the Sports Research OS", async () => {
   assert.match(html, /Move one thing forward/i);
   assert.match(html, /Define one result worth finishing today/i);
   assert.match(html, /macOS Calendar \/ Live/i);
-  assert.match(html, /Ready for a new focus session/i);
+  assert.match(html, /Preparing focus timer/i);
   assert.match(html, /LIVE LIBRARY/i);
   assert.match(html, /Paper feedback \/ Obsidian/i);
   assert.match(html, /Research log \/ Obsidian/i);
@@ -63,9 +63,11 @@ test("server-renders the Sports Research OS", async () => {
 
 test("every rendered button declares an interaction handler", async () => {
   const source = await appSource();
-  const buttons = source.match(/<button\b(?:(?!>).)*>/gs) ?? [];
+  const buttons = source.match(/<button\b[\s\S]*?<\/button>/g) ?? [];
   assert.ok(buttons.length > 60, "expected the workbench interaction surface");
-  const inertButtons = buttons.filter((button) => !button.includes("onClick="));
+  const inertButtons = buttons.filter(
+    (button) => !button.includes("onClick=") && !/type="submit"/.test(button),
+  );
   assert.deepEqual(inertButtons, []);
   assert.match(source, /saveRecord/);
   assert.match(source, /deleteRecord/);

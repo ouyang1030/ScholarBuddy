@@ -154,6 +154,16 @@ indexing but is not access control. The unused image optimization route returns
 
 See [PRIVACY.md](PRIVACY.md) and [SECURITY.md](SECURITY.md) before sharing a deployment.
 
+## Personal activity profile
+
+Open **Profile** in the sidebar or the top-right avatar. The default **Focus** tab shows today's timer time, lifetime saved focus, the selected range's daily average, best day, independent focus streaks, and daily details. **AI activity** shows lifetime/peak tokens, longest chat, AI streaks, and provider usage coverage. Both charts support Daily, Weekly, and Cumulative views.
+
+Profile starts tracking when enabled; it does not invent earlier history. Focus intervals are split at midnight in the Profile's fixed local time zone, pauses are excluded, and overlapping intervals are counted once. Switching modules keeps the timer running. One tab owns the timer; other tabs can read saved history. After an interruption, only checkpointed time is kept automatically. Profile lets you count the missing interval, treat it as a break, or undo an addition.
+
+Statistics stay in the ignored `bridge/.activity/activity-v1.json` ledger. Browser Focus records and the retry outbox use IndexedDB and sync separately from Calendar, so Calendar permission or sync failures do not block Focus history. Keep this local ledger when moving your installation. Provider credentials and AI conversation text are never stored in it. Unknown token usage is shown as incomplete rather than estimated.
+
+After updating an existing installation, restart the Bridge so `/profile` is available. For local preview, run `npm run dev` and open `http://localhost:3000/?view=profile` in a paired Mac browser.
+
 ## Development
 
 ```bash

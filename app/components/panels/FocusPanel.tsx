@@ -1,10 +1,81 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { createContext, memo, useContext, useCallback, useEffect, useRef, useState } from "react";
 import { bridgeFetch } from "../../lib/bridge-client";
 import { localDateKey, timeLabel } from "../../lib/format";
 import type { FocusCalendarBlock } from "../../types";
 import { FocusCelebration } from "../Celebrations";
+import {
+  focusBridgeId,
+  initializeFocusSync,
+  readFocusSegments,
+  saveFocusSegment,
+  saveFocusGap,
+  type FocusSegment,
+} from "../../lib/focus-store";
+
+type FocusController = ReturnType<typeof useFocusController>;
+const FocusContext = createContext<FocusController | null>(null);
+const FocusElsewhereContext = createContext(false);
+export const useFocus = () => useContext(FocusContext);
+// Throttled background tabs wake about once a minute, so a missed checkpoint only
+// counts as an interruption well beyond that.
+const FOCUS_INTERRUPTION_MS = 150_000;
+// The controller lives beside the app rather than around it, so gaining or losing
+// timer ownership never remounts the workbench.
+const FocusHost = memo(function FocusHost({
+  publish,
+}: {
+  publish: (value: FocusController | null) => void;
+}) {
+  const value = useFocusController();
+  useEffect(() => {
+    publish(value);
+  });
+  useEffect(() => () => publish(null), [publish]);
+  return null;
+});
+export function FocusProvider({ children }: { children: React.ReactNode }) {
+  // null while the lock is still being requested, false once another tab holds it.
+  const [owner, setOwner] = useState<boolean | null>(null);
+  const [value, setValue] = useState<FocusController | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    let release = () => {};
+    const stopSync = initializeFocusSync();
+    const hold = async () => {
+      if (cancelled) return;
+      setOwner(true);
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+    };
+    if (navigator.locks)
+      void navigator.locks.request("workbuddy-focus-timer", { ifAvailable: true }, async (lock) => {
+        if (lock) return hold();
+        if (cancelled) return;
+        setOwner(false);
+        void navigator.locks.request("workbuddy-focus-timer", hold);
+      });
+    else
+      Promise.resolve().then(() => {
+        if (!cancelled) setOwner(true);
+      });
+    return () => {
+      cancelled = true;
+      release();
+      stopSync();
+    };
+  }, []);
+  return (
+    <FocusContext.Provider value={owner ? value : null}>
+      <FocusElsewhereContext.Provider value={owner === false}>
+        {owner && <FocusHost publish={setValue} />}
+        {children}
+      </FocusElsewhereContext.Provider>
+    </FocusContext.Provider>
+  );
+}
 
 const FOCUS_STATE_KEY = "workbuddy-focus-en-v2";
 const LEGACY_FOCUS_STATE_KEY = "workbuddy-focus-en-v1";
@@ -33,7 +104,7 @@ function writeFocusCelebration(state: FocusCelebrationState) {
   window.localStorage.setItem(FOCUS_CELEBRATION_KEY, JSON.stringify(state));
 }
 
-export function FocusPanel() {
+function useFocusController() {
   const [now, setNow] = useState(() => new Date());
   const [elapsed, setElapsed] = useState(0);
   const [startedAt, setStartedAt] = useState<number | null>(null);
@@ -46,6 +117,12 @@ export function FocusPanel() {
   const [syncing, setSyncing] = useState(false);
   const [calendarMessage, setCalendarMessage] = useState("");
   const [celebrating, setCelebrating] = useState(false);
+  const [recoveryMessage, setRecoveryMessage] = useState("");
+  const ledgerRef = useRef<FocusSegment | null>(null);
+  const ledgerLimit = useRef<number | null>(null);
+  const checkpointRef = useRef(0);
+  const [checkpointTick, setCheckpointTick] = useState(0);
+  const targetRef = useRef("");
   const syncingRef = useRef(false);
   const celebratedRef = useRef(false);
   const celebrationPendingRef = useRef(false);
@@ -67,27 +144,57 @@ export function FocusPanel() {
           ? saved.pending.filter((item: FocusCalendarBlock) => item?.id && item?.start && item?.end)
           : [];
 
+        // A timer that was running when the page went away still owes Calendar
+        // the part up to its last checkpoint.
+        const start = Number(saved.startedAt) || 0;
+        const checkpoint = Math.min(
+          Number(saved.checkpointAt) || 0,
+          saved.plannedMinutes
+            ? start +
+                Math.max(0, Number(saved.plannedMinutes) * 60 - (Number(saved.elapsed) || 0)) * 1000
+            : Infinity,
+        );
+        if (start && checkpoint - start >= 1000)
+          savedPending.push({
+            id: `focus-${crypto.randomUUID()}`,
+            start: new Date(start).toISOString(),
+            end: new Date(checkpoint).toISOString(),
+            target: String(saved.target || "").trim(),
+          });
+
         if (savedDate === today) {
-          setElapsed(Number(saved.elapsed) || 0);
-          setStartedAt(Number(saved.startedAt) || null);
+          const recovered =
+            saved.startedAt && saved.checkpointAt
+              ? Math.max(0, (Number(saved.checkpointAt) - Number(saved.startedAt)) / 1000)
+              : 0;
+          const restored = (Number(saved.elapsed) || 0) + recovered;
+          setElapsed(
+            saved.plannedMinutes ? Math.min(restored, Number(saved.plannedMinutes) * 60) : restored,
+          );
+          setStartedAt(null);
+          if (saved.startedAt)
+            setRecoveryMessage(
+              "Timer restored paused. Only time through the last checkpoint was kept.",
+            );
           setTarget(String(saved.target || ""));
           setActiveTaskId(Number(saved.activeTaskId) || null);
           setPlannedMinutes(Number(saved.plannedMinutes) || null);
           setFocusDate(today);
           setPending(savedPending);
+          if (!saved.ledgerVersion)
+            for (const block of savedPending)
+              void saveFocusSegment({
+                segmentId: block.id,
+                revision: 1,
+                startedAt: block.start,
+                endedAt: block.end,
+                status: "saved",
+                bridgeId: focusBridgeId(),
+              });
         } else {
           const pendingItems = [...savedPending];
-          if (saved.startedAt) {
-            const startTimestamp = Number(saved.startedAt);
-            const boundary = new Date(startTimestamp);
-            boundary.setHours(23, 59, 59, 999);
-            pendingItems.push({
-              id: `focus-${crypto.randomUUID()}`,
-              start: new Date(startTimestamp).toISOString(),
-              end: new Date(Math.max(startTimestamp + 1000, boundary.getTime())).toISOString(),
-              target: String(saved.target || "").trim(),
-            });
-          }
+          if (saved.startedAt)
+            setRecoveryMessage("Previous timer restored paused; unobserved time was not added.");
           setElapsed(0);
           setStartedAt(null);
           setTarget(String(saved.target || ""));
@@ -108,6 +215,15 @@ export function FocusPanel() {
       } catch {
         /* new timer */
       }
+      void readFocusSegments()
+        .then((items) => {
+          for (const item of items)
+            if (item.status === "running") {
+              void saveFocusSegment({ ...item, status: "saved", revision: item.revision + 1 });
+              void saveFocusGap(item);
+            }
+        })
+        .catch(() => {});
       setReady(true);
     }, 0);
     const clock = window.setInterval(() => setNow(new Date()), 1000);
@@ -129,15 +245,30 @@ export function FocusPanel() {
         FOCUS_STATE_KEY,
         JSON.stringify({
           date: focusDate,
+          ledgerVersion: 1,
           elapsed,
           startedAt,
+          checkpointAt: startedAt ? checkpointRef.current : null,
           target,
           activeTaskId,
           plannedMinutes,
           pending,
         }),
       );
-  }, [activeTaskId, elapsed, focusDate, pending, plannedMinutes, ready, startedAt, target]);
+  }, [
+    activeTaskId,
+    elapsed,
+    focusDate,
+    pending,
+    plannedMinutes,
+    ready,
+    startedAt,
+    target,
+    checkpointTick,
+  ]);
+  useEffect(() => {
+    targetRef.current = target;
+  }, [target]);
   useEffect(() => {
     const start = (event: Event) => {
       const detail = (
@@ -166,12 +297,16 @@ export function FocusPanel() {
       }
 
       if (startedAt && changingTarget) {
+        const trustedEnd =
+          currentTime - checkpointRef.current > FOCUS_INTERRUPTION_MS
+            ? checkpointRef.current
+            : currentTime;
         setPending((items) => [
           ...items,
           {
             id: `focus-${crypto.randomUUID()}`,
             start: new Date(startedAt).toISOString(),
-            end: new Date(Math.max(currentTime, startedAt + 1000)).toISOString(),
+            end: new Date(Math.max(trustedEnd, startedAt + 1000)).toISOString(),
             target: target.trim(),
           },
         ]);
@@ -244,36 +379,17 @@ export function FocusPanel() {
     if (ready && pending.length) void syncPending(pending);
   }, [pending, ready, syncPending]);
   const currentDate = localDateKey(now);
-  const isCurrentDay = focusDate === currentDate;
   const running = startedAt !== null;
-  const seconds = isCurrentDay
-    ? elapsed + (startedAt ? Math.max(0, Math.floor((now.getTime() - startedAt) / 1000)) : 0)
-    : 0;
+  const seconds =
+    elapsed + (startedAt ? Math.max(0, Math.floor((now.getTime() - startedAt) / 1000)) : 0);
   useEffect(() => {
     if (!ready || focusDate === currentDate) return;
+    // A running session carries over midnight; the ledger splits it by day. A
+    // paused one starts the new day clean, exactly as a reload would.
     const rollover = window.setTimeout(() => {
-      if (startedAt !== null) {
-        const midnight = new Date(now);
-        midnight.setHours(0, 0, 0, 0);
-        const boundary = Math.max(startedAt + 1000, midnight.getTime());
-        setPending((items) => [
-          ...items,
-          {
-            id: `focus-${crypto.randomUUID()}`,
-            start: new Date(startedAt).toISOString(),
-            end: new Date(boundary).toISOString(),
-            target: target.trim(),
-          },
-        ]);
+      setFocusDate(currentDate);
+      if (startedAt === null) {
         setElapsed(0);
-        setFocusDate(currentDate);
-        setStartedAt(midnight.getTime());
-        setActiveTaskId(null);
-        setPlannedMinutes(null);
-        setCalendarMessage("New day · previous focus block queued for Calendar…");
-      } else {
-        setElapsed(0);
-        setFocusDate(currentDate);
         setActiveTaskId(null);
         setPlannedMinutes(null);
         setCalendarMessage("");
@@ -285,7 +401,99 @@ export function FocusPanel() {
       celebrationDateRef.current = celebration?.date === currentDate ? currentDate : "";
     }, 0);
     return () => window.clearTimeout(rollover);
-  }, [currentDate, focusDate, now, ready, startedAt, target]);
+  }, [currentDate, focusDate, ready, startedAt]);
+  useEffect(() => {
+    if (!ready) return;
+    const previous = ledgerRef.current;
+    if (previous && (!startedAt || Date.parse(previous.startedAt) !== startedAt)) {
+      const interrupted = Date.now() - checkpointRef.current > FOCUS_INTERRUPTION_MS;
+      const end = Math.min(
+        interrupted ? checkpointRef.current : Date.now(),
+        ledgerLimit.current ?? Infinity,
+      );
+      if (interrupted) void saveFocusGap(previous);
+      void saveFocusSegment({
+        ...previous,
+        endedAt: new Date(Math.max(Date.parse(previous.startedAt), end)).toISOString(),
+        revision: previous.revision + 1,
+        status: "saved",
+      });
+      ledgerRef.current = null;
+    }
+    if (startedAt)
+      ledgerLimit.current = plannedMinutes
+        ? startedAt + Math.max(0, plannedMinutes * 60 - elapsed) * 1000
+        : null;
+    if (startedAt && !ledgerRef.current) {
+      checkpointRef.current = Date.now();
+      const segment: FocusSegment = {
+        segmentId: `focus-${crypto.randomUUID()}`,
+        revision: 1,
+        startedAt: new Date(startedAt).toISOString(),
+        endedAt: new Date(startedAt).toISOString(),
+        status: "running",
+        bridgeId: focusBridgeId(),
+        limitAt: ledgerLimit.current ?? undefined,
+      };
+      ledgerRef.current = segment;
+      void saveFocusSegment(segment);
+    }
+  }, [startedAt, ready, plannedMinutes, elapsed]);
+  useEffect(() => {
+    if (!startedAt) return;
+    const checkpoint = () => {
+      const segment = ledgerRef.current;
+      if (!segment) return;
+      const current = Date.now();
+      if (current - checkpointRef.current > FOCUS_INTERRUPTION_MS) {
+        const end = Math.min(checkpointRef.current, ledgerLimit.current ?? Infinity);
+        void saveFocusSegment({
+          ...segment,
+          endedAt: new Date(end).toISOString(),
+          revision: segment.revision + 1,
+          status: "saved",
+        });
+        void saveFocusGap(segment, current);
+        ledgerRef.current = null;
+        if (end - startedAt >= 1000)
+          setPending((items) => [
+            ...items,
+            {
+              id: `focus-${crypto.randomUUID()}`,
+              start: new Date(startedAt).toISOString(),
+              end: new Date(end).toISOString(),
+              target: targetRef.current.trim(),
+            },
+          ]);
+        setElapsed((value) => value + Math.max(0, (end - startedAt) / 1000));
+        setStartedAt(null);
+        setRecoveryMessage(
+          "Timer paused after an interruption. Time after the last checkpoint was not added.",
+        );
+        return;
+      }
+      checkpointRef.current = Math.min(current, ledgerLimit.current ?? Infinity);
+      const updated = {
+        ...segment,
+        revision: segment.revision + 1,
+        endedAt: new Date(checkpointRef.current).toISOString(),
+        limitAt: ledgerLimit.current ?? undefined,
+      };
+      ledgerRef.current = updated;
+      void saveFocusSegment(updated);
+      setCheckpointTick((tick) => tick + 1);
+    };
+    const timer = window.setInterval(checkpoint, 15000);
+    // Timers are throttled or suspended once the page is hidden, so checkpoint on
+    // the way out and re-check on the way back.
+    document.addEventListener("visibilitychange", checkpoint);
+    window.addEventListener("pagehide", checkpoint);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", checkpoint);
+      window.removeEventListener("pagehide", checkpoint);
+    };
+  }, [startedAt]);
   const finishCelebration = useCallback(() => {
     if (celebrationShowTimerRef.current) window.clearTimeout(celebrationShowTimerRef.current);
     if (celebrationTimerRef.current) window.clearTimeout(celebrationTimerRef.current);
@@ -351,7 +559,9 @@ export function FocusPanel() {
   }, [finishCelebration, scheduleCelebration]);
   const plannedSeconds = plannedMinutes ? plannedMinutes * 60 : null;
   const goalReached = plannedSeconds !== null && seconds >= plannedSeconds;
-  const displaySeconds = plannedSeconds ? Math.max(0, plannedSeconds - seconds) : seconds;
+  const displaySeconds = Math.floor(
+    plannedSeconds ? Math.max(0, plannedSeconds - seconds) : seconds,
+  );
   const label = `${String(Math.floor(displaySeconds / 3600)).padStart(2, "0")}:${String(Math.floor((displaySeconds % 3600) / 60)).padStart(2, "0")}:${String(displaySeconds % 60).padStart(2, "0")}`;
 
   useEffect(() => {
@@ -370,8 +580,12 @@ export function FocusPanel() {
 
   useEffect(() => {
     if (!running || !plannedSeconds || seconds < plannedSeconds || !startedAt) return;
+    if (Date.now() - checkpointRef.current > FOCUS_INTERRUPTION_MS) return;
     const completionTimer = window.setTimeout(() => {
-      const endedAt = Date.now();
+      const endedAt = Math.min(
+        Date.now(),
+        startedAt + Math.max(0, plannedSeconds - elapsed) * 1000,
+      );
       setPending((items) => [
         ...items,
         {
@@ -391,20 +605,26 @@ export function FocusPanel() {
       );
     }, 0);
     return () => window.clearTimeout(completionTimer);
-  }, [activeTaskId, plannedMinutes, plannedSeconds, running, seconds, startedAt, target]);
+  }, [activeTaskId, elapsed, plannedMinutes, plannedSeconds, running, seconds, startedAt, target]);
 
   const toggle = () => {
     const rightNow = Date.now();
     const nextDate = localDateKey(new Date(rightNow));
     if (startedAt) {
-      const endedAt = rightNow;
+      // After a missed checkpoint only the observed part counts, matching the ledger.
+      const interrupted = rightNow - checkpointRef.current > FOCUS_INTERRUPTION_MS;
+      const endedAt = interrupted ? checkpointRef.current : rightNow;
       const block: FocusCalendarBlock = {
         id: `focus-${crypto.randomUUID()}`,
         start: new Date(startedAt).toISOString(),
         end: new Date(Math.max(endedAt, startedAt + 1000)).toISOString(),
         target: target.trim(),
       };
-      setElapsed(seconds);
+      setElapsed(interrupted ? elapsed + Math.max(0, (endedAt - startedAt) / 1000) : seconds);
+      if (interrupted)
+        setRecoveryMessage(
+          "Timer paused after an interruption. Time after the last checkpoint was not added.",
+        );
       setStartedAt(null);
       setPending((items) => [...items, block]);
       setCalendarMessage("Paused · saving to Calendar…");
@@ -414,7 +634,6 @@ export function FocusPanel() {
         setPlannedMinutes(null);
       }
       if (focusDate !== nextDate) {
-        setElapsed(0);
         const celebration = readFocusCelebration();
         celebratedRef.current = celebration?.date === nextDate && celebration.status === "seen";
         celebrationPendingRef.current =
@@ -440,6 +659,69 @@ export function FocusPanel() {
           ? `Paused · ${pending.length} Calendar sync pending`
           : calendarMessage ||
             (seconds ? "Paused · saved to Calendar" : "Ready for a new focus session");
+  return {
+    now,
+    elapsed,
+    startedAt,
+    target,
+    setTarget,
+    plannedMinutes,
+    pending,
+    syncing,
+    running,
+    seconds,
+    label,
+    statusText,
+    toggle,
+    goalReached,
+    syncPending,
+    setElapsed,
+    setStartedAt,
+    setActiveTaskId,
+    setPlannedMinutes,
+    setCalendarMessage,
+    celebrating,
+    finishCelebration,
+    ledgerRef,
+    recoveryMessage,
+  };
+}
+
+export function FocusPanel() {
+  const focus = useFocus();
+  const elsewhere = useContext(FocusElsewhereContext);
+  if (!focus)
+    return (
+      <article className="focus-session card">
+        <p>
+          {elsewhere
+            ? "Focus timer is active in another tab. Your saved history is available in Profile."
+            : "Preparing focus timer…"}
+        </p>
+      </article>
+    );
+  const {
+    target,
+    setTarget,
+    plannedMinutes,
+    pending,
+    syncing,
+    running,
+    seconds,
+    label,
+    statusText,
+    toggle,
+    goalReached,
+    syncPending,
+    setElapsed,
+    setStartedAt,
+    setActiveTaskId,
+    setPlannedMinutes,
+    setCalendarMessage,
+    celebrating,
+    finishCelebration,
+    recoveryMessage,
+  } = focus;
   return (
     <>
       <article className="focus-session card">
@@ -462,7 +744,10 @@ export function FocusPanel() {
           </small>
         </label>
         <h2 aria-label={plannedMinutes ? `${label} remaining` : `${label} elapsed`}>{label}</h2>
-        <p>{statusText}</p>
+        <p>
+          {statusText}
+          {recoveryMessage && <small className="focus-recovery">{recoveryMessage}</small>}
+        </p>
         <div className={`focus-wave ${running ? "active" : ""}`} aria-hidden="true">
           {[
             6, 10, 16, 23, 31, 19, 28, 39, 24, 34, 45, 27, 38, 49, 30, 41, 46, 33, 40, 29, 21, 14,

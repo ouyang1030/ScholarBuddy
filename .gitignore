@@ -64,3 +64,5 @@ next-env.d.ts
 *.sqlite3
 
 /bridge/.notifications/
+
+/bridge/.activity/
