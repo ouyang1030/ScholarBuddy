@@ -642,16 +642,6 @@ function Workbench() {
         </nav>
         <div className="sidebar-bottom">
           <button
-            className={active === "profile" ? "active" : ""}
-            onClick={() => {
-              setActive("profile");
-              setMobileNav(false);
-            }}
-          >
-            <span className="nav-icon">◉</span>
-            <span>Profile</span>
-          </button>
-          <button
             className={active === "about" ? "active" : ""}
             onClick={() => {
               setActive("about");
@@ -666,13 +656,20 @@ function Workbench() {
             <span className="nav-icon">⚙</span>
             <span>Connections</span>
           </button>
-          <div className={`sync-status ${status ? "" : "offline"}`}>
+          <button
+            className={`sync-status ${status ? "" : "offline"} ${active === "profile" ? "active" : ""}`}
+            onClick={() => {
+              setActive("profile");
+              setMobileNav(false);
+              window.scrollTo({ top: 0, behavior: "smooth" });
+            }}
+          >
             <span className="sync-orbit">
               <i />
               <b />
             </span>
             <span>
-              <strong>Research systems</strong>
+              <strong>Profile</strong>
               <small>
                 <SourceDot tone={status ? "green" : "orange"} />
                 {status
@@ -686,7 +683,7 @@ function Workbench() {
                         : "Bridge offline · Today still works"}
               </small>
             </span>
-          </div>
+          </button>
         </div>
       </aside>
       <div className="main-shell">

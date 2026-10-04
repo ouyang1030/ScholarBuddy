@@ -85,11 +85,7 @@ export function JournalPanel({
       setSaving(false);
     }
   };
-  const entries = state.journal;
-  const visible = [
-    ...entries.filter((item) => (item.entryDate || "") === today),
-    ...entries.filter((item) => (item.entryDate || "") !== today).slice(0, 5),
-  ];
+  const visible = state.journal.filter((item) => item.entryDate === today);
   const days = new Map<string, RecordItem[]>();
   for (const entry of visible) {
     const day = entry.entryDate || "";

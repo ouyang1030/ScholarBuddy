@@ -5,6 +5,7 @@ import {
   DEFAULT_IMAGE_SIZES,
 } from "vinext/server/image-optimization";
 import handler from "vinext/server/app-router-entry";
+import { SECURITY_HEADERS } from "../shared/security-headers.mjs";
 
 interface Fetcher {
   fetch(request: Request): Promise<Response>;
@@ -21,19 +22,9 @@ interface Env {
   };
 }
 
-const securityHeaders = {
-  "Content-Security-Policy":
-    "default-src 'self'; base-uri 'self'; connect-src 'self' http://localhost:* http://127.0.0.1:*; font-src 'self' data:; frame-ancestors 'none'; img-src 'self' data:; object-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; form-action 'self'",
-  "Cross-Origin-Opener-Policy": "same-origin",
-  "Permissions-Policy": "camera=(), geolocation=(), microphone=(), payment=(), usb=()",
-  "Referrer-Policy": "strict-origin-when-cross-origin",
-  "X-Content-Type-Options": "nosniff",
-  "X-Frame-Options": "DENY",
-};
-
 function secure(response: Response): Response {
   const secured = new Response(response.body, response);
-  for (const [name, value] of Object.entries(securityHeaders)) secured.headers.set(name, value);
+  for (const [name, value] of Object.entries(SECURITY_HEADERS)) secured.headers.set(name, value);
   return secured;
 }
 

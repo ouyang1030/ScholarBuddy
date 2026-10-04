@@ -434,8 +434,12 @@ export function GuideDrawer({
               <p>
                 <b>Hosted access</b>
                 <span>
-                  ScholarBuddy is available at scholarbuddy.tech. The link alone grants no access
-                  unless the Site is explicitly shared with that visitor or published publicly.
+                  ScholarBuddy is available at scholarbuddy.tech, with scholarbuddy-eta.vercel.app
+                  as a backup. Pair the backup separately in Connections with a new temporary code
+                  so it is ready if the custom domain is unavailable. Existing Bridge installations
+                  must add the backup address to their allowed-site list and restart first. Both
+                  addresses connect to the same local research data; browser preferences and unsaved
+                  drafts stay separate.
                 </span>
               </p>
               <p>

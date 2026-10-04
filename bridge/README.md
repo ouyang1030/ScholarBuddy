@@ -21,7 +21,9 @@ Each provider card can test the exact model ID currently in its fields with one 
 - Optional concurrency, request, token, and output limits documented in `.env.local.example`.
 
 Do not use wildcard origins. Add the deployed `https://` origin exactly, restart the Bridge, and pair once on that browser origin.
-The project default includes both `https://scholarbuddy.tech` and `https://www.scholarbuddy.tech`. The bare domain redirects to `www`, so the `www` origin is the one browsers actually present; pair once there.
+The project default includes `https://scholarbuddy.tech`, `https://www.scholarbuddy.tech`, and the fixed backup `https://scholarbuddy-eta.vercel.app`. The bare custom domain redirects to `www`, so pair there and separately at the Vercel backup address with a fresh code. Both paired origins access the same local research data.
+
+Existing `.env.local` files are preserved by setup. To enable the backup for an existing installation, append its exact HTTPS origin to `WORKBUDDY_ORIGINS` and restart the Bridge (`npm run bridge:install` for the macOS background service). Open the backup site's Connections drawer and use **Open local pairing page** to get a new code. Pairing in advance allows switching to the backup without relying on the custom domain; browser preferences and unsaved drafts remain separate.
 
 ## Running
 
@@ -35,7 +37,7 @@ The service binds only to `127.0.0.1`. Pairing uses a five-minute, one-time code
 
 - Zotero and Obsidian features are available wherever their local paths and APIs are reachable.
 - Calendar and Mail adapters use macOS JavaScript for Automation and require user-approved Automation permissions.
-- Mail scanning is opt-in and its 15-minute browser timer runs only while Submission Tracker is open. It checks recent Inbox messages against saved submission identifiers or manuscript titles and stores only matching audit metadata in Obsidian. Acceptance, rejection, withdrawal, and publication require confirmation before Obsidian changes.
+- Mail scanning starts only once a submission attempt exists: opening Submission Tracker scans at most once every six hours, and **Check email updates** scans on demand. It checks recent Inbox messages against saved submission identifiers or manuscript titles and stores only matching audit metadata in Obsidian. Acceptance, rejection, withdrawal, and publication require confirmation before Obsidian changes.
 - AI requests use only the sources selected for that workflow. Credentials remain inside the Bridge.
 - Each provider uses its native API protocol; changing providers does not expose one provider's key to another.
 - AI rate and token limits reset when the Bridge restarts and should not be treated as billing controls.

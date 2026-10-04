@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { bridgeFetch } from "../../lib/bridge-client";
 import {
   focusStorageError,
@@ -60,6 +60,8 @@ function tokens(value: number) {
   return value.toLocaleString();
 }
 const daysLabel = (value: number) => `${value} ${value === 1 ? "day" : "days"}`;
+const monthLabel = (date: string) =>
+  new Date(`${date}T12:00:00Z`).toLocaleDateString("en", { month: "short", timeZone: "UTC" });
 const dateLabel = (date: string) =>
   new Date(`${date}T12:00:00Z`).toLocaleDateString("en", {
     month: "short",
@@ -76,7 +78,7 @@ export function ProfileModule({
 }) {
   const [tab, setTab] = useState<"focus" | "tokens">("focus");
   const [view, setView] = useState<"daily" | "weekly" | "cumulative">("daily");
-  const [ranges, setRanges] = useState({ focus: "30d", tokens: "90d" });
+  const [ranges, setRanges] = useState({ focus: "1y", tokens: "1y" });
   const [profile, setProfile] = useState<Profile | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
@@ -283,19 +285,59 @@ export function ProfileModule({
     series.buckets.length === 1
       ? `0,${chartHeight - (series.buckets[0].value / max) * (chartHeight - 16)} ${chartWidth},${chartHeight - (series.buckets[0].value / max) * (chartHeight - 16)}`
       : series.buckets.map(point).join(" ");
+  // Contribution-style grid: one column per week (Sunday first), one cell per day.
+  // The weekly view keeps a single cell per week.
+  // Days before tracking began fill the selected range as untracked cells.
+  const span = { "30d": 30, "90d": 90, "1y": 365 }[ranges[tab]] ?? 30;
+  const untracked: string[] = [];
+  for (let date = nextDay(today, 1 - span); date < series.start; date = nextDay(date))
+    untracked.push(date);
+  const weekStart = (date: string) => nextDay(date, -new Date(`${date}T12:00:00Z`).getUTCDay());
+  const before =
+    view === "daily"
+      ? untracked
+      : [...new Set(untracked.map(weekStart))].filter((week) => week !== series.buckets[0]?.date);
+  const first = before[0] || series.start;
+  // The grid runs Sunday to Saturday, so Monday is the second row.
+  const lead = view === "daily" ? new Date(`${first}T12:00:00Z`).getUTCDay() : 0;
+  const cells: (Day | string | null)[] = [
+    ...Array<null>(lead).fill(null),
+    ...before,
+    ...series.buckets,
+  ];
+  const perColumn = view === "daily" ? 7 : 1;
+  const columns: { label: string; cells: (Day | string | null)[] }[] = [];
+  let lastMonth = "";
+  for (let i = 0; i < cells.length; i += perColumn) {
+    const group = cells.slice(i, i + perColumn);
+    while (group.length < perColumn) group.push(null);
+    const head = group.find((d) => d);
+    const month = head
+      ? monthLabel(typeof head === "string" ? head : head.start || head.date)
+      : lastMonth;
+    columns.push({ label: month !== lastMonth ? month : "", cells: group });
+    lastMonth = month;
+  }
+  const level = (value: number) => (value > 0 ? Math.max(1, Math.ceil((value / max) * 4)) : 0);
+  const bucketLabel = (bucket: Day) =>
+    `${bucket.start || bucket.date}${bucket.end ? ` to ${bucket.end}` : ""}: ${format(bucket.value)}${bucket.unknown ? (tab === "focus" ? ", time unconfirmed" : ", usage incomplete") : ""}`;
+  const bucketTitle = (bucket: Day) =>
+    `${bucket.start || bucket.date}: ${tab === "focus" ? Math.floor(bucket.value) + " seconds" : bucket.value.toLocaleString() + " tokens"}`;
   return (
     <section className="profile-page" aria-label="Personal activity profile">
-      <header className="profile-heading">
+      <section className="page-intro compact">
         <div>
-          <span className="label">YOUR RESEARCH, OVER TIME</span>
-          <h1>Small steps. Lasting progress.</h1>
+          <p className="eyebrow">YOUR RESEARCH, OVER TIME</p>
+          <h1>
+            Small steps. <em>Lasting progress.</em>
+          </h1>
           <p>A little perspective on the work you put in.</p>
         </div>
-        <span className="profile-local">
+        <span className="status-pill mint">
           <i />
           This Mac
         </span>
-      </header>
+      </section>
       <div className="profile-identity">
         <span className="profile-avatar">
           {displayName
@@ -307,13 +349,7 @@ export function ProfileModule({
         </span>
         <div>
           <h2>{displayName}</h2>
-          <p>
-            {profile
-              ? `Tracking since ${dateLabel(dayKey(profile.trackingSince, zone))} · ${zone}`
-              : loading
-                ? "Connecting to your local history…"
-                : "Your local research profile"}
-          </p>
+          {!profile && loading && <p>Connecting to your local history…</p>}
         </div>
         {editing ? (
           <form className="profile-name-form" onSubmit={saveName}>
@@ -324,10 +360,10 @@ export function ProfileModule({
               required
               onChange={(e) => setName(e.target.value)}
             />
-            <button disabled={saving} type="submit">
+            <button className="primary-button small" disabled={saving} type="submit">
               Save
             </button>
-            <button type="button" onClick={() => setEditing(false)}>
+            <button className="quiet-button" type="button" onClick={() => setEditing(false)}>
               Cancel
             </button>
           </form>
@@ -340,7 +376,7 @@ export function ProfileModule({
               setEditing(true);
             }}
           >
-            Edit name ↗
+            Edit name
           </button>
         )}
       </div>
@@ -353,7 +389,7 @@ export function ProfileModule({
             setSelected(null);
           }}
         >
-          ◷ &nbsp; Focus
+          Focus
         </button>
         <button
           role="tab"
@@ -363,43 +399,52 @@ export function ProfileModule({
             setSelected(null);
           }}
         >
-          ✦ &nbsp; AI activity
+          AI activity
         </button>
       </div>
       {error && (
-        <div className="profile-notice" role="status">
-          <span>
+        <div className="data-banner compact-banner" role="status">
+          <span>!</span>
+          <p>
             {error}
             {profile
               ? " Showing the last loaded history."
               : " Focus can still be recorded locally."}
-          </span>
-          <button onClick={() => void load()}>Retry</button>
-          <button onClick={openConnections}>Connections</button>
+          </p>
+          <div>
+            <button onClick={() => void load()}>Retry</button>
+            <button onClick={openConnections}>Connections</button>
+          </div>
         </div>
       )}
       {(profile?.warning || storageWarning) && (
-        <div className="profile-notice" role="status">
-          {profile?.warning || storageWarning}
+        <div className="data-banner compact-banner" role="status">
+          <span>!</span>
+          <p>{profile?.warning || storageWarning}</p>
         </div>
       )}
       {tab === "focus" && (pending.length > 0 || focus?.recoveryMessage) && (
-        <div className="profile-notice">
-          <span>
+        <div className="data-banner compact-banner profile-note">
+          <span>◷</span>
+          <p>
             {focus?.recoveryMessage ||
               `${pending.length} focus segment${pending.length === 1 ? "" : "s"} pending sync. Local time is included below.`}
-          </span>
+          </p>
           {pending.length > 0 && (
             <button onClick={() => void syncFocus(true).then(load)}>Sync local focus</button>
           )}
         </div>
       )}
       {tab === "focus" && recoveries.length > 0 && (
-        <section className="profile-recovery-list" aria-label="Interrupted focus time">
-          <h2>Interrupted time</h2>
-          <p>Only add a gap if you were focusing during that time.</p>
+        <section className="profile-recovery-list card" aria-label="Interrupted focus time">
+          <div className="section-heading">
+            <div>
+              <span className="label">INTERRUPTED TIME</span>
+              <p>Only add a gap if you were focusing during that time.</p>
+            </div>
+          </div>
           {recoveries.map((segment) => (
-            <div key={segment.segmentId}>
+            <div className="profile-recovery" key={segment.segmentId}>
               <span>
                 {segmentTime(segment.startedAt)} – {segmentTime(segment.endedAt)}{" "}
                 <small>
@@ -434,7 +479,7 @@ export function ProfileModule({
           ))}
         </section>
       )}
-      <div className="profile-overview">
+      <div className="profile-overview card">
         <article className="profile-hero">
           <span className="label">{tab === "focus" ? "TODAY’S FOCUS" : "LIFETIME TOKENS"}</span>
           <strong
@@ -453,15 +498,18 @@ export function ProfileModule({
           <p>
             {tab === "focus"
               ? focus?.running
-                ? "● Recording · one step at a time"
+                ? "Recording · one step at a time"
                 : "Time made for what matters."
               : unknownAI
                 ? "Known usage · some requests did not report tokens"
                 : "Across your Workbench AI workflows."}
           </p>
           {tab === "focus" && (
-            <button onClick={() => (focus?.running ? focus.toggle() : startFocus())}>
-              {focus?.running ? "Pause focus" : "Start a focus session"} <span>↗</span>
+            <button
+              className="primary-button"
+              onClick={() => (focus?.running ? focus.toggle() : startFocus())}
+            >
+              {focus?.running ? "Pause focus" : "Start a focus session"}
             </button>
           )}
         </article>
@@ -475,11 +523,11 @@ export function ProfileModule({
           ))}
         </div>
       </div>
-      <section className="profile-chart-card">
-        <div className="profile-chart-heading">
+      <section className="profile-chart-card card">
+        <div className="section-heading">
           <div>
             <span className="label">THE BIGGER PICTURE</span>
-            <h2>{tab === "focus" ? "Focus activity" : "Token activity"}</h2>
+            <p>{tab === "focus" ? "Focus activity" : "Token activity"}</p>
           </div>
           <div className="profile-chart-controls">
             <div className="profile-segmented" aria-label="Chart grouping">
@@ -517,113 +565,144 @@ export function ProfileModule({
           <span className="profile-chart-readout" aria-live="polite">
             {selected
               ? `${dateLabel(selected.start || selected.date)}${selected.end ? ` – ${dateLabel(selected.end)}${selected.start !== selected.date || selected.end !== nextDay(selected.date, 6) ? " (partial week)" : ""}` : ""} · ${format(selected.value)} · ${selected.count} ${tab === "focus" ? "segments" : "requests"}${selected.unknown ? (tab === "focus" ? " · time unconfirmed" : " · incomplete usage") : ""}`
-              : tab === "focus"
-                ? "Every focused minute adds up."
-                : "Usage reported by your models."}
+              : allZero
+                ? tab === "focus"
+                  ? "Start a focus session and watch your days take shape."
+                  : "Your next AI workflow will start your activity."
+                : tab === "focus"
+                  ? "Every focused minute adds up."
+                  : "Usage reported by your models."}
           </span>
         </div>
-        <div className="profile-chart">
-          <div className="profile-chart-axis">
-            <span>{format(max === 1 ? 0 : max)}</span>
-            <span>{format(max === 1 ? 0 : max / 2)}</span>
-            <span>0</span>
-          </div>
-          <div className="profile-plot">
-            <div className="profile-gridlines">
-              <i />
-              <i />
-              <i />
+        {view === "cumulative" ? (
+          <div className="profile-chart">
+            <div className="profile-chart-axis">
+              <span>{format(max === 1 ? 0 : max)}</span>
+              <span>{format(max === 1 ? 0 : max / 2)}</span>
+              <span>0</span>
             </div>
-            {view === "cumulative" && !allZero ? (
-              <svg
-                className="profile-line"
-                viewBox={`0 0 ${chartWidth} ${chartHeight}`}
-                preserveAspectRatio="none"
-                role="img"
-                aria-label="Cumulative activity"
-              >
-                <defs>
-                  <linearGradient id="activityFill" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="#89a878" stopOpacity=".35" />
-                    <stop offset="100%" stopColor="#89a878" stopOpacity=".02" />
-                  </linearGradient>
-                </defs>
-                <polygon
-                  points={`0,${chartHeight} ${linePoints} ${chartWidth},${chartHeight}`}
-                  fill="url(#activityFill)"
-                />
-                <polyline
-                  points={linePoints}
-                  fill="none"
-                  stroke="#668655"
-                  strokeWidth="3"
-                  vectorEffect="non-scaling-stroke"
-                />
-              </svg>
-            ) : null}
-            <div className={`profile-bars ${view === "cumulative" ? "line-targets" : ""}`}>
-              {series.buckets.map((bucket) => (
-                <button
-                  key={bucket.date}
-                  className={`${bucket.date === today ? "is-today" : ""} ${bucket.unknown ? "is-incomplete" : ""}`}
-                  style={{ height: `${Math.max(2, (bucket.value / max) * 92)}%` }}
-                  aria-label={`${bucket.date}: ${format(bucket.value)}${bucket.unknown ? (tab === "focus" ? ", time unconfirmed" : ", usage incomplete") : ""}`}
-                  onMouseEnter={() => setSelected(bucket)}
-                  onFocus={() => setSelected(bucket)}
-                  onClick={() => setSelected(bucket)}
-                  title={`${bucket.date}: ${tab === "focus" ? Math.floor(bucket.value) + " seconds" : bucket.value.toLocaleString() + " tokens"}`}
-                />
+            <div className="profile-plot">
+              <div className="profile-gridlines">
+                <i />
+                <i />
+                <i />
+              </div>
+              {!allZero && (
+                <svg
+                  className="profile-line"
+                  viewBox={`0 0 ${chartWidth} ${chartHeight}`}
+                  preserveAspectRatio="none"
+                  role="img"
+                  aria-label="Cumulative activity"
+                >
+                  <polygon
+                    className="profile-line-fill"
+                    points={`0,${chartHeight} ${linePoints} ${chartWidth},${chartHeight}`}
+                  />
+                  <polyline
+                    className="profile-line-stroke"
+                    points={linePoints}
+                    fill="none"
+                    strokeWidth="3"
+                    vectorEffect="non-scaling-stroke"
+                  />
+                </svg>
+              )}
+              <div className="profile-line-targets">
+                {series.buckets.map((bucket) => (
+                  <button
+                    key={bucket.date}
+                    aria-label={bucketLabel(bucket)}
+                    title={bucketTitle(bucket)}
+                    onMouseEnter={() => setSelected(bucket)}
+                    onFocus={() => setSelected(bucket)}
+                    onClick={() => setSelected(bucket)}
+                  />
+                ))}
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="profile-heat-scroll">
+            <div
+              className={`profile-heat ${view}`}
+              style={
+                {
+                  "--rows": perColumn,
+                  "--columns": columns.length,
+                } as React.CSSProperties
+              }
+            >
+              {view === "daily" &&
+                ["", "Mon", "", "Wed", "", "Fri", "", ""].map((day, index) => (
+                  <span key={index} aria-hidden="true">
+                    {day}
+                  </span>
+                ))}
+              {columns.map((column, index) => (
+                <Fragment key={index}>
+                  {column.cells.map((bucket, row) =>
+                    typeof bucket === "string" ? (
+                      <i key={row} className="untracked" title={`${bucket}: not tracked yet`} />
+                    ) : bucket ? (
+                      <button
+                        key={row}
+                        className={`level-${level(bucket.value)} ${bucket.date === today ? "is-today" : ""} ${bucket.unknown ? "is-incomplete" : ""}`}
+                        aria-label={bucketLabel(bucket)}
+                        title={bucketTitle(bucket)}
+                        onMouseEnter={() => setSelected(bucket)}
+                        onFocus={() => setSelected(bucket)}
+                        onClick={() => setSelected(bucket)}
+                      />
+                    ) : (
+                      <i key={row} />
+                    ),
+                  )}
+                  <span aria-hidden="true">{column.label}</span>
+                </Fragment>
               ))}
             </div>
-            {allZero && (
-              <div className="profile-chart-empty">
-                <span>{tab === "focus" ? "◷" : "✦"}</span>
-                <strong>
-                  {known ? "Your rhythm starts here." : "Your activity, in one place."}
-                </strong>
-                <p>
-                  {tab === "focus"
-                    ? "Start a focus session and watch your days take shape."
-                    : "Your next AI workflow will start your activity chart."}
-                </p>
-              </div>
-            )}
           </div>
-        </div>
-        <div className="profile-chart-dates">
-          <span>{dateLabel(series.start)}</span>
-          <span>{dateLabel(series.end)} · today</span>
-        </div>
+        )}
         <footer className="profile-chart-footer">
           <span>
-            <i /> {tab === "focus" ? "Focus time · pauses excluded" : "Reported tokens"}
-            {pending.length > 0 && tab === "focus" ? " · includes local records" : ""}
-          </span>
-          <span>
+            {dateLabel(series.start)} – {dateLabel(series.end)} ·{" "}
             {tab === "tokens" && profile
               ? `Usage coverage: ${profile.ai.reported}/${profile.ai.requests} requests`
               : `${series.calendarDays} tracked ${series.calendarDays === 1 ? "day" : "days"}`}
+            {pending.length > 0 && tab === "focus" ? " · includes local records" : ""}
           </span>
+          {view !== "cumulative" && (
+            <span className="profile-heat-legend" aria-hidden="true">
+              Less
+              {[0, 1, 2, 3, 4].map((step) => (
+                <i key={step} className={`level-${step}`} />
+              ))}
+              More
+            </span>
+          )}
         </footer>
       </section>
       <section className="profile-details">
-        <div>
-          <h2>{tab === "focus" ? "Your days, in detail" : "Activity details"}</h2>
-          <p>
-            {tab === "focus"
-              ? "Time recorded, one day at a time. Today is still in progress."
-              : "Missing usage stays unknown. Historical usage before tracking is not estimated."}
-          </p>
+        <div className="section-heading">
+          <div>
+            <p>{tab === "focus" ? "Your days, in detail" : "Activity details"}</p>
+            <small>
+              {tab === "focus"
+                ? "Time recorded, one day at a time. Today is still in progress."
+                : "Missing usage stays unknown. Historical usage before tracking is not estimated."}
+            </small>
+          </div>
+          <button
+            className="quiet-button"
+            aria-expanded={details}
+            onClick={() => setDetails(!details)}
+          >
+            {details ? "Hide details" : "View details"}
+          </button>
         </div>
-        <button
-          className="quiet-button"
-          aria-expanded={details}
-          onClick={() => setDetails(!details)}
-        >
-          {details ? "Hide details ↑" : "View details ↓"}
-        </button>
         {details && (
-          <div className="profile-table-wrap">
+          <div className="profile-table-wrap card">
             <table>
               <thead>
                 <tr>

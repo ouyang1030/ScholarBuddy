@@ -8,7 +8,7 @@ ScholarBuddy is designed around user-controlled local data.
 - Focus state, daily tasks, UI preferences, and the paired Bridge credential are stored in the current browser origin.
 - Zotero items and annotations are read from Zotero Desktop when requested.
 - Calendar events are read or changed only through explicit ScholarBuddy actions.
-- Mail scanning is opt-in and limited to recent messages matching saved submission context.
+- Mail is scanned only once a submission attempt exists: opening Submission Tracker checks at most once every six hours, and **Check email updates** checks on demand. macOS asks for Automation permission before the first scan. The scan is limited to recent Inbox messages matching saved submission context, and message bodies are not sent to the browser.
 - On macOS, AI credentials entered through local setup are stored in Keychain. `.env.local` and the Bridge process environment remain supported fallbacks for developers and other systems.
 
 ## External AI providers
