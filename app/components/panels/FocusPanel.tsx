@@ -380,8 +380,10 @@ function useFocusController() {
   }, [pending, ready, syncPending]);
   const currentDate = localDateKey(now);
   const running = startedAt !== null;
-  const seconds =
-    elapsed + (startedAt ? Math.max(0, Math.floor((now.getTime() - startedAt) / 1000)) : 0);
+  // Restored and interrupted sessions leave a fractional elapsed; the timer shows whole seconds.
+  const seconds = Math.floor(
+    elapsed + (startedAt ? Math.max(0, (now.getTime() - startedAt) / 1000) : 0),
+  );
   useEffect(() => {
     if (!ready || focusDate === currentDate) return;
     // A running session carries over midnight; the ledger splits it by day. A

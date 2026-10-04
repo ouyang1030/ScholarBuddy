@@ -27,7 +27,8 @@ function focusLengthLabel(minutes?: number | null) {
   return minutes ? `${minutes} min` : "No time limit";
 }
 
-function compactTimer(seconds: number) {
+function compactTimer(value: number) {
+  const seconds = Math.floor(value);
   const minutes = Math.floor(seconds / 60);
   return `${String(minutes).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
 }

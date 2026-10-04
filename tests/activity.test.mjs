@@ -77,6 +77,10 @@ test("series includes zero days, consistent week totals and cumulative baseline"
     weekly.buckets.reduce((n, d) => n + d.value, 0),
     daily.total,
   );
+  // Weeks start on Sunday: 2026-10-04 opens its own week, 10-03 closes the one before.
+  assert.equal(weekly.buckets.at(-1).date, "2026-10-04");
+  assert.equal(weekly.buckets.at(-2).date, "2026-09-27");
+  assert.equal(weekly.buckets.at(-2).value, 200);
   assert.equal(cumulative.buckets.at(-1).value, 300);
   assert.equal(cumulative.buckets[0].value, 100);
   assert.equal(cumulative.buckets.at(-1).unknown, 1);

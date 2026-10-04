@@ -51,11 +51,13 @@ yarn-error.log*
 # vercel
 .vercel
 
+# hosting / cloudflare
+/.wrangler/
+
 # typescript
 next-env.d.ts
 *.tsbuildinfo
 /dist/
-/.wrangler/
 /outputs/
 /work/
 /bridge/.workbuddy-token

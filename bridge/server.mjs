@@ -1410,7 +1410,11 @@ async function syncSubmissionEmails(config, suppliedEmails) {
     scanned: emails.length,
     updated,
     verified,
-    pending,
+    // The browser lists a pending match by subject and sender; the body stays here.
+    pending: pending.map((candidate) => {
+      const { id, subject, sender, receivedAt } = candidate.email;
+      return { ...candidate, email: { id, subject, sender, receivedAt } };
+    }),
     ignored: Math.max(0, emails.length - candidates.length),
   };
 }

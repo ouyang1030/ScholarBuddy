@@ -98,7 +98,8 @@ export function activitySeries(days, since, today, view = "daily", range = "30d"
     calendarDays++;
     if (view === "weekly") {
       const weekday = new Date(`${date}T12:00:00Z`).getUTCDay();
-      const week = nextDay(date, -(weekday + 6) % 7);
+      // Weeks run Sunday to Saturday, matching the activity grid.
+      const week = nextDay(date, -weekday);
       const last = result.at(-1);
       if (last?.date === week) {
         last.value += item.value;

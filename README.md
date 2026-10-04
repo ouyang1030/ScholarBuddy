@@ -2,10 +2,12 @@
 
 ScholarBuddy is a local-first research workbench for sports analytics and other evidence-heavy research. The hosted interface organizes projects, manuscripts, reading, reviews, submissions, the daily research log, captured ideas, and daily focus. A loopback-only Bridge keeps Obsidian, Zotero, macOS Calendar, and macOS Mail on the researcher's own computer.
 
+![ScholarBuddy](docs/homepage.png)
+
 ## Architecture
 
 ```text
-Hosted ScholarBuddy UI (Sites or another compatible deployment)
+Hosted ScholarBuddy UI (any Next.js-compatible deployment)
                          |
                  exact-origin CORS
                  + paired browser
@@ -105,18 +107,16 @@ category choices but stops future reminders. There is no global OS keyboard shor
 
 ## Deployment and domains
 
-This repository preserves the ChatGPT Sites-compatible Vinext/Cloudflare Worker build. `.openai/hosting.json` identifies the production ScholarBuddy Site; maintainers of a fork should replace that project binding with their own deployment.
+The app is a standard Next.js App Router project, and `next.config.ts` sets its security headers. `vite.config.ts` and `worker/` provide the Vinext/Cloudflare Worker build used for local development and staging; the Worker applies the same headers from `shared/security-headers.mjs`.
 
 The public custom domain is `https://scholarbuddy.tech`, which redirects to `https://www.scholarbuddy.tech`. Both exact origins are included in the example Bridge allowlist. After connecting the domain, restart the Bridge and pair again from ScholarBuddy because changing origins does not transfer browser storage.
-
-Publishing source code, making a Site public, and connecting a custom domain are separate decisions. A public repository can still back a private Site.
 
 ### Independent Cloudflare staging
 
 `npm run deploy:cloudflare:staging` builds and publishes the independent
 `scholarbuddy-staging` Worker in your authenticated Cloudflare account. Run
 `npx wrangler login` first if necessary. This mode uses a `workers.dev` address,
-has no custom-domain routes or database bindings, and skips Sites metadata.
+and has no custom-domain routes or database bindings.
 The existing default build and production domain configuration are preserved.
 It shares the ignored `dist/` output directory, so always use the complete deploy
 command above to rebuild the intended target before publishing.
@@ -146,6 +146,7 @@ indexing but is not access control. The unused image optimization route returns
 - Pairing pages expose a short-lived one-time code, never the persistent token.
 - On macOS, API keys are stored in Keychain (`.env.local` fallback) and are never sent to the hosted UI.
 - Obsidian writes use constrained collections, atomic writes, version archives, and SHA-256 `contentHash` concurrency protection against stale overwrites.
+- Record frontmatter supports single-line values only. A multi-line YAML property added in Obsidian (such as a `tags` list) is not preserved when ScholarBuddy next saves that record; the previous version stays in `ScholarBuddy/.history`.
 - Research log entries and captured ideas are ordinary Obsidian records, held in browser memory only until written to the vault.
 - Selected Zotero and Obsidian context is sent to an AI provider only during explicit workflow execution; evidence snapshots are preserved across follow-ups, and logs redact credentials.
 - Submission email checks require confirmation for consequential status updates; retries recover attempt state idempotently.
@@ -156,13 +157,12 @@ See [PRIVACY.md](PRIVACY.md) and [SECURITY.md](SECURITY.md) before sharing a dep
 
 ## Personal activity profile
 
-Open **Profile** in the sidebar or the top-right avatar. The default **Focus** tab shows today's timer time, lifetime saved focus, the selected range's daily average, best day, independent focus streaks, and daily details. **AI activity** shows lifetime/peak tokens, longest chat, AI streaks, and provider usage coverage. Both charts support Daily, Weekly, and Cumulative views.
+Open **Profile** in the sidebar or user avatar to review research habits and productivity:
 
-Profile starts tracking when enabled; it does not invent earlier history. Focus intervals are split at midnight in the Profile's fixed local time zone, pauses are excluded, and overlapping intervals are counted once. Switching modules keeps the timer running. One tab owns the timer; other tabs can read saved history. After an interruption, only checkpointed time is kept automatically. Profile lets you count the missing interval, treat it as a break, or undo an addition.
+- **Focus**: Tracks daily and lifetime deep work sessions, daily averages, streaks, and trends across Daily, Weekly, and Cumulative views.
+- **AI activity**: Monitors token volume, active streaks, session lengths, and provider coverage.
 
-Statistics stay in the ignored `bridge/.activity/activity-v1.json` ledger. Browser Focus records and the retry outbox use IndexedDB and sync separately from Calendar, so Calendar permission or sync failures do not block Focus history. Keep this local ledger when moving your installation. Provider credentials and AI conversation text are never stored in it. Unknown token usage is shown as incomplete rather than estimated.
-
-After updating an existing installation, restart the Bridge so `/profile` is available. For local preview, run `npm run dev` and open `http://localhost:3000/?view=profile` in a paired Mac browser.
+Activity metrics are saved in the local ledger (`bridge/.activity/activity-v1.json`). AI conversation text and provider credentials are never stored.
 
 ## Development
 
