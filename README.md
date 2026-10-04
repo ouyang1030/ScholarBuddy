@@ -111,6 +111,34 @@ The public custom domain is `https://scholarbuddy.tech`, which redirects to `htt
 
 Publishing source code, making a Site public, and connecting a custom domain are separate decisions. A public repository can still back a private Site.
 
+### Independent Cloudflare staging
+
+`npm run deploy:cloudflare:staging` builds and publishes the independent
+`scholarbuddy-staging` Worker in your authenticated Cloudflare account. Run
+`npx wrangler login` first if necessary. This mode uses a `workers.dev` address,
+has no custom-domain routes or database bindings, and skips Sites metadata.
+The existing default build and production domain configuration are preserved.
+It shares the ignored `dist/` output directory, so always use the complete deploy
+command above to rebuild the intended target before publishing.
+
+To check the upload without publishing:
+
+```bash
+npm run build:cloudflare:staging
+npx wrangler deploy --config dist/server/wrangler.json --dry-run
+```
+
+After deployment, append the exact HTTPS origin printed by Wrangler to the local
+`WORKBUDDY_ORIGINS` allowlist, restart the Bridge, and pair the browser from that
+origin. Keep the existing production and local origins. Browser preferences are
+separate for staging. Staging pairs with the same local Bridge and therefore can
+read and change the same vault records; use a separate test vault for destructive
+testing. AI credentials remain local and must not be added to Worker variables.
+
+The staging Worker sends `X-Robots-Tag: noindex, nofollow`; this discourages search
+indexing but is not access control. The unused image optimization route returns
+404 in staging, while the application's static images are served normally.
+
 ## Data and security model
 
 - The Bridge binds only to `127.0.0.1` and validates loopback `Host` headers.

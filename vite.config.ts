@@ -32,7 +32,8 @@ const localBindingConfig = {
     : [],
 };
 
-export default defineConfig(async () => {
+export default defineConfig(async ({ mode }) => {
+  const isCloudflareStaging = mode === "cloudflare-staging";
   // Keep Wrangler and Miniflare state project-local. These are non-secret tool
   // settings; application environment belongs in ignored `.env*` files.
   process.env.WRANGLER_WRITE_LOGS ??= "false";
@@ -48,10 +49,21 @@ export default defineConfig(async () => {
       : undefined,
     plugins: [
       vinext(),
-      sites(),
+      ...(!isCloudflareStaging ? [sites()] : []),
       cloudflare({
         viteEnvironment: { name: "rsc", childEnvironments: ["ssr"] },
-        config: localBindingConfig,
+        config: isCloudflareStaging
+          ? {
+              name: "scholarbuddy-staging",
+              main: "./worker/staging.ts",
+              compatibility_date: "2026-08-20",
+              compatibility_flags: ["nodejs_compat"],
+              workers_dev: true,
+              preview_urls: false,
+              routes: [],
+              assets: { binding: "ASSETS" },
+            }
+          : localBindingConfig,
       }),
     ],
   };
