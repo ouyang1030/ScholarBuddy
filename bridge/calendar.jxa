@@ -60,7 +60,7 @@ function findEvent(calendars, uid) {
 }
 
 function externalMarker(externalId) {
-  return externalId ? `[WorkBuddy-ID:${clean(externalId)}]` : "";
+  return externalId ? `[ScholarBuddy-ID:${clean(externalId)}]` : "";
 }
 
 function findEventByExternalId(calendars, externalId) {
@@ -144,7 +144,7 @@ function run(argv) {
     match.event.summary = payload.title;
     if (payload.notes !== undefined) {
       const currentNotes = clean(match.event.description());
-      const marker = (currentNotes.match(/\[WorkBuddy-ID:[^\]]+\]/) || [""])[0];
+      const marker = (currentNotes.match(/\[ScholarBuddy-ID:[^\]]+\]/) || [""])[0];
       const nextNotes = clean(payload.notes);
       match.event.description = marker && !nextNotes.includes(marker) ? `${nextNotes}\n${marker}`.trim() : nextNotes;
     }

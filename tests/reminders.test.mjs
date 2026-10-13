@@ -152,6 +152,30 @@ async function fixture(t) {
   };
 }
 const sends = (f) => f.calls.filter((item) => item.action === "send");
+test("operations notes that could not be read are named while the rest are still reminded", async (t) => {
+  const f = await fixture(t);
+  const service = createReminderService({
+    ...f.options,
+    readOperations: async () => ({
+      records: [operation],
+      invalid: [
+        {
+          collection: "operations",
+          file: "OPS-HANDMADE.md",
+          reason: "dueDate must be a valid date.",
+        },
+      ],
+    }),
+  });
+  await service.update({ enabled: true }, "https://scholarbuddy.tech");
+  await service.tick();
+  assert.equal(sends(f).length, 1);
+  assert.match(
+    (await service.status()).sourceErrors.operations,
+    /^1 PhD Operations note could not be read/,
+  );
+});
+
 test("defaults off; first enable selects both; restart and concurrent ticks do not repeat", async (t) => {
   const f = await fixture(t);
   assert.deepEqual((await f.service.status()).settings, {
@@ -221,7 +245,7 @@ test("reminder routes require pairing and validate settings; GET never authorize
   const f = await fixture(t);
   const token = "a".repeat(40);
   const config = {
-    WORKBUDDY_ORIGINS: "https://scholarbuddy.tech",
+    SCHOLARBUDDY_ORIGINS: "https://scholarbuddy.tech",
     _bridgeToken: token,
     _reminders: f.service,
   };
@@ -267,7 +291,7 @@ test("settings preflight permits PUT from paired site origins", async () => {
       method: "OPTIONS",
       headers: { origin: "https://scholarbuddy.tech", "access-control-request-method": "PUT" },
     }),
-    { WORKBUDDY_ORIGINS: "https://scholarbuddy.tech" },
+    { SCHOLARBUDDY_ORIGINS: "https://scholarbuddy.tech" },
   );
   assert.equal(response.status, 204);
   assert.match(response.headers.get("access-control-allow-methods"), /PUT/);

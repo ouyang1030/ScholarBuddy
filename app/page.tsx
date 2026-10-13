@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { bridgeFetch, bridgeHealthFetch, exchangeBridgePairingCode } from "./lib/bridge-client";
 import { compareRecords } from "../shared/records.mjs";
 import {
@@ -18,13 +18,14 @@ import type {
   BridgeIssue,
   BridgeStatus,
   CollectionKey,
+  InvalidRecord,
   ModuleKey,
   RecordItem,
   SubmissionSyncResult,
   WorkbenchState,
 } from "./types";
 import { PaperCelebration, type PaperMilestone } from "./components/Celebrations";
-import { SourceDot } from "./components/primitives";
+import { confirmDiscard, SourceDot } from "./components/primitives";
 import { useOverlayFocus } from "./components/useOverlayFocus";
 import { RecordEditor, type EditorState } from "./components/drawers/RecordEditor";
 import { ActionDrawer } from "./components/drawers/ActionDrawer";
@@ -42,7 +43,7 @@ import { OperationsModule } from "./components/modules/OperationsModule";
 import { ProjectsModule } from "./components/modules/ProjectsModule";
 import type { DataProps } from "./lib/workbench";
 
-const READ_SUBMISSION_ALERTS_KEY = "workbuddy-read-submission-alerts-v1";
+const READ_SUBMISSION_ALERTS_KEY = "scholarbuddy-read-submission-alerts-v1";
 
 function storedReadSubmissionAlertKeys() {
   if (typeof window === "undefined") return [];
@@ -81,6 +82,7 @@ function Workbench() {
     }
   }, []);
   const [state, setState] = useState<WorkbenchState>(emptyState);
+  const [invalidRecords, setInvalidRecords] = useState<InvalidRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [dataError, setDataError] = useState("");
   const bridgeIssueRef = useRef<BridgeIssue>(null);
@@ -108,6 +110,16 @@ function Workbench() {
   const paperCelebrationTimerRef = useRef<number | null>(null);
   const stateRequestRef = useRef<AbortController | null>(null);
   const recordMutationsRef = useRef(0);
+  // Esc is handled here for every overlay at once, so the two drawers that can
+  // hold unsaved work report it and the handler knows which one Esc was aimed at.
+  const unsavedRef = useRef({ editor: false, action: false });
+  const topOverlayRef = useRef("");
+  const reportEditorUnsaved = useCallback((unsaved: boolean) => {
+    unsavedRef.current.editor = unsaved;
+  }, []);
+  const reportActionUnsaved = useCallback((unsaved: boolean) => {
+    unsavedRef.current.action = unsaved;
+  }, []);
   const loadState = async () => {
     if (recordMutationsRef.current > 0) return;
     stateRequestRef.current?.abort();
@@ -119,11 +131,16 @@ function Workbench() {
       const response = await bridgeFetch(`/workbench/state`, { signal: controller.signal });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error);
-      const nextState = { ...emptyState, ...body } as WorkbenchState;
+      // Notes the Bridge could not load travel beside the collections, not in them.
+      const { invalid, ...collections } = body as Partial<WorkbenchState> & {
+        invalid?: InvalidRecord[];
+      };
+      const nextState = { ...emptyState, ...collections } as WorkbenchState;
       const activeAlertKeys = new Set(
         submissionAlerts(nextState).map((alert) => submissionAlertKey(alert)),
       );
       setState(nextState);
+      setInvalidRecords(Array.isArray(invalid) ? invalid : []);
       setReadSubmissionAlertKeys((current) => {
         const next = current.filter((key) => activeAlertKeys.has(key));
         if (next.length === current.length) return current;
@@ -240,7 +257,7 @@ function Workbench() {
     setMobileNav(false);
     window.setTimeout(
       () =>
-        window.dispatchEvent(new CustomEvent("workbuddy-capture-focus", { detail: { target } })),
+        window.dispatchEvent(new CustomEvent("scholarbuddy-capture-focus", { detail: { target } })),
       0,
     );
   };
@@ -259,9 +276,15 @@ function Workbench() {
         openCapture("idea");
       }
       if (event.key === "Escape") {
+        // Aimed at a drawer holding unsaved work, Esc asks first; aimed at
+        // something stacked above one, it leaves that work where it is.
+        const top = topOverlayRef.current;
+        const unsaved = unsavedRef.current;
+        if (top === "editor" && unsaved.editor && !confirmDiscard("record")) return;
+        if (top === "action" && unsaved.action && !confirmDiscard("answer")) return;
         setCommandOpen(false);
-        setEditor(null);
-        setAction(null);
+        if (top === "editor" || !unsaved.editor) setEditor(null);
+        if (top === "action" || !unsaved.action) setAction(null);
         setContextOpen(false);
         setConnectionsOpen(false);
         setGuideOpen(false);
@@ -282,8 +305,8 @@ function Workbench() {
   useEffect(() => {
     const requirePairing = () =>
       setToast("Local research sources are offline — Today remains available.");
-    window.addEventListener("workbuddy-pairing-required", requirePairing);
-    return () => window.removeEventListener("workbuddy-pairing-required", requirePairing);
+    window.addEventListener("scholarbuddy-pairing-required", requirePairing);
+    return () => window.removeEventListener("scholarbuddy-pairing-required", requirePairing);
   }, []);
   // Overlays may stack (the AI drawer opens Connections without closing itself),
   // so the topmost one is chosen by stacking order and gets the ref.
@@ -306,6 +329,9 @@ function Workbench() {
                   ? "editor"
                   : "";
   useOverlayFocus(overlayRef, topOverlay);
+  useEffect(() => {
+    topOverlayRef.current = topOverlay;
+  }, [topOverlay]);
   useEffect(() => {
     const params = new URLSearchParams(window.location.hash.slice(1));
     const kind = params.get("reminder");
@@ -367,7 +393,7 @@ function Workbench() {
     let celebrated: string[] = [];
     try {
       const stored = JSON.parse(
-        window.localStorage.getItem("workbuddy-paper-celebrations-v1") || "[]",
+        window.localStorage.getItem("scholarbuddy-paper-celebrations-v1") || "[]",
       );
       if (Array.isArray(stored))
         celebrated = stored.filter((item): item is string => typeof item === "string");
@@ -377,7 +403,7 @@ function Workbench() {
     const key = `${id}:${milestone.toLowerCase()}`;
     if (celebrated.includes(key)) return;
     window.localStorage.setItem(
-      "workbuddy-paper-celebrations-v1",
+      "scholarbuddy-paper-celebrations-v1",
       JSON.stringify([...new Set([...celebrated, key])].slice(-300)),
     );
     if (paperCelebrationTimerRef.current) window.clearTimeout(paperCelebrationTimerRef.current);
@@ -736,6 +762,26 @@ function Workbench() {
                 <button onClick={loadState}>Retry</button>
               </div>
             )}
+            {active !== "profile" && invalidRecords.length > 0 && (
+              <details className="data-banner compact-banner invalid-records">
+                <summary>
+                  {invalidRecords.length === 1
+                    ? "1 note in your vault could not be loaded."
+                    : `${invalidRecords.length} notes in your vault could not be loaded.`}{" "}
+                  Everything else is shown as usual.
+                </summary>
+                <ul>
+                  {invalidRecords.map((item) => (
+                    <li key={`${item.collection}/${item.file}`}>
+                      <code>
+                        ScholarBuddy/{item.collection}/{item.file}
+                      </code>{" "}
+                      — {item.reason}
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            )}
             {active !== "profile" && loading && !Object.values(state).flat().length && (
               <div className="loading-bar">
                 <i />
@@ -802,6 +848,7 @@ function Workbench() {
           onClose={() => setEditor(null)}
           onSave={saveRecord}
           onDelete={deleteRecord}
+          onUnsavedChange={reportEditorUnsaved}
         />
       )}
       {action && (
@@ -813,6 +860,7 @@ function Workbench() {
           saveRecord={saveRecord}
           onClose={() => setAction(null)}
           openConnections={() => setConnectionsOpen(true)}
+          onUnsavedChange={reportActionUnsaved}
         />
       )}
       {contextOpen && (

@@ -5,7 +5,7 @@ import { localDateKey, shortDate } from "../../lib/format";
 import type { DataProps } from "../../lib/workbench";
 import type { RecordItem } from "../../types";
 
-const DRAFT_KEY = "workbuddy-journal-draft-v1";
+const DRAFT_KEY = "scholarbuddy-journal-draft-v1";
 
 // The Bridge requires a title, but asking for one would turn the capture box
 // into a form. The first line is the title; the whole text stays as the body.
@@ -58,8 +58,8 @@ export function JournalPanel({
       if ((event as CustomEvent<{ target?: string }>).detail?.target !== "journal") return;
       boxRef.current?.focus();
     };
-    window.addEventListener("workbuddy-capture-focus", focus);
-    return () => window.removeEventListener("workbuddy-capture-focus", focus);
+    window.addEventListener("scholarbuddy-capture-focus", focus);
+    return () => window.removeEventListener("scholarbuddy-capture-focus", focus);
   }, []);
   const save = async () => {
     const body = text.trim();

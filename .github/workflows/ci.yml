@@ -19,6 +19,11 @@ jobs:
           node-version: 22.13.0
           cache: npm
       - run: npm ci
+      # Only what ships: the development toolchain has advisories with no compatible fix.
+      - run: npm audit --omit=dev --audit-level=high
       - run: npm run format:check
       - run: npm run lint
+      - run: npm run typecheck
       - run: npm test
+      # `npm test` builds with Vinext; this is the build production serves.
+      - run: npm run build:next

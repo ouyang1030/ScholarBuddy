@@ -28,7 +28,6 @@ const stringFields = new Set([
   "pageLabel",
   "sourceTitle",
   "citationKey",
-  "workbuddyKeywords",
   "usedAt",
   "linkedAt",
   "manuscriptId",
@@ -119,6 +118,35 @@ function validateReference(value) {
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(value)) invalid("A linked record id is invalid.");
 }
 
+// A stored note is also edited by hand and by Obsidian itself, which writes
+// `year: 2024` and a one-author list as a bare string. Reading accepts what
+// plainly means the same thing; writing through decodeRecord stays strict.
+export function coerceStoredRecord(value) {
+  const record = { ...value };
+  for (const [field, fieldValue] of Object.entries(record)) {
+    if (stringFields.has(field)) {
+      if (typeof fieldValue === "number" || typeof fieldValue === "boolean")
+        record[field] = String(fieldValue);
+      // A title typed as `[Draft]` is text, even though YAML reads it as a list.
+      else if (Array.isArray(fieldValue) && fieldValue.every((item) => typeof item !== "object"))
+        record[field] = `[${fieldValue.join(", ")}]`;
+    } else if (numberFields.has(field)) {
+      if (typeof fieldValue === "string" && fieldValue.trim() && Number.isFinite(+fieldValue))
+        record[field] = Number(fieldValue);
+    } else if (booleanFields.has(field)) {
+      if (fieldValue === "true" || fieldValue === "false") record[field] = fieldValue === "true";
+    } else if (stringArrayFields.has(field)) {
+      if (typeof fieldValue === "string")
+        record[field] = fieldValue.trim() ? [fieldValue.trim()] : [];
+      else if (Array.isArray(fieldValue))
+        record[field] = fieldValue.map((item) =>
+          typeof item === "number" || typeof item === "boolean" ? String(item) : item,
+        );
+    }
+  }
+  return record;
+}
+
 // Validate the fields ScholarBuddy actually depends on. Other frontmatter is
 // preserved so Obsidian plugins and future features can extend a record without
 // requiring a schema release first.
@@ -183,5 +211,3 @@ export function decodeRecord(collection, value) {
     invalid("Unsupported submission status.");
   return record;
 }
-
-export const validateRecord = decodeRecord;

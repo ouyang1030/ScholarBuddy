@@ -19,9 +19,11 @@ function run(argv) {
   // Let Mail filter by date instead of materialising the whole inbox and
   // trusting its return order; fall back when the predicate is unsupported.
   let messages;
+  let dated = true;
   try {
     messages = Mail.inbox.messages.whose({ dateReceived: { _greaterThan: since } })();
   } catch (_) {
+    dated = false;
     messages = Mail.inbox.messages();
   }
   const results = [];
@@ -45,5 +47,11 @@ function run(argv) {
   }
 
   results.sort((a, b) => a.receivedAt.localeCompare(b.receivedAt));
-  return JSON.stringify({ messages: results });
+  // Whether the scan stopped at the ceiling, and — only when Mail filtered by
+  // date, so that the list is the window itself — how many messages lay beyond it.
+  return JSON.stringify({
+    messages: results,
+    limited: messages.length > ceiling,
+    unchecked: dated ? Math.max(0, messages.length - ceiling) : null,
+  });
 }

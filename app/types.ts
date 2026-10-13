@@ -51,7 +51,6 @@ export type RecordItem = {
   zoteroTags?: string[];
   sourceTitle?: string;
   citationKey?: string;
-  workbuddyKeywords?: string;
   usedAt?: string;
   linkedAt?: string;
   manuscriptId?: string;
@@ -109,6 +108,8 @@ export type WorkbenchState = {
   "submission-attempts": RecordItem[];
   "submission-events": RecordItem[];
 };
+// A note the Bridge found in a collection folder but could not load as a record.
+export type InvalidRecord = { collection: CollectionKey; file: string; reason: string };
 
 export type ZoteroItem = {
   key: string;
@@ -176,7 +177,13 @@ export type WorkflowResult = {
   sources: { zotero: ZoteroItem[]; obsidian: { title: string; path: string; snippet: string }[] };
   retrieval: Record<
     "zotero" | "obsidian" | "calendar",
-    { selected: boolean; status: "disabled" | "ok" | "no_match" | "error"; error: string | null }
+    {
+      selected: boolean;
+      status: "disabled" | "ok" | "no_match" | "error";
+      error: string | null;
+      /** Set when the source was only searched in part. */
+      partial?: string;
+    }
   >;
   manifest: {
     zotero: {
@@ -245,6 +252,8 @@ export type SubmissionEmailCandidate = {
 };
 export type SubmissionSyncResult = {
   scanned: number;
+  /** Set when the inbox scan stopped before it had looked at everything recent. */
+  partial?: string;
   updated: RecordItem[];
   verified?: number;
   pending: SubmissionEmailCandidate[];

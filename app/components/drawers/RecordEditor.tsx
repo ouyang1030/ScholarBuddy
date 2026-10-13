@@ -11,7 +11,7 @@ import {
   statusOptions,
 } from "../../lib/workbench";
 import type { CollectionKey, RecordItem, WorkbenchState } from "../../types";
-import { closeWithTransition, DrawerHeader, SaveFeedback } from "../primitives";
+import { closeWithTransition, DrawerHeader, SaveFeedback, useUnsavedWork } from "../primitives";
 
 export type EditorState = { collection: CollectionKey; record?: Partial<RecordItem> } | null;
 export function RecordEditor({
@@ -20,6 +20,7 @@ export function RecordEditor({
   onClose,
   onSave,
   onDelete,
+  onUnsavedChange,
   ref,
 }: {
   editor: NonNullable<EditorState>;
@@ -30,6 +31,7 @@ export function RecordEditor({
     collection: CollectionKey,
     record: Pick<RecordItem, "id" | "version" | "contentHash">,
   ) => Promise<void>;
+  onUnsavedChange?: (unsaved: boolean) => void;
   ref?: React.Ref<HTMLElement>;
 }) {
   const isJournal = editor.collection === "journal";
@@ -65,8 +67,16 @@ export function RecordEditor({
   useEffect(() => () => window.clearTimeout(closeTimerRef.current), []);
   const [error, setError] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
+  // Only what the researcher typed counts: the defaults a new record opens with
+  // are not work that closing the drawer could lose.
+  const [edited, setEdited] = useState(false);
+  const edit = (change: (current: Partial<RecordItem>) => Partial<RecordItem>) => {
+    setEdited(true);
+    setForm(change);
+  };
+  const canDismiss = useUnsavedWork("record", edited && !saved, onUnsavedChange);
   const set = (key: keyof RecordItem, value: string | number | boolean) =>
-    setForm((current) => ({ ...current, [key]: value }));
+    edit((current) => ({ ...current, [key]: value }));
   const save = async () => {
     const feedback = String(form.description || "").trim();
     if (isPaperWorkItem && !feedback) {
@@ -192,7 +202,9 @@ export function RecordEditor({
   return (
     <div
       className="drawer-backdrop"
-      onMouseDown={(event) => closeWithTransition(onClose, event.currentTarget)}
+      onMouseDown={(event) => {
+        if (canDismiss()) closeWithTransition(onClose, event.currentTarget);
+      }}
     >
       <aside
         ref={ref}
@@ -247,7 +259,7 @@ export function RecordEditor({
                   onChange={(event) => {
                     const nextStatus = event.target.value;
                     if (isSubmissionAttempt && !existing) {
-                      setForm((current) => ({
+                      edit((current) => ({
                         ...current,
                         status: nextStatus,
                         submittedAt:
@@ -258,7 +270,7 @@ export function RecordEditor({
                       return;
                     }
                     if (showProgress && CLOSED_RECORD_STATUSES.includes(nextStatus)) {
-                      setForm((current) => ({ ...current, status: nextStatus, progress: 100 }));
+                      edit((current) => ({ ...current, status: nextStatus, progress: 100 }));
                     } else {
                       set("status", nextStatus);
                     }

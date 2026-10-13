@@ -13,10 +13,13 @@ Thank you for helping improve ScholarBuddy.
 
 ```bash
 npm install
-npm run setup
+npm run setup -- --dev
 npm run lint
+npm run typecheck
 npm test
 ```
+
+`--dev` lets the local development servers use your Bridge; a plain `npm run setup` trusts only the hosted origins.
 
 Add tests for changed behavior. Bridge write routes must retain exact-origin checks, pairing authentication, input limits, and safe filesystem boundaries. Platform-specific features should fail gracefully when unavailable.
 

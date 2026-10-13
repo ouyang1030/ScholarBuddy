@@ -16,14 +16,28 @@ Each provider card can test the exact model ID currently in its fields with one 
 - `GEMINI_API_KEY`, `GEMINI_BASE_URL`, and `GEMINI_MODEL` for Google Gemini.
 - `OBSIDIAN_VAULT_PATH` for Markdown search and `ScholarBuddy/` record writes.
 - `ZOTERO_LOCAL_URL` for the Zotero Desktop Local API.
-- `WORKBUDDY_ORIGINS`, a comma-separated exact-origin allowlist.
-- `NEXT_PUBLIC_WORKBUDDY_BRIDGE_PORT`, shared by the browser build and Bridge.
+- `SCHOLARBUDDY_ORIGINS`, a comma-separated exact-origin allowlist.
+- `NEXT_PUBLIC_SCHOLARBUDDY_BRIDGE_PORT`, shared by the browser build and Bridge.
 - Optional concurrency, request, token, and output limits documented in `.env.local.example`.
 
-Do not use wildcard origins. Add the deployed `https://` origin exactly, restart the Bridge, and pair once on that browser origin.
+Do not use wildcard origins. Add the deployed `https://` origin exactly, restart the Bridge, and pair once on that browser origin. Plain `http` is accepted only for this computer's own `localhost` or `127.0.0.1`; anything else is ignored, and the Bridge says so on startup. Development servers are not in the default allowlist: `npm run setup -- --dev` adds `http://localhost:3000`, `:5173`, and `:4173`.
 The project default includes `https://scholarbuddy.tech`, `https://www.scholarbuddy.tech`, and the fixed backup `https://scholarbuddy-eta.vercel.app`. The bare custom domain redirects to `www`, so pair there and separately at the Vercel backup address with a fresh code. Both paired origins access the same local research data.
 
-Existing `.env.local` files are preserved by setup. To enable the backup for an existing installation, append its exact HTTPS origin to `WORKBUDDY_ORIGINS` and restart the Bridge (`npm run bridge:install` for the macOS background service). Open the backup site's Connections drawer and use **Open local pairing page** to get a new code. Pairing in advance allows switching to the backup without relying on the custom domain; browser preferences and unsaved drafts remain separate.
+Existing `.env.local` files are preserved by setup. To enable the backup for an existing installation, append its exact HTTPS origin to `SCHOLARBUDDY_ORIGINS` and restart the Bridge (`npm run bridge:install` for the macOS background service). Open the backup site's Connections drawer and use **Open local pairing page** to get a new code. Pairing in advance allows switching to the backup without relying on the custom domain; browser preferences and unsaved drafts remain separate.
+
+## Layout
+
+`server.mjs` is the entry point: configuration, the router, the HTTP transport, and the
+command-line switches. Each concern it routes to has its own module:
+
+- `access.mjs`, `grants.mjs` — allowed origins, per-site credentials, pairing codes, the setup session.
+- `records.mjs`, `record-schema.mjs` — records as Markdown files: parsing, validation, concurrency, history.
+- `submissions.mjs` — the submission tracker and its mail-driven status changes.
+- `zotero.mjs`, `vault-search.mjs`, `search-terms.mjs` — the library, the vault, and how a query becomes terms.
+- `providers.mjs`, `ai-run.mjs`, `prompts.mjs` — provider protocols, and a workflow run from retrieval to audited answer.
+- `macos.mjs`, `reminders.mjs`, `reminder-rules.mjs`, `reminder-native.mjs` — Calendar, Mail, and notifications.
+- `status.mjs`, `setup.mjs`, `setup-page.mjs`, `local-settings.mjs` — connection status and the loopback setup page.
+- `http.mjs`, `config.mjs`, `atomic-file.mjs`, `activity-store.mjs` — shared plumbing.
 
 ## Running
 
@@ -31,7 +45,7 @@ Use `npm run bridge` in a terminal. On macOS, `npm run setup` or `npm run bridge
 
 Open `http://127.0.0.1:32145/setup` directly in Safari or Chrome to manage local connections. Setup writes require an expiring same-origin session created by that page. Public websites are not allowed to read saved secrets or call its configuration routes.
 
-The service binds only to `127.0.0.1`. Pairing uses a five-minute, one-time code. The exchanged bearer token is saved only in the paired browser's local storage. Rotate it with `npm run bridge:token:rotate` if access should be revoked.
+The service binds only to `127.0.0.1`. Pairing uses a five-minute, one-time code. The exchanged credential belongs to the site that redeemed the code and is saved only in that browser's local storage; the Bridge keeps a hash in the ignored `bridge/.scholarbuddy-grants.json`. Review, limit, or revoke paired browsers on the setup page, or revoke all of them with `npm run bridge:token:rotate` if access should be revoked.
 
 ## Local integrations
 
@@ -51,9 +65,10 @@ updated web interface before editing. An older browser receives a reload error
 instead of overwriting an external Obsidian edit. Existing Markdown needs no migration.
 The hash check is optimistic concurrency protection, not a lock on Obsidian or sync tools.
 
-An empty or malformed Bridge token now stops startup. For a damaged generated token,
-run `npm run bridge:token:rotate` and restart/re-pair as instructed. If
-`WORKBUDDY_BRIDGE_TOKEN` is explicitly set, correct that configuration value instead.
+Credentials are per site and kept as hashes in `bridge/.scholarbuddy-grants.json`. A
+list that cannot be read is treated as empty, so every browser pairs again rather than
+any being trusted by mistake. An explicitly set `SCHOLARBUDDY_BRIDGE_TOKEN` keeps a
+single fixed credential instead; if it is empty or malformed the Bridge refuses to start.
 
 AI follow-ups resend the original evidence snapshot with each provider request,
 including after older conversation turns are trimmed. This increases follow-up input
@@ -70,9 +85,13 @@ The HTTP transport rejects non-loopback Host headers before routing, including t
 setup and pairing pages. Provider errors returned to the browser contain a status
 and recognized diagnostic code, not arbitrary upstream messages. Local diagnostic
 logs redact the exact credential used for the request, including draft setup keys.
-The token rotation command now refuses to change the token file when
-`WORKBUDDY_BRIDGE_TOKEN` is present in local configuration or the process environment;
-it reports how to change the active credential instead of claiming revocation.
+The token rotation command revokes every paired browser. It refuses to act when
+`SCHOLARBUDDY_BRIDGE_TOKEN` is present in local configuration or the process environment,
+and reports how to change that credential instead of claiming a revocation.
+
+`/status` sends a provider key to its provider only when a check is asked for
+(`?fresh=1`, which **Test again** uses). The periodic poll reports a saved key as
+configured, or repeats the verdict of the last check made with that same key.
 
 ## Reminder runtime
 

@@ -1,6 +1,33 @@
 "use client";
 
+import { useEffect } from "react";
 import { clampProgress } from "../lib/format";
+
+const discardQuestions = {
+  record: "Discard the unsaved changes to this record?",
+  answer: "Close this workflow? Its answer has not been saved.",
+};
+export type UnsavedWork = keyof typeof discardQuestions;
+export function confirmDiscard(work: UnsavedWork) {
+  return window.confirm(discardQuestions[work]);
+}
+
+/**
+ * Esc and a click on the backdrop are easy to hit by accident; the close button
+ * and Cancel are not. A drawer holding unsaved work asks before the accidental
+ * routes discard it, and tells the shell — which owns Esc — that it holds any.
+ */
+export function useUnsavedWork(
+  work: UnsavedWork,
+  unsaved: boolean,
+  report?: (unsaved: boolean) => void,
+) {
+  useEffect(() => {
+    report?.(unsaved);
+    return () => report?.(false);
+  }, [report, unsaved]);
+  return () => !unsaved || confirmDiscard(work);
+}
 
 export function closeWithTransition(onClose: () => void, backdrop?: Element | null) {
   if (!document.startViewTransition) {

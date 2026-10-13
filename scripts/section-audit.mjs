@@ -1,7 +1,7 @@
 // Reports how often a Zotero highlight can be placed in a manuscript section
 // from the full-text index, so the heading vocabulary is tuned against the
 // real library instead of guessed at. Run with: node scripts/section-audit.mjs
-import { detectPassageSection, fulltextIndex } from "../bridge/server.mjs";
+import { detectPassageSection, fulltextIndex } from "../bridge/zotero.mjs";
 
 const base = process.env.ZOTERO_LOCAL_URL || "http://127.0.0.1:23119";
 const get = async (pathname) => {

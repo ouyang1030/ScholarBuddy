@@ -9,13 +9,13 @@ const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".
 const templatePath = path.join(
   repository,
   "bridge",
-  "com.workbuddy.research-bridge.plist.template",
+  "tech.scholarbuddy.research-bridge.plist.template",
 );
 const agentsDirectory = path.join(os.homedir(), "Library", "LaunchAgents");
-const logsDirectory = path.join(os.homedir(), "Library", "Logs", "WorkBuddy");
-const plistPath = path.join(agentsDirectory, "com.workbuddy.research-bridge.plist");
+const logsDirectory = path.join(os.homedir(), "Library", "Logs", "ScholarBuddy");
+const plistPath = path.join(agentsDirectory, "tech.scholarbuddy.research-bridge.plist");
 const userId = typeof process.getuid === "function" ? process.getuid() : 0;
-const serviceTarget = `gui/${userId}/com.workbuddy.research-bridge`;
+const serviceTarget = `gui/${userId}/tech.scholarbuddy.research-bridge`;
 
 if (process.platform !== "darwin") {
   process.stderr.write(

@@ -1,6 +1,7 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import { writeFileAtomic } from "./atomic-file.mjs";
 import {
   reminderDefaults,
   reminderCandidates,
@@ -20,6 +21,11 @@ export function createReminderService({
   let timer;
   let lastError = "";
   let sourceErrors = {};
+  // Reading permissions launches the helper app, and the settings panel polls.
+  // Once everything is granted the answer is reused for a minute; while something
+  // is still missing every poll asks again, so a fix in System Settings shows at once.
+  let permissions = null;
+  const PERMISSIONS_TTL_MS = 60_000;
   const serialize = (fn) => {
     const result = tail.then(fn);
     tail = result.catch(() => {});
@@ -56,9 +62,7 @@ export function createReminderService({
   }
   async function save() {
     await mkdir(directory, { recursive: true, mode: 0o700 });
-    const temp = `${file}.${randomUUID()}.tmp`;
-    await writeFile(temp, JSON.stringify(state), { mode: 0o600 });
-    await rename(temp, file);
+    await writeFileAtomic(file, JSON.stringify(state));
   }
   async function tick() {
     await load();
@@ -70,7 +74,14 @@ export function createReminderService({
     // A failed calendar read must not suppress valid Operation reminders.
     if (state.settings.operations) {
       try {
-        operations = await readOperations();
+        // The notes that loaded still get their reminders. The ones that did not
+        // are reported here, because nobody is warned about a deadline in a note
+        // the Bridge could not read.
+        const read = await readOperations();
+        operations = Array.isArray(read) ? read : read.records;
+        const unread = Array.isArray(read) ? 0 : read.invalid.length;
+        if (unread)
+          sourceErrors.operations = `${unread === 1 ? "1 PhD Operations note" : `${unread} PhD Operations notes`} could not be read and will not be reminded. ScholarBuddy lists them at the top of the workbench.`;
       } catch {
         sourceErrors.operations = "PhD Operations could not be read. Check your vault connection.";
       }
@@ -145,13 +156,19 @@ export function createReminderService({
     status: () =>
       serialize(async () => {
         await load();
-        let permissions;
-        try {
-          permissions = await native("status");
-        } catch {
-          permissions = { permission: "unavailable", calendarPermission: "unavailable" };
+        if (!permissions || +clock() - permissions.at >= PERMISSIONS_TTL_MS) {
+          let value;
+          try {
+            value = await native("status");
+          } catch {
+            value = { permission: "unavailable", calendarPermission: "unavailable" };
+          }
+          const settled =
+            value.permission === "granted" &&
+            (!state.settings.calendar || value.calendarPermission === "granted");
+          permissions = { at: settled ? +clock() : -Infinity, value };
         }
-        return { settings: state.settings, ...permissions, error: lastError, sourceErrors };
+        return { settings: state.settings, ...permissions.value, error: lastError, sourceErrors };
       }),
     update: (patch, siteUrl) =>
       serialize(async () => {
@@ -179,6 +196,7 @@ export function createReminderService({
           // Authorization is requested only from an explicit user action.
           await native("authorize", { calendar: settings.calendar });
         }
+        permissions = null;
         state.settings = settings;
         state.siteUrl = siteUrl;
         state.outbox = null;

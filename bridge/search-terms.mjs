@@ -112,3 +112,16 @@ export function topicTerms(text, limit = 8) {
 }
 
 export { SYNONYM_GROUPS, STOPWORDS };
+
+// The words of a query worth searching for, in the order they were asked.
+export function queryTerms(query) {
+  return [
+    ...new Set(
+      String(query || "")
+        .toLowerCase()
+        .split(/[^\p{L}\p{N}_-]+/u)
+        // Two Han characters already carry a word; two Latin letters do not.
+        .filter((term) => term.length > 2 || (term.length === 2 && /\p{Script=Han}/u.test(term))),
+    ),
+  ].slice(0, 12);
+}

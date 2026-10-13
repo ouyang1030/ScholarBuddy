@@ -1,67 +1,31 @@
-/** Cloudflare Worker entry point for the vinext-starter template. */
-import {
-  handleImageOptimization,
-  DEFAULT_DEVICE_SIZES,
-  DEFAULT_IMAGE_SIZES,
-} from "vinext/server/image-optimization";
+/** Cloudflare Worker entry point for the Vinext build. */
 import handler from "vinext/server/app-router-entry";
-import { SECURITY_HEADERS } from "../shared/security-headers.mjs";
+import { SECURITY_HEADERS, contentSecurityPolicy } from "../shared/security-headers.mjs";
 
-interface Fetcher {
-  fetch(request: Request): Promise<Response>;
-}
-
-interface Env {
-  ASSETS: Fetcher;
-  IMAGES: {
-    input(stream: ReadableStream): {
-      transform(options: Record<string, unknown>): {
-        output(options: { format: string; quality: number }): Promise<{ response(): Response }>;
-      };
-    };
-  };
-}
+type HandlerArguments = Parameters<typeof handler.fetch>;
 
 function secure(response: Response): Response {
   const secured = new Response(response.body, response);
   for (const [name, value] of Object.entries(SECURITY_HEADERS)) secured.headers.set(name, value);
+  // A page arrives carrying the policy proxy.ts minted for it, nonce included.
+  // Anything that did not pass through the proxy gets the policy with no nonce,
+  // which allows no inline script at all.
+  if (!secured.headers.has("Content-Security-Policy"))
+    secured.headers.set("Content-Security-Policy", contentSecurityPolicy());
   return secured;
 }
 
-interface ExecutionContext {
-  waitUntil(promise: Promise<unknown>): void;
-  passThroughOnException(): void;
-}
-
-// Image security config. SVG sources with .svg extension auto-skip the
-// optimization endpoint on the client side (served directly, no proxy).
-// To route SVGs through the optimizer (with security headers), set
-// dangerouslyAllowSVG: true in next.config.js and uncomment below:
-// const imageConfig: ImageConfig = { dangerouslyAllowSVG: true };
-
 const worker = {
-  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-    const url = new URL(request.url);
-
-    if (url.pathname === "/_vinext/image") {
-      const allowedWidths = [...DEFAULT_DEVICE_SIZES, ...DEFAULT_IMAGE_SIZES];
-      return secure(
-        await handleImageOptimization(
-          request,
-          {
-            fetchAsset: (path) => env.ASSETS.fetch(new Request(new URL(path, request.url))),
-            transformImage: async (body, { width, format, quality }) => {
-              const result = await env.IMAGES.input(body)
-                .transform(width > 0 ? { width } : {})
-                .output({ format, quality });
-              return result.response();
-            },
-          },
-          allowedWidths,
-        ),
-      );
-    }
-
+  async fetch(
+    request: Request,
+    env: HandlerArguments[1],
+    ctx: HandlerArguments[2],
+  ): Promise<Response> {
+    // The interface ships its images as static files, so the image optimisation
+    // route — which needs a paid Images binding no deployment here provisions —
+    // is not served at all.
+    if (new URL(request.url).pathname === "/_vinext/image")
+      return secure(new Response("Not found", { status: 404 }));
     return secure(await handler.fetch(request, env, ctx));
   },
 };

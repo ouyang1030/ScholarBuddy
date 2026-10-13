@@ -60,11 +60,10 @@ next-env.d.ts
 /dist/
 /outputs/
 /work/
-/bridge/.workbuddy-token
 *.db
 *.sqlite
 *.sqlite3
 
-/bridge/.notifications/
-
-/bridge/.activity/
+# Everything the Bridge keeps on this machine — paired browsers, the reminder
+# helper and its state, the activity ledger — is dot-prefixed and never committed.
+/bridge/.*

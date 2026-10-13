@@ -23,6 +23,7 @@ export function PassageLibrary({
   const [error, setError] = useState("");
   const [copied, setCopied] = useState("");
   const [notice, setNotice] = useState("");
+  const [coverage, setCoverage] = useState("");
   const [paperIds, setPaperIds] = useState<Record<string, string>>({});
   const [sections, setSections] = useState<Record<string, string>>({});
   const [keywords, setKeywords] = useState<Record<string, string>>({});
@@ -34,6 +35,14 @@ export function PassageLibrary({
       const body = await response.json();
       if (!response.ok) throw new Error(body.error || "Passages could not be loaded.");
       setPassages(body.passages || []);
+      // Only the most recently changed highlights are read; say so when there are more.
+      setCoverage(
+        body.truncated
+          ? body.total > body.limit
+            ? `Showing the ${body.limit} most recently changed of ${body.total} Zotero annotations.`
+            : `Showing the ${body.limit} most recently changed Zotero annotations; older ones are not listed.`
+          : "",
+      );
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Passages could not be loaded.");
     } finally {
@@ -59,7 +68,7 @@ export function PassageLibrary({
           passage.creators.join(" "),
           passage.year,
           passage.tags.join(" "),
-          saved?.workbuddyKeywords,
+          saved?.keywords,
         ]
           .join(" ")
           .toLowerCase();
@@ -98,7 +107,7 @@ export function PassageLibrary({
         creators: passage.creators,
         year: passage.year,
         citationKey: passage.citationKey,
-        workbuddyKeywords: keywords[passage.key] ?? existing?.workbuddyKeywords ?? "",
+        keywords: keywords[passage.key] ?? existing?.keywords ?? "",
         manuscriptId,
         manuscriptTitle: manuscript?.title || "",
         manuscriptSection: sections[passage.key] || existing?.manuscriptSection || auto.section,
@@ -196,6 +205,7 @@ export function PassageLibrary({
           </div>
         </div>
       </div>
+      {coverage && <p className="panel-notice">{coverage}</p>}
       {notice && (
         <p className="panel-notice" role="alert">
           {notice}
@@ -317,7 +327,7 @@ export function PassageLibrary({
                   <label>
                     <span>Keywords</span>
                     <input
-                      value={keywords[passage.key] ?? saved?.workbuddyKeywords ?? ""}
+                      value={keywords[passage.key] ?? saved?.keywords ?? ""}
                       onChange={(event) =>
                         setKeywords((current) => ({
                           ...current,

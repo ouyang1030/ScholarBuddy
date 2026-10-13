@@ -2,11 +2,18 @@ import { copyFile, readFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseEnv } from "../bridge/local-settings.mjs";
+import { parseEnv, updateLocalConfig } from "../bridge/local-settings.mjs";
 
 const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const source = path.join(repository, ".env.local.example");
 const target = path.join(repository, ".env.local");
+// Whatever is listening on these ports may use the Bridge, so an installation
+// only trusts them when a contributor asks for it with `--dev`.
+const developmentOrigins = [
+  "http://localhost:3000",
+  "http://localhost:5173",
+  "http://localhost:4173",
+];
 
 try {
   await readFile(target, "utf8");
@@ -15,6 +22,18 @@ try {
   if (error?.code !== "ENOENT") throw error;
   await copyFile(source, target);
   process.stdout.write("Created .env.local from the safe example.\n");
+}
+
+if (process.argv.includes("--dev")) {
+  const current = parseEnv(await readFile(target, "utf8")).SCHOLARBUDDY_ORIGINS || "";
+  const origins = current
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+  await updateLocalConfig(target, {
+    SCHOLARBUDDY_ORIGINS: [...new Set([...origins, ...developmentOrigins])].join(","),
+  });
+  process.stdout.write(`Allowed local development origins: ${developmentOrigins.join(", ")}.\n`);
 }
 
 if (process.platform === "darwin") {
@@ -33,8 +52,8 @@ if (process.platform === "darwin") {
     process.stdout.write(installer.stdout);
     const localConfig = parseEnv(await readFile(target, "utf8"));
     const port = Number(
-      process.env.NEXT_PUBLIC_WORKBUDDY_BRIDGE_PORT ||
-        localConfig.NEXT_PUBLIC_WORKBUDDY_BRIDGE_PORT ||
+      process.env.NEXT_PUBLIC_SCHOLARBUDDY_BRIDGE_PORT ||
+        localConfig.NEXT_PUBLIC_SCHOLARBUDDY_BRIDGE_PORT ||
         32145,
     );
     const setupUrl = `http://127.0.0.1:${Number.isInteger(port) ? port : 32145}/setup?return=${encodeURIComponent("https://scholarbuddy.tech")}`;

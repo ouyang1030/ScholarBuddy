@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import type { DataProps } from "../../lib/workbench";
 import type { RecordItem } from "../../types";
 
-const DRAFT_KEY = "workbuddy-idea-draft-v1";
+const DRAFT_KEY = "scholarbuddy-idea-draft-v1";
 
 export function IdeaInboxPanel({
   state,
@@ -32,8 +32,8 @@ export function IdeaInboxPanel({
       if ((event as CustomEvent<{ target?: string }>).detail?.target !== "idea") return;
       inputRef.current?.focus();
     };
-    window.addEventListener("workbuddy-capture-focus", focus);
-    return () => window.removeEventListener("workbuddy-capture-focus", focus);
+    window.addEventListener("scholarbuddy-capture-focus", focus);
+    return () => window.removeEventListener("scholarbuddy-capture-focus", focus);
   }, []);
   const run = async (key: string, work: () => Promise<unknown>) => {
     if (busy) return;

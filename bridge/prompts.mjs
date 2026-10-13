@@ -30,13 +30,24 @@ export function systemPrompt(command) {
   return [BASE_SYSTEM, brief, ACTION_CONTRACT].filter(Boolean).join("\n\n");
 }
 
+// An answer is written into the vault, and Obsidian fetches whatever a note
+// embeds. A source that talked the model into emitting an image whose address
+// carries a summary of the other sources would leak them the moment the note was
+// opened. Embeds become plain links and every HTML tag becomes text — listing the
+// tags that load something would always be one short. Both stay readable.
+export function neutralizeRemoteMedia(text) {
+  return String(text || "")
+    .replace(/!(?=\[)/g, "")
+    .replace(/<(?=[A-Za-z/!?])/g, "&lt;");
+}
+
 const ACTION_BLOCK = /```scholarbuddy-actions\s*([\s\S]*?)```/i;
 const SEVERITIES = new Set(["Critical", "Major", "Minor"]);
 
 // The block is generated text, so nothing from it is trusted beyond the shape
 // declared above: unknown fields are dropped and every string is bounded.
 export function parseActions(output) {
-  const text = String(output || "");
+  const text = neutralizeRemoteMedia(output);
   const match = text.match(ACTION_BLOCK);
   if (!match) return { output: text.trim(), actions: [] };
   const clean = text.replace(ACTION_BLOCK, "").trim();

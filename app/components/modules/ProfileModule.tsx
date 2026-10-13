@@ -128,13 +128,13 @@ export function ProfileModule({
       read();
     };
     refresh();
-    window.addEventListener("workbuddy-focus-ledger", read);
-    window.addEventListener("workbuddy-profile-refresh", refresh);
+    window.addEventListener("scholarbuddy-focus-ledger", read);
+    window.addEventListener("scholarbuddy-profile-refresh", refresh);
     window.addEventListener("focus", refresh);
     return () => {
       cancelled = true;
-      window.removeEventListener("workbuddy-focus-ledger", read);
-      window.removeEventListener("workbuddy-profile-refresh", refresh);
+      window.removeEventListener("scholarbuddy-focus-ledger", read);
+      window.removeEventListener("scholarbuddy-profile-refresh", refresh);
       window.removeEventListener("focus", refresh);
     };
   }, [load]);

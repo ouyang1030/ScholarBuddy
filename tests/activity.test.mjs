@@ -6,7 +6,8 @@ import path from "node:path";
 import { dayKey, focusDays, activitySeries, streaks } from "../shared/activity.mjs";
 import { createActivityStore } from "../bridge/activity-store.mjs";
 import { normalizeUsage } from "../bridge/usage-normalizer.mjs";
-import { handle, streamDelta, modelResponse } from "../bridge/server.mjs";
+import { modelResponse, streamDelta } from "../bridge/providers.mjs";
+import { handle } from "../bridge/server.mjs";
 const segment = (id, start, end, revision = 1) => ({
   segmentId: id,
   startedAt: start,
@@ -202,7 +203,11 @@ test("profile routes require pairing and persist focus without a vault or Calend
   const { directory } = await fixture(t);
   const origin = "http://localhost:3000",
     token = "test-activity-token-with-at-least-32-characters";
-  const config = { WORKBUDDY_ORIGINS: origin, _bridgeToken: token, _activityDirectory: directory };
+  const config = {
+    SCHOLARBUDDY_ORIGINS: origin,
+    _bridgeToken: token,
+    _activityDirectory: directory,
+  };
   const request = (route, init = {}) =>
     new Request(`http://127.0.0.1:32145${route}`, {
       ...init,
@@ -268,7 +273,7 @@ test("profile preflight allows display-name updates", async (t) => {
       headers: { Origin: origin, "Access-Control-Request-Method": "PATCH" },
     }),
     {
-      WORKBUDDY_ORIGINS: origin,
+      SCHOLARBUDDY_ORIGINS: origin,
       _bridgeToken: "test-activity-token-with-at-least-32-characters",
       _activityDirectory: directory,
     },

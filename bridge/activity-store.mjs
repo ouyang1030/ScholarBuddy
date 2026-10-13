@@ -1,7 +1,9 @@
-import { mkdir, readFile, writeFile, rename } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
+import { writeFileAtomic } from "./atomic-file.mjs";
 import { activitySeries, dayKey, focusDays, streaks } from "../shared/activity.mjs";
+import { repoRoot } from "./config.mjs";
 
 function invalid(message) {
   const error = new Error(message);
@@ -64,9 +66,7 @@ export function createActivityStore(directory, options = {}) {
       if (warning) draft.warning = warning;
       const value = operation(draft);
       await mkdir(directory, { recursive: true, mode: 0o700 });
-      const temp = `${file}.${randomUUID()}.tmp`;
-      await writeFile(temp, JSON.stringify(draft), { mode: 0o600 });
-      await rename(temp, file);
+      await writeFileAtomic(file, JSON.stringify(draft));
       state = draft;
       return value;
     });
@@ -250,4 +250,14 @@ export function createActivityStore(directory, options = {}) {
       return activitySeries(days, since, summary.today, view, range);
     },
   };
+}
+
+// One ledger per directory for the life of the process, so every route and every
+// AI run queues behind the same writer.
+const activityStores = new Map();
+
+export function activityStore(config) {
+  const directory = config._activityDirectory || path.join(repoRoot, "bridge", ".activity");
+  if (!activityStores.has(directory)) activityStores.set(directory, createActivityStore(directory));
+  return activityStores.get(directory);
 }

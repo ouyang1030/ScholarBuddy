@@ -11,7 +11,7 @@ export type FocusSegment = {
   syncedRevision?: number;
   rejectedRevision?: number;
 };
-const DB = "workbuddy-focus-history-v1";
+const DB = "scholarbuddy-focus-history-v1";
 let dbPromise: Promise<IDBDatabase> | undefined;
 let syncing: Promise<void> | undefined;
 let boundBridge = "";
@@ -19,11 +19,42 @@ let storageError = "";
 export function focusStorageError() {
   return storageError;
 }
+
+// The calendar finished sessions are written to as events. Empty means they are
+// not written anywhere, which is how every browser starts: the first writable
+// calendar is often shared with a lab or a family, and a session log is not
+// something to publish there unasked.
+const FOCUS_CALENDAR_KEY = "scholarbuddy-focus-calendar";
+export function focusCalendar() {
+  try {
+    return window.localStorage.getItem(FOCUS_CALENDAR_KEY) || "";
+  } catch {
+    return "";
+  }
+}
+// The choice is made in whichever tab has Connections open, while the timer runs
+// in whichever tab holds the lock, so a change has to be heard across tabs.
+export function onFocusCalendarChange(listener: () => void) {
+  const stored = (event: StorageEvent) => {
+    if (event.key === FOCUS_CALENDAR_KEY) listener();
+  };
+  window.addEventListener("scholarbuddy-focus-calendar", listener);
+  window.addEventListener("storage", stored);
+  return () => {
+    window.removeEventListener("scholarbuddy-focus-calendar", listener);
+    window.removeEventListener("storage", stored);
+  };
+}
+export function setFocusCalendar(name: string) {
+  if (name) window.localStorage.setItem(FOCUS_CALENDAR_KEY, name);
+  else window.localStorage.removeItem(FOCUS_CALENDAR_KEY);
+  window.dispatchEvent(new Event("scholarbuddy-focus-calendar"));
+}
 export function focusBridgeId() {
   return boundBridge;
 }
 function notify() {
-  window.dispatchEvent(new Event("workbuddy-focus-ledger"));
+  window.dispatchEvent(new Event("scholarbuddy-focus-ledger"));
 }
 function database() {
   if (!dbPromise)
@@ -75,7 +106,7 @@ export async function syncFocus(bindLocal = false) {
       if (!response.ok) return;
       const profile = await response.json();
       boundBridge = profile.bridgeId;
-      window.localStorage.setItem("workbuddy-focus-bridge-id", boundBridge);
+      window.localStorage.setItem("scholarbuddy-focus-bridge-id", boundBridge);
       const segments = await readFocusSegments();
       const pending = segments.filter(
         (s) =>
@@ -107,7 +138,7 @@ export async function syncFocus(bindLocal = false) {
             await saveFocusSegment({ ...segment, rejectedRevision: segment.revision }, false);
         }
       }
-      if (pending.length) window.dispatchEvent(new Event("workbuddy-profile-refresh"));
+      if (pending.length) window.dispatchEvent(new Event("scholarbuddy-profile-refresh"));
     } catch {
       /* The durable outbox remains available while the Bridge is offline. */
     }
@@ -117,7 +148,7 @@ export async function syncFocus(bindLocal = false) {
   return syncing;
 }
 export function initializeFocusSync() {
-  boundBridge = window.localStorage.getItem("workbuddy-focus-bridge-id") || "";
+  boundBridge = window.localStorage.getItem("scholarbuddy-focus-bridge-id") || "";
   void syncFocus();
   const retry = () => {
     void syncFocus();

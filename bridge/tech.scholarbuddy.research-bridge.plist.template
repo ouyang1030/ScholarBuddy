@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>com.workbuddy.research-bridge</string>
+  <string>tech.scholarbuddy.research-bridge</string>
   <key>ProgramArguments</key>
   <array>
     <string>{{NODE_PATH}}</string>

@@ -65,6 +65,13 @@ export const quickActions: Action[] = [
   { label: "Draft manuscript section", meta: "Writing", tone: "violet", command: "@write-section" },
 ];
 
+// The focus timer stores the id of the task it is running for, so a daily task
+// keeps a numeric id. The clock alone repeats when an AI plan adds five tasks in
+// one tick, and every task sharing an id is then ticked and deleted together.
+export function nextTaskId(tasks: { id: number }[]) {
+  return tasks.reduce((next, task) => Math.max(next, (Number(task.id) || 0) + 1), Date.now());
+}
+
 export const collectionLabels: Record<CollectionKey, string> = COLLECTION_LABELS;
 
 export const submissionStages = SUBMISSION_STAGES;

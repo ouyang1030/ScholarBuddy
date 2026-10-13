@@ -7,7 +7,9 @@ import type { FocusCalendarBlock } from "../../types";
 import { FocusCelebration } from "../Celebrations";
 import {
   focusBridgeId,
+  focusCalendar,
   initializeFocusSync,
+  onFocusCalendarChange,
   readFocusSegments,
   saveFocusSegment,
   saveFocusGap,
@@ -51,12 +53,16 @@ export function FocusProvider({ children }: { children: React.ReactNode }) {
       });
     };
     if (navigator.locks)
-      void navigator.locks.request("workbuddy-focus-timer", { ifAvailable: true }, async (lock) => {
-        if (lock) return hold();
-        if (cancelled) return;
-        setOwner(false);
-        void navigator.locks.request("workbuddy-focus-timer", hold);
-      });
+      void navigator.locks.request(
+        "scholarbuddy-focus-timer",
+        { ifAvailable: true },
+        async (lock) => {
+          if (lock) return hold();
+          if (cancelled) return;
+          setOwner(false);
+          void navigator.locks.request("scholarbuddy-focus-timer", hold);
+        },
+      );
     else
       Promise.resolve().then(() => {
         if (!cancelled) setOwner(true);
@@ -77,10 +83,8 @@ export function FocusProvider({ children }: { children: React.ReactNode }) {
   );
 }
 
-const FOCUS_STATE_KEY = "workbuddy-focus-en-v2";
-const LEGACY_FOCUS_STATE_KEY = "workbuddy-focus-en-v1";
-const FOCUS_CELEBRATION_KEY = "workbuddy-focus-celebration-v2";
-const LEGACY_FOCUS_CELEBRATION_KEY = "workbuddy-focus-celebrated-date";
+const FOCUS_STATE_KEY = "scholarbuddy-focus-en-v2";
+const FOCUS_CELEBRATION_KEY = "scholarbuddy-focus-celebration-v2";
 
 type FocusCelebrationState = {
   date: string;
@@ -118,6 +122,14 @@ function useFocusController() {
   const [calendarMessage, setCalendarMessage] = useState("");
   const [celebrating, setCelebrating] = useState(false);
   const [recoveryMessage, setRecoveryMessage] = useState("");
+  // Sessions reach Calendar only once the researcher has named the calendar in
+  // Connections. The ref is what the timer callbacks read; the state is what the
+  // status line renders.
+  const calendarRef = useRef("");
+  const [savesToCalendar, setSavesToCalendar] = useState(false);
+  const queueCalendarBlock = useCallback((block: FocusCalendarBlock) => {
+    if (calendarRef.current) setPending((items) => [...items, block]);
+  }, []);
   const ledgerRef = useRef<FocusSegment | null>(null);
   const ledgerLimit = useRef<number | null>(null);
   const checkpointRef = useRef(0);
@@ -134,12 +146,10 @@ function useFocusController() {
     const today = localDateKey(new Date());
     const hydrate = window.setTimeout(() => {
       try {
-        const saved = JSON.parse(
-          window.localStorage.getItem(FOCUS_STATE_KEY) ||
-            window.localStorage.getItem(LEGACY_FOCUS_STATE_KEY) ||
-            "{}",
-        );
+        const saved = JSON.parse(window.localStorage.getItem(FOCUS_STATE_KEY) || "{}");
         const savedDate = saved.date || today;
+        calendarRef.current = focusCalendar();
+        setSavesToCalendar(Boolean(calendarRef.current));
         const savedPending = Array.isArray(saved.pending)
           ? saved.pending.filter((item: FocusCalendarBlock) => item?.id && item?.start && item?.end)
           : [];
@@ -180,19 +190,9 @@ function useFocusController() {
           setActiveTaskId(Number(saved.activeTaskId) || null);
           setPlannedMinutes(Number(saved.plannedMinutes) || null);
           setFocusDate(today);
-          setPending(savedPending);
-          if (!saved.ledgerVersion)
-            for (const block of savedPending)
-              void saveFocusSegment({
-                segmentId: block.id,
-                revision: 1,
-                startedAt: block.start,
-                endedAt: block.end,
-                status: "saved",
-                bridgeId: focusBridgeId(),
-              });
+          setPending(calendarRef.current ? savedPending : []);
         } else {
-          const pendingItems = [...savedPending];
+          const pendingItems = calendarRef.current ? [...savedPending] : [];
           if (saved.startedAt)
             setRecoveryMessage("Previous timer restored paused; unobserved time was not added.");
           setElapsed(0);
@@ -208,10 +208,6 @@ function useFocusController() {
         celebrationPendingRef.current =
           celebration?.date === today && celebration.status === "pending";
         celebrationDateRef.current = celebration?.date === today ? today : "";
-        // v1 wrote "seen" before the overlay was visible, so it cannot prove the
-        // user actually saw anything. The v2 threshold check below safely requeues
-        // today's missed celebration once and then owns the lifecycle.
-        window.localStorage.removeItem(LEGACY_FOCUS_CELEBRATION_KEY);
       } catch {
         /* new timer */
       }
@@ -245,7 +241,6 @@ function useFocusController() {
         FOCUS_STATE_KEY,
         JSON.stringify({
           date: focusDate,
-          ledgerVersion: 1,
           elapsed,
           startedAt,
           checkpointAt: startedAt ? checkpointRef.current : null,
@@ -269,6 +264,15 @@ function useFocusController() {
   useEffect(() => {
     targetRef.current = target;
   }, [target]);
+  useEffect(() => {
+    const sync = () => {
+      calendarRef.current = focusCalendar();
+      setSavesToCalendar(Boolean(calendarRef.current));
+      // Blocks still waiting were owed to a calendar that has now been declined.
+      if (!calendarRef.current) setPending([]);
+    };
+    return onFocusCalendarChange(sync);
+  }, []);
   useEffect(() => {
     const start = (event: Event) => {
       const detail = (
@@ -301,15 +305,12 @@ function useFocusController() {
           currentTime - checkpointRef.current > FOCUS_INTERRUPTION_MS
             ? checkpointRef.current
             : currentTime;
-        setPending((items) => [
-          ...items,
-          {
-            id: `focus-${crypto.randomUUID()}`,
-            start: new Date(startedAt).toISOString(),
-            end: new Date(Math.max(trustedEnd, startedAt + 1000)).toISOString(),
-            target: target.trim(),
-          },
-        ]);
+        queueCalendarBlock({
+          id: `focus-${crypto.randomUUID()}`,
+          start: new Date(startedAt).toISOString(),
+          end: new Date(Math.max(trustedEnd, startedAt + 1000)).toISOString(),
+          target: target.trim(),
+        });
         setCalendarMessage("Switched target · saving previous focus block…");
       }
 
@@ -326,9 +327,9 @@ function useFocusController() {
       });
       setStartedAt((current) => (changingTarget ? currentTime : current || currentTime));
     };
-    window.addEventListener("workbuddy-start-focus", start);
-    return () => window.removeEventListener("workbuddy-start-focus", start);
-  }, [activeTaskId, elapsed, startedAt, target]);
+    window.addEventListener("scholarbuddy-start-focus", start);
+    return () => window.removeEventListener("scholarbuddy-start-focus", start);
+  }, [activeTaskId, elapsed, queueCalendarBlock, startedAt, target]);
   const syncPending = useCallback(async (blocks: FocusCalendarBlock[]) => {
     if (!blocks.length || syncingRef.current) return;
     syncingRef.current = true;
@@ -336,6 +337,10 @@ function useFocusController() {
     let synced = 0;
     try {
       for (const block of blocks) {
+        // Switched off while this loop was running: what is left must not fall
+        // through to whichever calendar the Bridge would pick on its own.
+        const calendar = calendarRef.current;
+        if (!calendar) break;
         try {
           const minutes = Math.max(
             1,
@@ -354,6 +359,7 @@ function useFocusController() {
               start: block.start,
               end: block.end,
               externalId: block.id,
+              calendar,
               notes: `ScholarBuddy focus session\nTarget: ${safeTarget}`,
             }),
           });
@@ -368,7 +374,7 @@ function useFocusController() {
       }
       if (synced) {
         setCalendarMessage("Paused · saved to Calendar");
-        window.dispatchEvent(new Event("workbuddy-calendar-refresh"));
+        window.dispatchEvent(new Event("scholarbuddy-calendar-refresh"));
       }
     } finally {
       syncingRef.current = false;
@@ -458,15 +464,12 @@ function useFocusController() {
         void saveFocusGap(segment, current);
         ledgerRef.current = null;
         if (end - startedAt >= 1000)
-          setPending((items) => [
-            ...items,
-            {
-              id: `focus-${crypto.randomUUID()}`,
-              start: new Date(startedAt).toISOString(),
-              end: new Date(end).toISOString(),
-              target: targetRef.current.trim(),
-            },
-          ]);
+          queueCalendarBlock({
+            id: `focus-${crypto.randomUUID()}`,
+            start: new Date(startedAt).toISOString(),
+            end: new Date(end).toISOString(),
+            target: targetRef.current.trim(),
+          });
         setElapsed((value) => value + Math.max(0, (end - startedAt) / 1000));
         setStartedAt(null);
         setRecoveryMessage(
@@ -482,7 +485,9 @@ function useFocusController() {
         limitAt: ledgerLimit.current ?? undefined,
       };
       ledgerRef.current = updated;
-      void saveFocusSegment(updated);
+      // Kept durably in this browser now; the half-minute sync carries it to the
+      // Bridge, which rewrites its whole ledger for every batch it receives.
+      void saveFocusSegment(updated, false);
       setCheckpointTick((tick) => tick + 1);
     };
     const timer = window.setInterval(checkpoint, 15000);
@@ -495,7 +500,7 @@ function useFocusController() {
       document.removeEventListener("visibilitychange", checkpoint);
       window.removeEventListener("pagehide", checkpoint);
     };
-  }, [startedAt]);
+  }, [queueCalendarBlock, startedAt]);
   const finishCelebration = useCallback(() => {
     if (celebrationShowTimerRef.current) window.clearTimeout(celebrationShowTimerRef.current);
     if (celebrationTimerRef.current) window.clearTimeout(celebrationTimerRef.current);
@@ -574,10 +579,11 @@ function useFocusController() {
       taskId: activeTaskId,
       plannedMinutes,
     };
-    const emit = () => window.dispatchEvent(new CustomEvent("workbuddy-focus-state", { detail }));
+    const emit = () =>
+      window.dispatchEvent(new CustomEvent("scholarbuddy-focus-state", { detail }));
     emit();
-    window.addEventListener("workbuddy-request-focus-state", emit);
-    return () => window.removeEventListener("workbuddy-request-focus-state", emit);
+    window.addEventListener("scholarbuddy-request-focus-state", emit);
+    return () => window.removeEventListener("scholarbuddy-request-focus-state", emit);
   }, [activeTaskId, plannedMinutes, running, seconds, target]);
 
   useEffect(() => {
@@ -588,26 +594,33 @@ function useFocusController() {
         Date.now(),
         startedAt + Math.max(0, plannedSeconds - elapsed) * 1000,
       );
-      setPending((items) => [
-        ...items,
-        {
-          id: `focus-${crypto.randomUUID()}`,
-          start: new Date(startedAt).toISOString(),
-          end: new Date(Math.max(endedAt, startedAt + 1000)).toISOString(),
-          target: target.trim(),
-        },
-      ]);
+      queueCalendarBlock({
+        id: `focus-${crypto.randomUUID()}`,
+        start: new Date(startedAt).toISOString(),
+        end: new Date(Math.max(endedAt, startedAt + 1000)).toISOString(),
+        target: target.trim(),
+      });
       setElapsed(plannedSeconds);
       setStartedAt(null);
       setCalendarMessage("Goal reached · saving to Calendar…");
       window.dispatchEvent(
-        new CustomEvent("workbuddy-focus-completed", {
+        new CustomEvent("scholarbuddy-focus-completed", {
           detail: { taskId: activeTaskId, target, plannedMinutes },
         }),
       );
     }, 0);
     return () => window.clearTimeout(completionTimer);
-  }, [activeTaskId, elapsed, plannedMinutes, plannedSeconds, running, seconds, startedAt, target]);
+  }, [
+    activeTaskId,
+    elapsed,
+    plannedMinutes,
+    plannedSeconds,
+    queueCalendarBlock,
+    running,
+    seconds,
+    startedAt,
+    target,
+  ]);
 
   const toggle = () => {
     const rightNow = Date.now();
@@ -628,7 +641,7 @@ function useFocusController() {
           "Timer paused after an interruption. Time after the last checkpoint was not added.",
         );
       setStartedAt(null);
-      setPending((items) => [...items, block]);
+      queueCalendarBlock(block);
       setCalendarMessage("Paused · saving to Calendar…");
     } else {
       if (goalReached) {
@@ -659,8 +672,12 @@ function useFocusController() {
         ? "Paused · saving to Calendar…"
         : pending.length
           ? `Paused · ${pending.length} Calendar sync pending`
-          : calendarMessage ||
-            (seconds ? "Paused · saved to Calendar" : "Ready for a new focus session");
+          : !savesToCalendar
+            ? seconds
+              ? "Paused"
+              : "Ready for a new focus session"
+            : calendarMessage ||
+              (seconds ? "Paused · saved to Calendar" : "Ready for a new focus session");
   return {
     now,
     elapsed,

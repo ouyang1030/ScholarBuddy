@@ -53,8 +53,8 @@ The setup page is loopback-only, uses a short-lived setup session, and never ret
 - Set `OBSIDIAN_VAULT_PATH` to an absolute vault path.
 - Add any optional AI provider credentials.
 - Override the matching `*_MODEL` value if your account uses a different available model.
-- Keep local development origins in `WORKBUDDY_ORIGINS`.
-- After deployment, add every exact public origin. Wildcards are rejected.
+- For local development, run `npm run setup -- --dev` once. It adds `http://localhost:3000`, `:5173`, and `:4173` to `SCHOLARBUDDY_ORIGINS`; they are left out by default because whatever listens on those ports could then use the Bridge.
+- After deployment, add every exact public origin. Wildcards are rejected, and an origin must be `https` unless it is this computer's own `http://localhost`.
 
 For local development, start the interface and Bridge in separate terminals:
 
@@ -75,13 +75,13 @@ npm run bridge:status
 npm run bridge:uninstall
 ```
 
-Rotate the long-lived Bridge token if a paired browser or profile is no longer trusted:
+Each site a browser pairs with receives its own credential. It works only from that site's origin, lapses 30 days after it was last used or 180 days after pairing, and is stored on this Mac only as a hash. The setup page (**Connections → Manage local connections**) lists the paired browsers and lets you limit one to reading or revoke it; **Disconnect this browser** revokes the one you are using. To revoke every paired browser at once:
 
 ```bash
 npm run bridge:token:rotate
 ```
 
-Rotation requires every browser to pair again. `npm run bridge:token` prints the current credential for recovery and should be used only in a private terminal.
+Setting `SCHOLARBUDDY_BRIDGE_TOKEN` opts out of all of this for automation: one fixed credential shared by every allowed origin, which never lapses and which `npm run bridge:token` prints.
 
 ## Optional reminders
 
@@ -107,13 +107,15 @@ category choices but stops future reminders. There is no global OS keyboard shor
 
 ## Deployment and domains
 
-The app is a standard Next.js App Router project, and `next.config.ts` sets its security headers. `vite.config.ts` and `worker/` provide the Vinext/Cloudflare Worker build used for local development and staging; the Worker applies the same headers from `shared/security-headers.mjs`.
+The app is a standard Next.js App Router project. Production is built with `npm run build:next` (`next build`), which `vercel.json` pins. `next.config.ts` sets the fixed security headers, and `proxy.ts` mints a nonce for every page and sends the Content Security Policy that allows scripts by that nonce only, never by `'unsafe-inline'`. `vite.config.ts` and `worker/` provide the Vinext/Cloudflare Worker build used for local development and staging; the Worker applies the same headers and policy from `shared/security-headers.mjs`. Social-preview addresses are built from the host a request was routed by; a deployment behind its own reverse proxy sets `NEXT_PUBLIC_SITE_URL` to its public origin.
 
 The public custom domain is `https://scholarbuddy.tech`, which redirects to `https://www.scholarbuddy.tech`. The fixed backup entry point is [scholarbuddy-eta.vercel.app](https://scholarbuddy-eta.vercel.app). All three exact origins are included in the example Bridge allowlist. Keep the Vercel address serving the app directly so it remains usable independently of the custom domain.
 
 ### Pair the backup entry point in advance
 
-New installations include the backup origin automatically. Existing installations keep their own `.env.local` when running `npm run setup`: append `https://scholarbuddy-eta.vercel.app` to the existing `WORKBUDDY_ORIGINS` value and restart the Bridge. On macOS, `npm run bridge:install` restarts the background service; manually started Bridges should be stopped and started again with `npm run bridge`.
+New installations include the backup origin automatically. Existing installations keep their own `.env.local` when running `npm run setup`: append `https://scholarbuddy-eta.vercel.app` to the existing `SCHOLARBUDDY_ORIGINS` value and restart the Bridge. On macOS, `npm run bridge:install` restarts the background service; manually started Bridges should be stopped and started again with `npm run bridge`.
+
+Retiring the backup has an order. A `vercel.app` name that is deleted or renamed can be claimed by someone else, and a browser that was paired there still holds its credential for that origin. Before the deployment goes away, publish a release whose example allowlist no longer contains it, ask existing users to remove it from `SCHOLARBUDDY_ORIGINS`, and rotate Bridge tokens that were paired there.
 
 Open the backup address on the same Mac, then choose **Connections → Open local pairing page**. Copy the new five-minute, one-time code into the backup site's **Temporary pairing code** field and choose **Pair bridge**. Pair each browser you intend to use and bookmark the backup address. Once paired, that browser can connect from the backup address while its stored token remains valid, even if the custom domain is unavailable.
 
@@ -137,7 +139,7 @@ npx wrangler deploy --config dist/server/wrangler.json --dry-run
 ```
 
 After deployment, append the exact HTTPS origin printed by Wrangler to the local
-`WORKBUDDY_ORIGINS` allowlist, restart the Bridge, and pair the browser from that
+`SCHOLARBUDDY_ORIGINS` allowlist, restart the Bridge, and pair the browser from that
 origin. Keep the existing production and local origins. Browser preferences are
 separate for staging. Staging pairs with the same local Bridge and therefore can
 read and change the same vault records; use a separate test vault for destructive
@@ -150,11 +152,16 @@ indexing but is not access control. The unused image optimization route returns
 ## Data and security model
 
 - The Bridge binds only to `127.0.0.1` and validates loopback `Host` headers.
-- CORS accepts only exact configured origins; browser requests require a bearer credential.
-- Pairing pages expose a short-lived one-time code, never the persistent token.
+- CORS accepts only exact configured origins; browser requests require a bearer credential. An origin must be `https` unless it is this computer's own `http://localhost`.
+- Pairing is a grant of trust in that site. Until the browser is disconnected, pages from a paired origin can read and change what the Bridge exposes: the vault, the Zotero library, Calendar, submission mail matches, and AI runs on your keys. Scripts on the hosted page therefore run under a per-request nonce policy; each site's credential is its own, expires, and can be limited to reading or revoked from the local setup page.
+- Pairing pages expose a short-lived one-time code, never a credential. The code the setup page sends a browser back with only works at the site it was sent to.
 - On macOS, API keys are stored in Keychain (`.env.local` fallback) and are never sent to the hosted UI.
 - Obsidian writes use constrained collections, atomic writes, version archives, and SHA-256 `contentHash` concurrency protection against stale overwrites.
-- Record frontmatter supports single-line values only. A multi-line YAML property added in Obsidian (such as a `tags` list) is not preserved when ScholarBuddy next saves that record; the previous version stays in `ScholarBuddy/.history`.
+- Record frontmatter is written as one JSON value per line. A list that Obsidian rewrites in YAML's own spelling (`[a, b]`, or one `- item` per line) is read back as the same list. Nested YAML maps and multi-line strings are not preserved when ScholarBuddy next saves that record; the previous version stays in `ScholarBuddy/.history`.
+- An AI answer says so when the vault search behind it stopped at the first 2,500 notes; the passage library and the submission mail check report what lay beyond their limits in the same way.
+- AI answers are written to the vault with image embeds turned into plain links and resource-loading HTML turned into text, so a note cannot fetch anything by being opened.
+- A note that cannot be loaded — an unreadable date, a file name that is not a record id, a sync-conflict copy — is listed in a banner with its path and reason and left untouched. Every other record loads as usual.
+- Focus sessions are written to macOS Calendar only after you choose a calendar under **Connections → Focus sessions**. The setting starts off.
 - Research log entries and captured ideas are ordinary Obsidian records, held in browser memory only until written to the vault.
 - Selected Zotero and Obsidian context is sent to an AI provider only during explicit workflow execution; evidence snapshots are preserved across follow-ups, and logs redact credentials.
 - Submission email checks require confirmation for consequential status updates; retries recover attempt state idempotently.
@@ -176,10 +183,12 @@ Activity metrics are saved in the local ledger (`bridge/.activity/activity-v1.js
 
 ```bash
 npm run lint
+npm run typecheck
 npm test
+npm run build:next
 ```
 
-`npm test` performs a production build and runs Bridge and server-rendering tests. Pull requests run the same checks in GitHub Actions.
+`npm test` performs the Vinext build and runs Bridge and server-rendering tests; `npm run build:next` is the build production serves. Pull requests run all four in GitHub Actions.
 
 ## Contributing
 

@@ -1,11 +1,17 @@
 "use client";
 
 import { useState } from "react";
-import { bridgeBaseUrl, bridgeSetupUrl, exchangeBridgePairingCode } from "../../lib/bridge-client";
+import {
+  bridgeBaseUrl,
+  bridgeSetupUrl,
+  disconnectBridge,
+  exchangeBridgePairingCode,
+} from "../../lib/bridge-client";
 import { aiProviders } from "../../lib/workbench";
 import type { BridgeIssue, BridgeStatus } from "../../types";
 import { BrandLogo } from "../BrandLogo";
 import { closeWithTransition, DrawerHeader, SaveFeedback } from "../primitives";
+import { FocusCalendarSetting } from "./FocusCalendarSetting";
 import { ReminderSettings } from "./ReminderSettings";
 
 export function ConnectionsDrawer({
@@ -42,7 +48,7 @@ export function ConnectionsDrawer({
       await exchangeBridgePairingCode(clean);
       const connected = await refresh();
       if (!connected) {
-        window.localStorage.removeItem("workbuddy-bridge-token");
+        await disconnectBridge();
         throw new Error("The bridge returned a token that could not be verified.");
       }
       setToken("");
@@ -178,12 +184,30 @@ export function ConnectionsDrawer({
           </div>
         </div>
         {status && (
-          <button
-            className="quiet-button"
-            onClick={() => window.open(bridgeSetupUrl(), "_blank", "noopener,noreferrer")}
-          >
-            Manage local connections
-          </button>
+          <>
+            <div className="connection-actions">
+              <button
+                className="quiet-button"
+                onClick={() => window.open(bridgeSetupUrl(), "_blank", "noopener,noreferrer")}
+              >
+                Manage local connections
+              </button>
+              <button
+                className="quiet-button"
+                onClick={() => {
+                  // Reloading is what clears the records this page already holds.
+                  void disconnectBridge().then(() => window.location.reload());
+                }}
+              >
+                Disconnect this browser
+              </button>
+            </div>
+            <small className="connection-note">
+              Disconnecting revokes this site’s access from this browser. Other paired browsers are
+              reviewed, limited to reading, or revoked under{" "}
+              <strong>Manage local connections</strong>.
+            </small>
+          </>
         )}
         <div className="connection-list">
           {aiConnections}
@@ -212,6 +236,7 @@ export function ConnectionsDrawer({
             {connection(status?.obsidian.connected)}
           </article>
         </div>
+        <FocusCalendarSetting paired={Boolean(status)} />
         <ReminderSettings paired={Boolean(status)} />
       </aside>
     </div>

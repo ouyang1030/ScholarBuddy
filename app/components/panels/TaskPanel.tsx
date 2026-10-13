@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { localDateKey } from "../../lib/format";
+import { nextTaskId } from "../../lib/workbench";
 
 type DailyTask = {
   id: number;
@@ -20,7 +21,7 @@ type FocusState = {
   plannedMinutes: number | null;
 };
 
-const TASKS_KEY = "workbuddy-daily-tasks-en-v3";
+const TASKS_KEY = "scholarbuddy-daily-tasks-en-v3";
 const standardFocusLengths = new Set([25, 50]);
 
 function focusLengthLabel(minutes?: number | null) {
@@ -66,10 +67,10 @@ export function TaskPanel() {
     const timer = window.setTimeout(load, 0);
     // An AI workflow can append a task straight to storage; re-read it, or the
     // next save from this panel would write the list back without it.
-    window.addEventListener("workbuddy-tasks-changed", load);
+    window.addEventListener("scholarbuddy-tasks-changed", load);
     return () => {
       window.clearTimeout(timer);
-      window.removeEventListener("workbuddy-tasks-changed", load);
+      window.removeEventListener("scholarbuddy-tasks-changed", load);
     };
   }, [today]);
 
@@ -86,12 +87,12 @@ export function TaskPanel() {
       const detail = (event as CustomEvent<{ taskId?: number | null }>).detail;
       if (detail?.taskId) setCompletedFocusTaskId(detail.taskId);
     };
-    window.addEventListener("workbuddy-focus-state", updateFocus);
-    window.addEventListener("workbuddy-focus-completed", completed);
-    window.dispatchEvent(new Event("workbuddy-request-focus-state"));
+    window.addEventListener("scholarbuddy-focus-state", updateFocus);
+    window.addEventListener("scholarbuddy-focus-completed", completed);
+    window.dispatchEvent(new Event("scholarbuddy-request-focus-state"));
     return () => {
-      window.removeEventListener("workbuddy-focus-state", updateFocus);
-      window.removeEventListener("workbuddy-focus-completed", completed);
+      window.removeEventListener("scholarbuddy-focus-state", updateFocus);
+      window.removeEventListener("scholarbuddy-focus-completed", completed);
     };
   }, []);
 
@@ -140,7 +141,7 @@ export function TaskPanel() {
       return [
         ...items,
         {
-          id: Date.now(),
+          id: nextTaskId(items),
           title,
           done: false,
           date: today,
@@ -154,7 +155,7 @@ export function TaskPanel() {
 
   const startFocus = (task: DailyTask) => {
     const accepted = window.dispatchEvent(
-      new CustomEvent("workbuddy-start-focus", {
+      new CustomEvent("scholarbuddy-start-focus", {
         cancelable: true,
         detail: {
           target: task.title,

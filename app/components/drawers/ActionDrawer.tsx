@@ -8,6 +8,7 @@ import {
   contextPassages,
   isAiProvider,
   manuscriptSections,
+  nextTaskId,
   recordContext,
 } from "../../lib/workbench";
 import { readEventStream } from "../../../shared/sse.mjs";
@@ -18,7 +19,7 @@ import {
   sectionBody,
 } from "../../../shared/manuscript-text.mjs";
 import { workflowContract } from "../../../shared/workflows.mjs";
-import { closeWithTransition, DrawerHeader } from "../primitives";
+import { closeWithTransition, DrawerHeader, useUnsavedWork } from "../primitives";
 import type {
   Action,
   AiProvider,
@@ -33,7 +34,11 @@ import { SourceDot } from "../primitives";
 
 type Turn = { question: string; result: WorkflowResult };
 
-const DAILY_TASKS_KEY = "workbuddy-daily-tasks-en-v3";
+// What each source said about only having been searched in part.
+const coverageNotes = (result: WorkflowResult) =>
+  Object.values(result.retrieval).flatMap((source) => (source.partial ? [source.partial] : []));
+
+const DAILY_TASKS_KEY = "scholarbuddy-daily-tasks-en-v3";
 
 function addDailyTask(title: string) {
   let stored: { id: number; title: string; done: boolean; date: string }[] = [];
@@ -46,12 +51,12 @@ function addDailyTask(title: string) {
     DAILY_TASKS_KEY,
     JSON.stringify([
       ...stored,
-      { id: Date.now(), title, done: false, date: localDateKey(new Date()) },
+      { id: nextTaskId(stored), title, done: false, date: localDateKey(new Date()) },
     ]),
   );
   // Today's panel keeps its own copy of the list, so it has to be told to re-read
   // it before its next save overwrites what was just appended here.
-  window.dispatchEvent(new Event("workbuddy-tasks-changed"));
+  window.dispatchEvent(new Event("scholarbuddy-tasks-changed"));
 }
 
 export function ActionDrawer({
@@ -61,6 +66,7 @@ export function ActionDrawer({
   saveRecord,
   onClose,
   openConnections,
+  onUnsavedChange,
   ref,
 }: {
   action: Action;
@@ -69,6 +75,7 @@ export function ActionDrawer({
   saveRecord: (collection: CollectionKey, record: Partial<RecordItem>) => Promise<RecordItem>;
   onClose: () => void;
   openConnections: () => void;
+  onUnsavedChange?: (unsaved: boolean) => void;
   ref?: React.Ref<HTMLElement>;
 }) {
   const contract = workflowContract(action.command)!;
@@ -77,7 +84,9 @@ export function ActionDrawer({
   const [running, setRunning] = useState(false);
   const [provider, setProvider] = useState<AiProvider>(() => {
     const saved =
-      typeof window === "undefined" ? null : window.localStorage.getItem("workbuddy-ai-provider");
+      typeof window === "undefined"
+        ? null
+        : window.localStorage.getItem("scholarbuddy-ai-provider");
     return isAiProvider(saved) ? saved : "deepseek";
   });
   const [input, setInput] = useState(action.label);
@@ -101,6 +110,13 @@ export function ActionDrawer({
   const [savedPath, setSavedPath] = useState("");
   const [appliedActions, setAppliedActions] = useState<string[]>([]);
   const controller = useRef<AbortController | null>(null);
+  // A run in flight is paid for, and an answer not yet written anywhere exists
+  // only in this drawer.
+  const canDismiss = useUnsavedWork(
+    "answer",
+    running || (turns.length > 0 && !savedPath),
+    onUnsavedChange,
+  );
   // Providers emit a frame every few tokens. Buffering them and repainting on a
   // fixed cadence keeps a long answer from re-rendering the drawer hundreds of
   // times a second while still reading as live typing.
@@ -341,12 +357,16 @@ export function ActionDrawer({
     const transcript = turns
       .map((turn, index) => `## ${index + 1}. ${turn.question}\n\n${turn.result.output}`)
       .join("\n\n");
+    // A reader of the saved note has no drawer to warn them the search was partial.
+    const coverage = coverageNotes(latest)
+      .map((note) => `\n- Coverage: ${note}`)
+      .join("");
     const response = await bridgeFetch(`/obsidian/note`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         title: `${action.command} ${localDateKey(new Date())}`,
-        content: `---\nworkbuddyGenerated: true\nprovider: ${latest.provider}\nmodel: ${latest.model}\ncreatedAt: ${new Date().toISOString()}\n---\n\n# ${action.label}\n\n${transcript}\n\n## Evidence manifest\n\n${evidence}\n\n## Bibliographic candidates (not evidence)\n\n${bibliography}\n`,
+        content: `---\nscholarbuddyGenerated: true\nprovider: ${latest.provider}\nmodel: ${latest.model}\ncreatedAt: ${new Date().toISOString()}\n---\n\n# ${action.label}\n\n${transcript}\n\n## Evidence manifest\n\n${evidence}${coverage}\n\n## Bibliographic candidates (not evidence)\n\n${bibliography}\n`,
       }),
     });
     const body = await response.json();
@@ -356,7 +376,9 @@ export function ActionDrawer({
   return (
     <div
       className="drawer-backdrop"
-      onMouseDown={(event) => closeWithTransition(onClose, event.currentTarget)}
+      onMouseDown={(event) => {
+        if (canDismiss()) closeWithTransition(onClose, event.currentTarget);
+      }}
     >
       <aside
         ref={ref}
@@ -383,7 +405,7 @@ export function ActionDrawer({
               className={provider === item.id ? "active" : ""}
               onClick={() => {
                 setProvider(item.id);
-                window.localStorage.setItem("workbuddy-ai-provider", item.id);
+                window.localStorage.setItem("scholarbuddy-ai-provider", item.id);
               }}
             >
               <BrandLogo brand={item.id} />
@@ -555,6 +577,11 @@ export function ActionDrawer({
                 <pre>{turn.result.reasoning}</pre>
               </details>
             ) : null}
+            {coverageNotes(turn.result).map((note) => (
+              <div className="citation-warning" key={note}>
+                {note} Sources beyond that are missing from this answer.
+              </div>
+            ))}
             {turn.result.invalidReferenceIds.length > 0 && (
               <div className="citation-warning">
                 Unknown reference IDs: {turn.result.invalidReferenceIds.join(", ")}

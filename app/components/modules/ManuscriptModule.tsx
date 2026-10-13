@@ -18,7 +18,7 @@ import { LinkedPassages } from "../panels/LinkedPassages";
 // Submission stages move on a scale of weeks, so opening this view checks Mail at
 // most once per window instead of polling: a scan spawns osascript and walks the
 // inbox, which is far too heavy to repeat while the tab happens to be open.
-const MAIL_CHECK_KEY = "workbuddy-submission-last-mail-check";
+const MAIL_CHECK_KEY = "scholarbuddy-submission-last-mail-check";
 const MAIL_CHECK_WINDOW_MS = 6 * 60 * 60 * 1000;
 
 function mailCheckedRecently() {
@@ -119,7 +119,7 @@ export function SubmissionTracker({
       const result = await syncEmail();
       setPendingCandidates(result.pending);
       setMessage(
-        `${result.updated.length} status update${result.updated.length === 1 ? "" : "s"} added · ${result.verified || 0} existing status${result.verified === 1 ? "" : "es"} verified · ${result.pending.length} need confirmation · ${result.scanned} emails checked`,
+        `${result.updated.length} status update${result.updated.length === 1 ? "" : "s"} added · ${result.verified || 0} existing status${result.verified === 1 ? "" : "es"} verified · ${result.pending.length} need confirmation · ${result.scanned} emails checked${result.partial ? ` · ${result.partial}` : ""}`,
       );
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Mail could not be checked.");

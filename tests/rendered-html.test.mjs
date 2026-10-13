@@ -22,12 +22,12 @@ async function appSource() {
   return [...(await app.read), ...(await shared.read)].join("\n");
 }
 
-async function render() {
+async function render(headers = {}) {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
   workerUrl.searchParams.set("test", `${process.pid}-${Date.now()}`);
   const { default: worker } = await import(workerUrl.href);
   return worker.fetch(
-    new Request("http://localhost/", { headers: { accept: "text/html" } }),
+    new Request("http://localhost/", { headers: { accept: "text/html", ...headers } }),
     { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) } },
     { waitUntil() {}, passThroughOnException() {} },
   );
@@ -37,10 +37,45 @@ test("server-renders the Sports Research OS", async () => {
   const response = await render();
   assert.equal(response.status, 200);
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
-  assert.match(response.headers.get("content-security-policy") ?? "", /frame-ancestors 'none'/);
+  const policy = response.headers.get("content-security-policy") ?? "";
+  assert.match(policy, /frame-ancestors 'none'/);
+  // A paired page can reach the researcher's Bridge, so scripts run by nonce only.
+  const nonce = policy.match(/script-src [^;]*'nonce-([^']+)'/)?.[1];
+  assert.ok(nonce, "expected a per-request script nonce");
+  assert.doesNotMatch(policy, /script-src[^;]*'unsafe-inline'/);
+  assert.doesNotMatch(policy, /'unsafe-eval'/);
   assert.equal(response.headers.get("x-frame-options"), "DENY");
   assert.match(response.headers.get("permissions-policy") ?? "", /camera=\(\)/);
   const html = await response.text();
+  const scripts = html.match(/<script\b[^>]*>/g) ?? [];
+  assert.ok(scripts.length > 0, "expected the page to ship scripts");
+  assert.deepEqual(
+    scripts.filter((tag) => !tag.includes(`nonce="${nonce}"`)),
+    [],
+  );
+  const again = (await render()).headers.get("content-security-policy") ?? "";
+  assert.notEqual(again.match(/'nonce-([^']+)'/)?.[1], nonce);
+  // A prefetched page may be the one the browser shows, so it needs a nonce too.
+  for (const header of [{ purpose: "prefetch" }, { "next-router-prefetch": "1" }]) {
+    const prefetched = await render(header);
+    const prefetchPolicy = prefetched.headers.get("content-security-policy") ?? "";
+    const prefetchNonce = prefetchPolicy.match(/script-src [^;]*'nonce-([^']+)'/)?.[1];
+    assert.ok(prefetchNonce, `expected a nonce for ${JSON.stringify(header)}`);
+    if ((prefetched.headers.get("content-type") ?? "").startsWith("text/html"))
+      assert.deepEqual(
+        ((await prefetched.text()).match(/<script\b[^>]*>/g) ?? []).filter(
+          (tag) => !tag.includes(`nonce="${prefetchNonce}"`),
+        ),
+        [],
+      );
+  }
+  // The page's own address comes from the host the request was routed by, never
+  // from a header any visitor can set.
+  const hosted = await (
+    await render({ host: "www.scholarbuddy.tech", "x-forwarded-host": "attacker.example" })
+  ).text();
+  assert.match(hosted, /property="og:image" content="https:\/\/www\.scholarbuddy\.tech\/og\.png"/);
+  assert.doesNotMatch(hosted, /attacker\.example/);
   assert.match(html, /ScholarBuddy — Sports Research OS/i);
   assert.match(html, /Move one thing forward/i);
   assert.match(html, /Define one result worth finishing today/i);
@@ -94,7 +129,7 @@ test("the macOS Calendar brand follows the browser's current day", async () => {
 
 test("submission attention cards persist read state and open the matching submission", async () => {
   const source = await appSource();
-  assert.match(source, /workbuddy-read-submission-alerts-v1/);
+  assert.match(source, /scholarbuddy-read-submission-alerts-v1/);
   assert.match(source, /submissionAlertKey\(alert\)/);
   assert.match(source, /setReadSubmissionAlertKeys/);
   assert.match(source, /activeAlertKeys\.has\(key\)/);
@@ -107,8 +142,8 @@ test("client routes all bridge calls through pairing auth and keeps daily and so
   const clientSource = source;
   const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
   assert.match(clientSource, /Authorization.*Bearer/);
-  assert.match(clientSource, /workbuddy-bridge-token/);
-  assert.match(clientSource, /NEXT_PUBLIC_WORKBUDDY_BRIDGE_PORT/);
+  assert.match(clientSource, /scholarbuddy-bridge-token/);
+  assert.match(clientSource, /NEXT_PUBLIC_SCHOLARBUDDY_BRIDGE_PORT/);
   assert.match(clientSource, /\/pair\/exchange/);
   assert.match(source, /Configure this Mac/);
   assert.match(source, /bridge-pair/);
@@ -116,9 +151,9 @@ test("client routes all bridge calls through pairing auth and keeps daily and so
   assert.match(source, /task\.date === today/);
   // Capture must reach Obsidian, must be reachable from any module, and must not
   // lose typed text while the Bridge is unavailable.
-  assert.match(source, /workbuddy-journal-draft-v1/);
-  assert.match(source, /workbuddy-idea-draft-v1/);
-  assert.match(source, /workbuddy-capture-focus/);
+  assert.match(source, /scholarbuddy-journal-draft-v1/);
+  assert.match(source, /scholarbuddy-idea-draft-v1/);
+  assert.match(source, /scholarbuddy-capture-focus/);
   assert.match(source, /event\.key\.toLowerCase\(\) === "j"/);
   assert.match(source, /event\.key\.toLowerCase\(\) === "i"/);
   assert.match(source, /saveRecord\("journal"/);
@@ -140,32 +175,50 @@ test("client routes all bridge calls through pairing auth and keeps daily and so
   assert.match(source, /Claude/);
   assert.match(source, /Grok/);
   assert.match(source, /Gemini/);
-  assert.match(source, /workbuddy-ai-provider/);
+  assert.match(source, /scholarbuddy-ai-provider/);
   assert.match(source, /manuscriptId/);
   assert.match(source, /projectId/);
   assert.match(source, /One paper, <em>one context/);
-  assert.match(source, /workbuddy-focus-en-v2/);
+  assert.match(source, /scholarbuddy-focus-en-v2/);
   assert.match(source, /Focus session length/);
-  assert.match(source, /workbuddy-focus-completed/);
+  assert.match(source, /scholarbuddy-focus-completed/);
   assert.match(source, /Set as Primary/);
   assert.doesNotMatch(source, /NEXT OUTPUT · 50 MIN/);
   assert.match(source, /externalId: block\.id/);
-  assert.match(source, /workbuddy-calendar-refresh/);
+  assert.match(source, /scholarbuddy-calendar-refresh/);
   assert.match(source, /focus-wave \$\{running \? "active" : ""\}/);
   assert.match(source, /seconds < 21600/);
-  assert.match(source, /workbuddy-focus-celebration-v2/);
+  assert.match(source, /scholarbuddy-focus-celebration-v2/);
   assert.match(source, /status: "pending"/);
   assert.match(source, /status: "seen"/);
   assert.match(source, /document\.visibilityState !== "visible"/);
   assert.match(source, /visibilitychange/);
   assert.match(source, /FocusCelebration/);
   assert.match(source, /setTimeout\(finishCelebration, 8000\)/);
-  assert.match(source, /workbuddy-paper-celebrations-v1/);
+  assert.match(source, /scholarbuddy-paper-celebrations-v1/);
   assert.match(source, /热烈祝贺/);
   assert.match(source, /Herzlichen Glückwunsch/);
   assert.match(source, /saved\.stage === "Accepted" \|\| saved\.stage === "Published"/);
   assert.match(source, /Focus sessions and research milestones/);
   assert.match(source, /Calendar sync pending/);
+  // Sessions reach Calendar only after the researcher names one, and only that one.
+  assert.match(source, /if \(calendarRef\.current\) setPending/);
+  assert.match(source, /const calendar = calendarRef\.current;\s+if \(!calendar\) break;/);
+  assert.match(source, /window\.addEventListener\("storage", stored\)/);
+  assert.match(source, /scholarbuddy-focus-calendar/);
+  assert.match(source, /<option value="">Off<\/option>/);
+  // Tasks an AI plan adds in one tick must not share an id.
+  assert.match(source, /id: nextTaskId\(stored\)/);
+  assert.match(source, /id: nextTaskId\(items\)/);
+  assert.doesNotMatch(source, /id: Date\.now\(\)/);
+  // Esc and the backdrop ask before discarding unsaved work.
+  assert.match(
+    source,
+    /if \(canDismiss\(\)\) closeWithTransition\(onClose, event\.currentTarget\)/,
+  );
+  assert.match(source, /top === "editor" && unsaved\.editor && !confirmDiscard\("record"\)/);
+  assert.match(source, /Disconnect this browser/);
+  assert.match(source, /could not be loaded/);
   assert.match(source, /project-flow-columns/);
   assert.match(source, /projectId: project\.id, projectTitle: project\.title, stage: "Concept"/);
   assert.doesNotMatch(source, /project-paper-outputs/);
@@ -197,7 +250,7 @@ test("client routes all bridge calls through pairing auth and keeps daily and so
   assert.match(source, /display === "list"/);
   assert.match(source, /passage-year-block/);
   assert.match(source, /LinkedPassages/);
-  assert.match(clientSource, /workbuddy-bridge-url/);
+  assert.match(clientSource, /scholarbuddy-bridge-url/);
   assert.match(source, /Bridge unreachable · open in a Mac browser/);
   assert.match(css, /\.record-board > \.real-empty \{ grid-column: 1 \/ -1; \}/);
   assert.match(css, /\.real-summary-grid \{ margin-top: 18px;[\s\S]*repeat\(2/);

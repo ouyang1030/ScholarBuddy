@@ -44,7 +44,7 @@ export function ReminderSettings({ paired }: { paired: boolean }) {
         setLoadError(error instanceof Error ? error.message : "Connect your Mac to use reminders."),
       );
     const start = window.setTimeout(load, 0);
-    const timer = window.setInterval(load, 10_000);
+    const timer = window.setInterval(load, 30_000);
     return () => {
       window.clearTimeout(start);
       window.clearInterval(timer);

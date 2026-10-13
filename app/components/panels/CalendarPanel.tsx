@@ -51,8 +51,8 @@ export function CalendarPanel() {
   }, []);
   useEffect(() => {
     const sync = () => void refresh();
-    window.addEventListener("workbuddy-calendar-refresh", sync);
-    return () => window.removeEventListener("workbuddy-calendar-refresh", sync);
+    window.addEventListener("scholarbuddy-calendar-refresh", sync);
+    return () => window.removeEventListener("scholarbuddy-calendar-refresh", sync);
   }, []);
   const openEditor = (event?: CalendarEvent) => {
     setEdit(event || "new");
