@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { bridgeFetch } from "../../lib/bridge-client";
+import { bridgeFailure, failureText, useT, valueLabel } from "../../i18n";
 import { readingStatusClass } from "../../lib/workbench";
 import type { CollectionKey, RecordItem, WorkbenchState, ZoteroItem } from "../../types";
 import { EmptyState, SourceDot } from "../primitives";
@@ -17,6 +18,7 @@ export function LiteraturePanel({
   compact?: boolean;
   paper?: RecordItem;
 }) {
+  const t = useT();
   const activeProject = state.projects.find((item) => item.active) || state.projects[0];
   const activeRQ =
     state["research-questions"].find((item) => item.status === "Active") ||
@@ -45,11 +47,7 @@ export function LiteraturePanel({
         manuscriptTitle: paper?.title || "",
       });
     } catch (queueError) {
-      setNotice(
-        queueError instanceof Error
-          ? queueError.message
-          : "This paper could not be added to the reading queue.",
-      );
+      setNotice(failureText(t, queueError, t.errors.saveFailed));
     }
   };
   const search = useCallback(async (value: string) => {
@@ -58,10 +56,10 @@ export function LiteraturePanel({
     try {
       const response = await bridgeFetch(`/zotero/search?q=${encodeURIComponent(value.trim())}`);
       const body = await response.json();
-      if (!response.ok) throw new Error(body.error || "Zotero search failed.");
+      if (!response.ok) throw bridgeFailure(body, "search failed");
       setItems(body.items || []);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Zotero search failed.");
+      setError(e instanceof Error ? e.message : "search failed");
     } finally {
       setLoading(false);
     }
@@ -85,7 +83,7 @@ export function LiteraturePanel({
     <article className={`${compact ? "literature-radar" : "literature-card"} card real-panel`}>
       <div className="section-heading">
         <div>
-          <span className="label">LIVE LIBRARY</span>
+          <span className="label">{t.library.label}</span>
         </div>
         <span className="source-chip">
           <SourceDot />
@@ -94,7 +92,7 @@ export function LiteraturePanel({
       </div>
       {paper && (
         <p className="paper-link-note">
-          Adding literature to <strong>{paper.title}</strong>
+          {t.library.for} <strong>{paper.title}</strong>
         </p>
       )}
       <div className="literature-search">
@@ -102,29 +100,29 @@ export function LiteraturePanel({
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && search(query)}
-          placeholder="Search your Zotero library…"
+          placeholder={t.library.search}
         />
-        <button onClick={() => search(query)}>Search</button>
+        <button onClick={() => search(query)}>{t.library.searchButton}</button>
       </div>
       {notice && (
         <p className="panel-notice" role="alert">
           {notice}
-          <button onClick={() => setNotice("")}>Dismiss</button>
+          <button onClick={() => setNotice("")}>{t.common.dismiss}</button>
         </p>
       )}
       {error ? (
         <div className="calendar-error">
           <span>!</span>
-          <p>Zotero is temporarily unavailable.</p>
-          <button onClick={() => search(query)}>Retry</button>
+          <p>{t.library.unavailable}</p>
+          <button onClick={() => search(query)}>{t.common.retry}</button>
         </div>
       ) : loading ? (
         <div className="schedule-loading">
           <span />
-          Searching Zotero…
+          {t.library.searching}
         </div>
       ) : !items.length ? (
-        <EmptyState title="No matching records" />
+        <EmptyState title={t.library.noResults} />
       ) : (
         <div className="real-paper-list">
           {items.slice(0, compact ? 5 : 12).map((item) => (
@@ -132,8 +130,8 @@ export function LiteraturePanel({
               <span className="zotero-year">{item.year || "—"}</span>
               <div>
                 <strong>{item.title.replace(/<[^>]+>/g, "")}</strong>
-                <small>{item.creators.join(", ") || "No creators recorded"}</small>
-                <em>{item.doi ? `DOI ${item.doi}` : `Zotero item ${item.key}`}</em>
+                <small>{item.creators.join(", ") || t.library.noAuthors}</small>
+                <em>{item.doi ? `DOI ${item.doi}` : t.library.item(item.key)}</em>
               </div>
               <span className="paper-buttons">
                 <button
@@ -141,7 +139,7 @@ export function LiteraturePanel({
                     window.location.href = `zotero://select/library/items/${item.key}`;
                   }}
                 >
-                  Open
+                  {t.library.open}
                 </button>
                 <button
                   className={
@@ -152,7 +150,11 @@ export function LiteraturePanel({
                   disabled={queuedStatus.has(item.key)}
                   onClick={() => void queue(item)}
                 >
-                  {queuedStatus.get(item.key) || (paper ? "+ Attach" : "+ Queue")}
+                  {queuedStatus.has(item.key)
+                    ? valueLabel(t.values.status, queuedStatus.get(item.key))
+                    : paper
+                      ? t.library.attach
+                      : t.library.queue}
                 </button>
               </span>
             </article>

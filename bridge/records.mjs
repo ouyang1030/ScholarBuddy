@@ -8,6 +8,7 @@ import { RECORD_COLLECTIONS, RECORD_ID_PREFIXES } from "../shared/constants.mjs"
 import { compareRecords } from "../shared/records.mjs";
 import { writeFileAtomic } from "./atomic-file.mjs";
 import { httpError, requireText } from "./http.mjs";
+import { t } from "./i18n.mjs";
 
 let recordMutationTail = Promise.resolve();
 
@@ -131,9 +132,7 @@ function recordHash(content) {
 
 function checkRecordHash(expected, actual) {
   if (!expected || expected !== actual) {
-    const error = new Error(
-      "This file changed or needs to be reloaded. Reload before saving or deleting.",
-    );
+    const error = new Error(t("records.fileChanged"));
     error.status = expected ? 409 : 428;
     error.code = expected ? "content_conflict" : "content_hash_required";
     throw error;
@@ -201,7 +200,7 @@ export async function readCollection(config, collection) {
           safeRecordId(id);
         } catch {
           // Listing it would offer a record no save or delete could address.
-          skip("Rename the file using only letters, digits, dots, dashes, and underscores.");
+          skip(t("records.rename"));
           return;
         }
         try {
@@ -209,7 +208,7 @@ export async function readCollection(config, collection) {
         } catch (error) {
           // Deleted between the listing and the read: there is nothing to report.
           if (error?.code === "ENOENT") return;
-          skip(error?.status === 422 ? error.reason : "The file could not be read.");
+          skip(error?.status === 422 ? error.reason : t("records.unreadable"));
         }
       }),
   );
@@ -234,7 +233,11 @@ export async function listRecords(config, collection, { complete = false } = {})
   if (complete && invalid.length)
     throw httpError(
       409,
-      `Repair or remove ScholarBuddy/${invalid[0].collection}/${invalid[0].file} first: ${invalid[0].reason}`,
+      t(
+        "records.repairFirst",
+        `ScholarBuddy/${invalid[0].collection}/${invalid[0].file}`,
+        invalid[0].reason,
+      ),
       "collection_incomplete",
     );
   return records;
@@ -305,18 +308,14 @@ export async function saveRecordUnlocked(config, collectionValue, incoming) {
     if (error?.code !== "ENOENT") throw error;
   }
   if (exists && !requestedVersion) {
-    throw httpError(428, "Reload this record before saving it.", "version_required");
+    throw httpError(428, t("records.reloadBeforeSaving"), "version_required");
   }
   if (exists && requestedVersion !== previous.version) {
-    throw httpError(
-      409,
-      "This record changed after you opened it. Reload before saving.",
-      "version_conflict",
-    );
+    throw httpError(409, t("records.changedBeforeSaving"), "version_conflict");
   }
   if (exists) checkRecordHash(incoming.contentHash, previous.contentHash);
   else if (requestedVersion || incoming.contentHash) {
-    throw httpError(409, "That record no longer exists. Reload before saving.", "content_conflict");
+    throw httpError(409, t("records.goneBeforeSaving"), "content_conflict");
   }
   const previousTime = new Date(previous.updatedAt || 0).getTime();
   const candidate = {
@@ -373,17 +372,13 @@ async function deleteRecordUnlocked(config, collectionValue, idValue, version, c
     record = await readStoredRecord(file, id, collection);
   } catch (error) {
     if (error?.code !== "ENOENT") throw error;
-    throw httpError(404, "That record no longer exists.");
+    throw httpError(404, t("records.gone"));
   }
   if (!version) {
-    throw httpError(428, "Reload this record before deleting it.", "version_required");
+    throw httpError(428, t("records.reloadBeforeDeleting"), "version_required");
   }
   if (version !== record.version) {
-    throw httpError(
-      409,
-      "This record changed after you opened it. Reload before deleting.",
-      "version_conflict",
-    );
+    throw httpError(409, t("records.changedBeforeDeleting"), "version_conflict");
   }
   checkRecordHash(contentHash, record.contentHash);
   checkRecordHash(contentHash, recordHash(await readFile(file, "utf8")));

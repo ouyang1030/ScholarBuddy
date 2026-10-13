@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { failureText, useLocale, useT, type Locale, type Messages } from "../../i18n";
 import { localDateKey, shortDate } from "../../lib/format";
 import type { DataProps } from "../../lib/workbench";
 import type { RecordItem } from "../../types";
@@ -14,11 +15,11 @@ function entryTitle(text: string, today: string) {
   return first?.trim().slice(0, 90) || `Research log · ${today}`;
 }
 
-function dayLabel(day: string, today: string, yesterday: string) {
-  if (!day) return "UNDATED";
-  if (day === today) return "TODAY";
-  if (day === yesterday) return "YESTERDAY";
-  return shortDate(day).toUpperCase();
+function dayLabel(t: Messages, locale: Locale, day: string, today: string, yesterday: string) {
+  if (!day) return t.log.undated;
+  if (day === today) return t.log.todayLabel;
+  if (day === yesterday) return t.log.yesterday;
+  return shortDate(day, locale).toUpperCase();
 }
 
 export function JournalPanel({
@@ -31,6 +32,8 @@ export function JournalPanel({
   project?: RecordItem;
   paper?: RecordItem;
 }) {
+  const t = useT();
+  const { locale } = useLocale();
   const now = new Date();
   const today = localDateKey(now);
   // Built from the calendar day rather than a millisecond offset, so the label
@@ -78,9 +81,7 @@ export function JournalPanel({
       });
       setText("");
     } catch (saveError) {
-      setError(
-        saveError instanceof Error ? saveError.message : "This entry could not be saved yet.",
-      );
+      setError(failureText(t, saveError, t.errors.saveFailed));
     } finally {
       setSaving(false);
     }
@@ -95,12 +96,9 @@ export function JournalPanel({
     <article className="research-log card real-panel">
       <div className="section-heading">
         <div>
-          <span className="label">RESEARCH LOG / OBSIDIAN</span>
-          <p>What actually changed today</p>
+          <span className="label">{t.log.label}</span>
         </div>
-        <span className="completion-count">
-          <b>{days.get(today)?.length || 0}</b> today
-        </span>
+        <span className="completion-count">{t.log.today(days.get(today)?.length || 0)}</span>
       </div>
       <div className="journal-capture">
         <textarea
@@ -113,31 +111,29 @@ export function JournalPanel({
               void save();
             }
           }}
-          placeholder="A result, a decision, a dead end — one entry, no fields to fill in…"
-          aria-label="Research log entry"
+          placeholder={t.log.placeholder}
+          aria-label={t.log.entry}
         />
         <div className="journal-capture-actions">
-          <kbd>⌘ J to capture · ⌘ ⏎ to save</kbd>
+          <kbd>{t.log.shortcut}</kbd>
           <button className="primary-button" disabled={saving || !text.trim()} onClick={save}>
-            {saving ? "Saving…" : "Save entry"}
+            {saving ? t.common.saving : t.log.save}
           </button>
         </div>
       </div>
       {error && (
         <div className="capture-error">
           <span>!</span>
-          <p>{error} Your text is kept here until it saves.</p>
-          <button onClick={save}>Retry</button>
+          <p>{error}</p>
+          <button onClick={save}>{t.common.retry}</button>
         </div>
       )}
       {Boolean(visible.length) &&
         [...days.entries()].map(([day, items]) => (
           <section key={day || "undated"}>
             <div className="journal-day">
-              <span>{dayLabel(day, today, yesterday)}</span>
-              <span>
-                {items.length} entr{items.length === 1 ? "y" : "ies"}
-              </span>
+              <span>{dayLabel(t, locale, day, today, yesterday)}</span>
+              <span>{t.log.entries(items.length)}</span>
             </div>
             <div className="journal-entry-list">
               {items.map((item) => (

@@ -1,24 +1,23 @@
 "use client";
 
+import { useT } from "../../i18n";
 import type { RecordItem, WorkbenchState } from "../../types";
 import { zoteroPassageUrl } from "../../../shared/zotero.mjs";
 import { EmptyState } from "../primitives";
 
 export function LinkedPassages({ paper, state }: { paper: RecordItem; state: WorkbenchState }) {
+  const t = useT();
   const records = state.passages.filter((item) => item.manuscriptId === paper.id);
   return (
     <section className="linked-passages card">
       <div className="section-heading">
         <div>
-          <span className="label">LINKED PASSAGES</span>
+          <span className="label">{t.paper.linked}</span>
         </div>
         <b>{records.length}</b>
       </div>
       {!records.length ? (
-        <EmptyState
-          title="No linked passages"
-          detail="Open Library → Passage Library to connect Zotero highlights to this paper."
-        />
+        <EmptyState title={t.paper.noLinked} />
       ) : (
         <div>
           {records.map((item) => (

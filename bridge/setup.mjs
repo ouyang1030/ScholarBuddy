@@ -15,6 +15,7 @@ import {
 } from "./access.mjs";
 import { runCalendar, chooseVault } from "./macos.mjs";
 import { httpError, html, json, readJson } from "./http.mjs";
+import { currentLanguage, t } from "./i18n.mjs";
 import { providerDefinitions, modelConfig, testProviderModel } from "./providers.mjs";
 import { setupState } from "./status.mjs";
 
@@ -22,11 +23,12 @@ export async function handleSetup(request, config) {
   const url = new URL(request.url);
   if (url.pathname === "/setup" && request.method === "GET") {
     if (request.headers.get("origin") || !localSetupOrigin(request.url))
-      return json("", { error: "Direct local navigation is required." }, 403);
+      return json("", { error: t("access.localOnly") }, 403);
     return html(
       setupPage(
         issueSetupSession(),
         setupReturnOrigin(config, url.searchParams.get("return") || ""),
+        currentLanguage(),
       ),
     );
   }
@@ -34,7 +36,7 @@ export async function handleSetup(request, config) {
     return json(
       "",
       {
-        error: "This setup session expired. Reload the local setup page.",
+        error: t("setupErrors.expired"),
         code: "setup_session_required",
       },
       401,
@@ -50,7 +52,7 @@ export async function handleSetup(request, config) {
     const provider = String(payload.provider || "");
     const definition = providerDefinitions[provider];
     if (!definition) {
-      throw httpError(422, "Select a supported AI provider.");
+      throw httpError(422, t("setupErrors.providerInvalid"));
     }
     if (request.method === "DELETE") {
       await deleteKeychainSecret(provider);
@@ -62,13 +64,13 @@ export async function handleSetup(request, config) {
     const apiKey = String(payload.apiKey || "").trim();
     const model = String(payload.model || "").trim();
     if (apiKey && (apiKey.length < 8 || apiKey.length > 2_000 || /[\r\n]/.test(apiKey))) {
-      throw httpError(422, "Enter a valid API key.");
+      throw httpError(422, t("setupErrors.apiKeyInvalid"));
     }
     if (model && (model.length > 200 || /[\r\n]/.test(model))) {
-      throw httpError(422, "Model name is invalid.");
+      throw httpError(422, t("setupErrors.modelInvalid"));
     }
     if (!apiKey && !model) {
-      throw httpError(422, "Enter an API key or model name.");
+      throw httpError(422, t("setupErrors.keyOrModel"));
     }
     if (apiKey) {
       if (process.platform === "darwin") {
@@ -89,12 +91,12 @@ export async function handleSetup(request, config) {
     const payload = await readJson(request);
     const vaultPath = String(payload.vaultPath || "").trim();
     if (!path.isAbsolute(vaultPath) || vaultPath.length > 2_000 || /[\r\n]/.test(vaultPath)) {
-      throw httpError(422, "Choose a valid absolute Obsidian vault path.");
+      throw httpError(422, t("setupErrors.vaultPathInvalid"));
     }
     try {
       await access(vaultPath, constants.R_OK | constants.W_OK);
     } catch {
-      throw httpError(422, "The selected vault must exist and be readable and writable.");
+      throw httpError(422, t("setupErrors.vaultAccess"));
     }
     await updateLocalConfig(configFile, { OBSIDIAN_VAULT_PATH: vaultPath });
     config.OBSIDIAN_VAULT_PATH = vaultPath;
@@ -117,7 +119,7 @@ export async function handleSetup(request, config) {
     if (request.method === "GET")
       return json("", { perSite: Boolean(config._grants), grants: config._grants?.list() || [] });
     if (!config._grants) {
-      throw httpError(409, "A fixed SCHOLARBUDDY_BRIDGE_TOKEN is configured for this Bridge.");
+      throw httpError(409, t("setupErrors.fixedToken"));
     }
     const payload = await readJson(request);
     const changed =
@@ -128,7 +130,7 @@ export async function handleSetup(request, config) {
         : request.method === "POST" &&
           (await config._grants.setAccess(String(payload.id || ""), String(payload.access || "")));
     if (!changed) {
-      throw httpError(404, "That paired browser was not found.");
+      throw httpError(404, t("setupErrors.grantMissing"));
     }
     return json("", { perSite: true, grants: config._grants.list() });
   }
@@ -138,5 +140,5 @@ export async function handleSetup(request, config) {
     const code = issuePairingCode(pairingBinding(config), returnOrigin);
     return json("", { url: `${returnOrigin}/#bridge-pair=${encodeURIComponent(code)}` });
   }
-  return json("", { error: "Setup action not found." }, 404);
+  return json("", { error: t("setupErrors.notFound") }, 404);
 }

@@ -1,5 +1,7 @@
 "use client";
 
+import { useLocale, useT } from "../../i18n";
+import { shortDate } from "../../lib/format";
 import type { BridgeStatus, WorkbenchState } from "../../types";
 import { closeWithTransition, DrawerHeader } from "../primitives";
 
@@ -14,6 +16,8 @@ export function ContextDrawer({
   onClose: () => void;
   ref?: React.Ref<HTMLElement>;
 }) {
+  const t = useT();
+  const { locale } = useLocale();
   const project = state.projects.find((item) => item.active) || state.projects[0];
   const rq =
     state["research-questions"].find((item) => item.status === "Active") ||
@@ -30,28 +34,22 @@ export function ContextDrawer({
         className="action-drawer context-drawer"
         role="dialog"
         aria-modal="true"
-        aria-label="Real context"
+        aria-label={t.context.label}
         tabIndex={-1}
         onMouseDown={(e) => e.stopPropagation()}
       >
         <DrawerHeader
-          label="Real context"
+          label={t.context.label}
           mark="◇"
           eyebrow="OBSIDIAN + ZOTERO"
-          title={
-            <>
-              What ScholarBuddy
-              <br />
-              can use now
-            </>
-          }
+          title={t.context.title}
           onClose={onClose}
         />
         <div className="context-groups">
           <section>
             <div>
-              <span>PROJECT FRAME</span>
-              <b>{state.projects.length + state["research-questions"].length} records</b>
+              <span>{t.context.frame}</span>
+              <b>{t.context.records(state.projects.length + state["research-questions"].length)}</b>
             </div>
             {project ? (
               <p>
@@ -59,7 +57,7 @@ export function ContextDrawer({
                 <span>
                   <strong>{project.title}</strong>
                   <small>
-                    {project.id} · {project.active ? "active" : "first available"}
+                    {project.id} · {project.active ? t.context.active : t.context.firstAvailable}
                   </small>
                 </span>
               </p>
@@ -67,8 +65,8 @@ export function ContextDrawer({
               <p>
                 <i className="warning">!</i>
                 <span>
-                  <strong>No project</strong>
-                  <small>Create one in Projects</small>
+                  <strong>{t.context.noProject}</strong>
+                  <small>{t.context.createInProjects}</small>
                 </span>
               </p>
             )}
@@ -84,42 +82,43 @@ export function ContextDrawer({
               <p>
                 <i className="warning">!</i>
                 <span>
-                  <strong>No research question</strong>
-                  <small>Create one in Research Map</small>
+                  <strong>{t.context.noQuestion}</strong>
+                  <small>{t.context.createInProjects}</small>
                 </span>
               </p>
             )}
           </section>
           <section>
             <div>
-              <span>DAILY CAPTURE</span>
-              <b>{state.journal.length + inbox.length} records</b>
+              <span>{t.context.capture}</span>
+              <b>{t.context.records(state.journal.length + inbox.length)}</b>
             </div>
             <p>
               <i className={recentLog ? "checked" : "warning"}>{recentLog ? "✓" : "!"}</i>
               <span>
-                <strong>{recentLog ? recentLog.title : "No research log entry"}</strong>
+                <strong>{recentLog ? recentLog.title : t.context.noLog}</strong>
                 <small>
                   {recentLog
-                    ? `${recentLog.entryDate || "Undated"} · last three days travel with the AI context`
-                    : "Write one on Today so the AI knows what already moved"}
+                    ? t.context.logWindow(
+                        recentLog.entryDate
+                          ? shortDate(recentLog.entryDate, locale)
+                          : t.context.undated,
+                      )
+                    : t.context.writeLog}
                 </small>
               </span>
             </p>
             <p>
               <i className="checked">✓</i>
               <span>
-                <strong>
-                  {inbox.length} idea{inbox.length === 1 ? "" : "s"} waiting
-                </strong>
-                <small>Captured ideas stay out of the AI context once promoted or dropped</small>
+                <strong>{t.context.ideas(inbox.length)}</strong>
               </span>
             </p>
           </section>
           <section>
             <div>
-              <span>CONNECTED SOURCES</span>
-              <b>Live status</b>
+              <span>{t.context.sources}</span>
+              <b>{t.context.live}</b>
             </div>
             <p>
               <i className={status?.zotero.connected ? "checked" : "warning"}>
@@ -128,7 +127,9 @@ export function ContextDrawer({
               <span>
                 <strong>Zotero</strong>
                 <small>
-                  {status?.zotero.connected ? `Desktop ${status.zotero.version}` : "Offline"}
+                  {status?.zotero.connected
+                    ? t.context.desktop(status.zotero.version || "")
+                    : t.context.offline}
                 </small>
               </span>
             </p>
@@ -137,20 +138,20 @@ export function ContextDrawer({
                 {status?.obsidian.connected ? "✓" : "!"}
               </i>
               <span>
-                <strong>Obsidian · {status?.obsidian.vault || "Vault"}</strong>
+                <strong>Obsidian · {status?.obsidian.vault || t.connections.vault}</strong>
                 <small>
                   {status?.obsidian.connected
-                    ? `${Object.values(state).flat().length} ScholarBuddy records`
-                    : "Offline"}
+                    ? t.context.vaultRecords(Object.values(state).flat().length)
+                    : t.context.offline}
                 </small>
               </span>
             </p>
           </section>
         </div>
         <div className="drawer-footer">
-          <span className="small-note">Context is assembled at workflow run time</span>
+          <span className="small-note">{t.context.footer}</span>
           <button className="primary-button" onClick={onClose}>
-            Done
+            {t.context.done}
           </button>
         </div>
       </aside>

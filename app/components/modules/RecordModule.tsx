@@ -1,7 +1,8 @@
 "use client";
 
+import { useLocale, useT, valueLabel } from "../../i18n";
 import { clampProgress, shortDate } from "../../lib/format";
-import { collectionLabels, isOpen } from "../../lib/workbench";
+import { isOpen } from "../../lib/workbench";
 import type { CollectionKey, RecordItem, WorkbenchState } from "../../types";
 import { EmptyState, MetaPill } from "../primitives";
 
@@ -9,7 +10,6 @@ export function RecordModule({
   collection,
   title,
   eyebrow,
-  description,
   state,
   openEditor,
   // A log entry and an idea have no percentage to report; showing an inert 0%
@@ -19,11 +19,13 @@ export function RecordModule({
   collection: CollectionKey;
   title: React.ReactNode;
   eyebrow: string;
-  description: string;
   state: WorkbenchState;
   openEditor: (collection: CollectionKey, record?: Partial<RecordItem>) => void;
   showProgress?: boolean;
 }) {
+  const t = useT();
+  const { locale } = useLocale();
+  const label = t.collections[collection];
   const records = state[collection];
   return (
     <>
@@ -31,15 +33,14 @@ export function RecordModule({
         <div>
           <p className="eyebrow">{eyebrow}</p>
           <h1>{title}</h1>
-          <p>{description}</p>
         </div>
         <button className="primary-button" onClick={() => openEditor(collection)}>
-          New {collectionLabels[collection]} <b>+</b>
+          {t.records.new(label)} <b>+</b>
         </button>
       </section>
       <section className="record-board">
         {!records.length ? (
-          <EmptyState title={`No ${collectionLabels[collection].toLowerCase()} yet`} />
+          <EmptyState title={t.records.none(label)} />
         ) : (
           records.map((item) => (
             <article className="record-card card" key={item.id}>
@@ -62,7 +63,7 @@ export function RecordModule({
                             : "blue"
                     }
                   >
-                    {item.status || "Unspecified"}
+                    {item.status ? valueLabel(t.values.status, item.status) : t.records.unspecified}
                   </MetaPill>
                 )}
               </div>
@@ -71,53 +72,53 @@ export function RecordModule({
               <div className="record-meta">
                 {item.manuscriptTitle && (
                   <span>
-                    Paper <b>{item.manuscriptTitle}</b>
+                    {t.records.paper} <b>{item.manuscriptTitle}</b>
                   </span>
                 )}
                 {item.projectTitle && (
                   <span>
-                    Project <b>{item.projectTitle}</b>
+                    {t.records.project} <b>{item.projectTitle}</b>
                   </span>
                 )}
                 {item.phase && (
                   <span>
-                    Phase <b>{item.phase}</b>
+                    {t.records.phase} <b>{item.phase}</b>
                   </span>
                 )}
                 {item.method && (
                   <span>
-                    Method <b>{item.method}</b>
+                    {t.records.method} <b>{item.method}</b>
                   </span>
                 )}
                 {item.journal && (
                   <span>
-                    Journal <b>{item.journal}</b>
+                    {t.records.journal} <b>{item.journal}</b>
                   </span>
                 )}
                 {item.type && (
                   <span>
-                    Type <b>{item.type}</b>
+                    {t.records.type} <b>{valueLabel(t.values.operationType, item.type)}</b>
                   </span>
                 )}
                 {item.dueDate && (
                   <span>
-                    Due <b>{item.dueDate}</b>
+                    {t.records.due} <b>{shortDate(item.dueDate, locale)}</b>
                   </span>
                 )}
                 {item.entryDate && (
                   <span>
-                    Logged <b>{shortDate(item.entryDate)}</b>
+                    {t.records.logged} <b>{shortDate(item.entryDate, locale)}</b>
                   </span>
                 )}
                 {item.promotedTo && (
                   <span>
-                    Promoted to <b>{item.promotedTo}</b>
+                    {t.records.promotedTo} <b>{item.promotedTo}</b>
                   </span>
                 )}
               </div>
               {showProgress && (
                 <div className="manual-progress">
-                  <span>Progress</span>
+                  <span>{t.records.progress}</span>
                   <b>{clampProgress(item.progress)}%</b>
                   <i>
                     <em style={{ width: `${clampProgress(item.progress)}%` }} />
@@ -125,7 +126,7 @@ export function RecordModule({
                 </div>
               )}
               <button className="quiet-button" onClick={() => openEditor(collection, item)}>
-                Edit record
+                {t.records.edit}
               </button>
             </article>
           ))

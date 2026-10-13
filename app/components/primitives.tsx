@@ -1,15 +1,12 @@
 "use client";
 
 import { useEffect } from "react";
+import { useT, type Messages } from "../i18n";
 import { clampProgress } from "../lib/format";
 
-const discardQuestions = {
-  record: "Discard the unsaved changes to this record?",
-  answer: "Close this workflow? Its answer has not been saved.",
-};
-export type UnsavedWork = keyof typeof discardQuestions;
-export function confirmDiscard(work: UnsavedWork) {
-  return window.confirm(discardQuestions[work]);
+export type UnsavedWork = keyof Messages["discard"];
+export function confirmDiscard(t: Messages, work: UnsavedWork) {
+  return window.confirm(t.discard[work]);
 }
 
 /**
@@ -22,11 +19,12 @@ export function useUnsavedWork(
   unsaved: boolean,
   report?: (unsaved: boolean) => void,
 ) {
+  const t = useT();
   useEffect(() => {
     report?.(unsaved);
     return () => report?.(false);
   }, [report, unsaved]);
-  return () => !unsaved || confirmDiscard(work);
+  return () => !unsaved || confirmDiscard(t, work);
 }
 
 export function closeWithTransition(onClose: () => void, backdrop?: Element | null) {
@@ -70,6 +68,7 @@ export function DrawerHeader({
   closeLabel?: string;
   onClose: () => void;
 }) {
+  const t = useT();
   return (
     <>
       <div className="drawer-head">
@@ -77,7 +76,7 @@ export function DrawerHeader({
           onClick={(event) =>
             closeWithTransition(onClose, event.currentTarget.closest(".drawer-backdrop"))
           }
-          aria-label={`Close ${(closeLabel || label).toLowerCase()}`}
+          aria-label={`${t.common.close} · ${closeLabel || label}`}
         >
           ×
         </button>
@@ -147,12 +146,15 @@ export function ModuleTabs<Key extends string>({
 export function PageHeader({
   eyebrow,
   title,
+  hideTitle = false,
   description,
   actions,
   compact = false,
 }: {
   eyebrow: string;
   title: React.ReactNode;
+  /** The eyebrow already names the page; the heading stays for screen readers. */
+  hideTitle?: boolean;
   description?: React.ReactNode;
   actions?: React.ReactNode;
   compact?: boolean;
@@ -161,7 +163,7 @@ export function PageHeader({
     <section className={`page-header ${compact ? "compact" : ""}`}>
       <div>
         <p className="eyebrow">{eyebrow}</p>
-        <h1>{title}</h1>
+        <h1 className={hideTitle ? "sr-only" : undefined}>{title}</h1>
         {description && <div className="page-header-description">{description}</div>}
       </div>
       {actions && <div className="page-header-actions">{actions}</div>}
@@ -179,7 +181,7 @@ export function SettingRow({
   onChange,
 }: {
   label: string;
-  detail: string;
+  detail?: string;
   checked: boolean;
   disabled?: boolean;
   featured?: boolean;
@@ -190,7 +192,7 @@ export function SettingRow({
     <label className={`setting-row ${featured ? "featured" : ""}`}>
       <span className="setting-row-copy">
         <strong>{label}</strong>
-        <small>{detail}</small>
+        {detail && <small>{detail}</small>}
         {feedback}
       </span>
       <input
@@ -204,18 +206,23 @@ export function SettingRow({
   );
 }
 
-const SAVE_COPY = { saving: "Saving…", saved: "Saved", error: "Not saved" };
-
 export function SaveFeedback({
   state,
-  labels = SAVE_COPY,
+  labels,
 }: {
   state: "idle" | "saving" | "saved" | "error";
   /** Override when the indicator reports something other than a save. */
   labels?: { saving: string; saved: string; error: string };
 }) {
+  const t = useT();
   if (state === "idle") return null;
-  const copy = state === "saving" ? labels.saving : state === "saved" ? labels.saved : labels.error;
+  const copy = labels
+    ? labels[state]
+    : state === "saving"
+      ? t.common.saving
+      : state === "saved"
+        ? t.common.saved
+        : t.common.notSaved;
   return (
     <span className={`save-feedback ${state}`} role={state === "error" ? "alert" : "status"}>
       <i aria-hidden="true">{state === "saved" ? "✓" : state === "error" ? "!" : ""}</i>

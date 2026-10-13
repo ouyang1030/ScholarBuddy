@@ -116,7 +116,7 @@ function modelCall(config, payload, context, stream) {
     : evidencePrompt;
   const request = modelRequest(
     target,
-    systemPrompt(payload.command),
+    systemPrompt(payload.command, payload.language),
     prompt,
     Math.min(2400, configInteger(config, "SCHOLARBUDDY_AI_MAX_OUTPUT_TOKENS", 2400, 1)),
     { history, stream },

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { bridgeFailure, failureText, useT, valueLabel } from "../../i18n";
 import { bridgeFetch } from "../../lib/bridge-client";
 import { manuscriptSections, passageCitation, passageSection } from "../../lib/workbench";
 import type { CollectionKey, RecordItem, WorkbenchState, ZoteroPassage } from "../../types";
@@ -15,36 +16,31 @@ export function PassageLibrary({
   saveRecord: (collection: CollectionKey, record: Partial<RecordItem>) => Promise<RecordItem>;
   paper?: RecordItem;
 }) {
+  const t = useT();
   const [passages, setPassages] = useState<ZoteroPassage[]>([]);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<"all" | "current" | "unused" | "used">("all");
   const [display, setDisplay] = useState<"cards" | "list">("cards");
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const [error, setError] = useState(false);
   const [copied, setCopied] = useState("");
   const [notice, setNotice] = useState("");
-  const [coverage, setCoverage] = useState("");
+  // Only the most recently changed highlights are read; this says so when there are more.
+  const [coverage, setCoverage] = useState<{ limit: number; total: number } | null>(null);
   const [paperIds, setPaperIds] = useState<Record<string, string>>({});
   const [sections, setSections] = useState<Record<string, string>>({});
   const [keywords, setKeywords] = useState<Record<string, string>>({});
   const load = useCallback(async () => {
     setLoading(true);
-    setError("");
+    setError(false);
     try {
       const response = await bridgeFetch("/zotero/passages");
       const body = await response.json();
-      if (!response.ok) throw new Error(body.error || "Passages could not be loaded.");
+      if (!response.ok) throw bridgeFailure(body, "");
       setPassages(body.passages || []);
-      // Only the most recently changed highlights are read; say so when there are more.
-      setCoverage(
-        body.truncated
-          ? body.total > body.limit
-            ? `Showing the ${body.limit} most recently changed of ${body.total} Zotero annotations.`
-            : `Showing the ${body.limit} most recently changed Zotero annotations; older ones are not listed.`
-          : "",
-      );
-    } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "Passages could not be loaded.");
+      setCoverage(body.truncated ? { limit: body.limit, total: body.total } : null);
+    } catch {
+      setError(true);
     } finally {
       setLoading(false);
     }
@@ -125,9 +121,7 @@ export function PassageLibrary({
         linkedAt: existing?.linkedAt || new Date().toISOString(),
       });
     } catch (linkError) {
-      setNotice(
-        linkError instanceof Error ? linkError.message : "This passage could not be linked.",
-      );
+      setNotice(failureText(t, linkError, t.errors.saveFailed));
     }
   };
   const markUsed = async (passage: ZoteroPassage) => {
@@ -141,90 +135,92 @@ export function PassageLibrary({
         usedAt: new Date().toISOString(),
       });
     } catch (usedError) {
-      setNotice(
-        usedError instanceof Error
-          ? usedError.message
-          : "This passage could not be marked as used.",
-      );
+      setNotice(failureText(t, usedError, t.errors.saveFailed));
     }
   };
   return (
     <section className="passage-library">
       <div className="passage-toolbar card">
         <div>
-          <span className="label">ZOTERO HIGHLIGHTS</span>
-          <h2>Passage Library</h2>
+          <span className="label">{t.passages.label}</span>
+          <h2>{t.passages.title}</h2>
         </div>
         <button className="quiet-button passage-refresh" onClick={load}>
-          Refresh
+          {t.passages.refresh}
         </button>
         <div className="passage-search">
           <span>⌕</span>
           <input
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search passage, note, source, author, or keyword…"
+            placeholder={t.passages.search}
           />
         </div>
         <div className="passage-toolbar-bottom">
           <div className="passage-filters">
             <button className={filter === "all" ? "active" : ""} onClick={() => setFilter("all")}>
-              All
+              {t.passages.all}
             </button>
             {paper && (
               <button
                 className={filter === "current" ? "active" : ""}
                 onClick={() => setFilter("current")}
               >
-                Current paper
+                {t.passages.current}
               </button>
             )}
             <button
               className={filter === "unused" ? "active" : ""}
               onClick={() => setFilter("unused")}
             >
-              Unused
+              {t.passages.unused}
             </button>
             <button className={filter === "used" ? "active" : ""} onClick={() => setFilter("used")}>
-              Used
+              {t.passages.used}
             </button>
           </div>
-          <div className="passage-display" aria-label="Passage display">
+          <div className="passage-display" aria-label={t.passages.display}>
             <button
               className={display === "cards" ? "active" : ""}
               onClick={() => setDisplay("cards")}
             >
-              Cards
+              {t.passages.cards}
             </button>
             <button
               className={display === "list" ? "active" : ""}
               onClick={() => setDisplay("list")}
             >
-              List
+              {t.passages.list}
             </button>
           </div>
         </div>
       </div>
-      {coverage && <p className="panel-notice">{coverage}</p>}
+      {coverage && (
+        <p className="panel-notice">
+          {coverage.total > coverage.limit
+            ? t.passages.coverage(coverage.limit, coverage.total)
+            : t.passages.coverageOlder(coverage.limit)}
+        </p>
+      )}
       {notice && (
         <p className="panel-notice" role="alert">
           {notice}
-          <button onClick={() => setNotice("")}>Dismiss</button>
+          <button onClick={() => setNotice("")}>{t.common.dismiss}</button>
         </p>
       )}
       {error ? (
         <div className="calendar-error">
           <span>!</span>
-          <p>Zotero passages are temporarily unavailable.</p>
-          <button onClick={load}>Retry</button>
+          <p>{t.passages.unavailable}</p>
+          <button onClick={load}>{t.common.retry}</button>
         </div>
       ) : loading ? (
         <div className="schedule-loading">
           <span />
-          Loading Zotero highlights…
+          {t.passages.loading}
         </div>
       ) : !visible.length ? (
-        <EmptyState title={query ? "No matching passages" : "No Zotero highlights yet"} />
+        <EmptyState title={query ? t.passages.noMatch : t.passages.none} />
       ) : (
         <div className={`passage-list ${display === "list" ? "list-view" : "card-view"}`}>
           {visible.map((passage) => {
@@ -241,14 +237,14 @@ export function PassageLibrary({
             // Saying where the section came from is the difference between a
             // default worth accepting and one worth checking by hand.
             const sectionOrigin = chosen
-              ? "your choice"
+              ? t.passages.originChoice
               : auto.source === "pdf"
-                ? `read from “${auto.heading.slice(0, 32)}”`
+                ? t.passages.originPdf(auto.heading.slice(0, 32))
                 : auto.source === "tag"
-                  ? "from a Zotero tag"
+                  ? t.passages.originTag
                   : auto.source === "text"
-                    ? "guessed from wording"
-                    : "not detected";
+                    ? t.passages.originText
+                    : t.passages.originNone;
             return (
               <article
                 className="passage-card card"
@@ -260,9 +256,9 @@ export function PassageLibrary({
                     <b>{passage.year || "—"}</b>
                     <em
                       className={`passage-list-section${auto.source === "pdf" && !chosen ? " located" : ""}`}
-                      title={`Section · ${sectionOrigin}`}
+                      title={t.passages.section(sectionOrigin)}
                     >
-                      {selectedSection}
+                      {valueLabel(t.values.section, selectedSection)}
                     </em>
                   </span>
                   <div>
@@ -275,7 +271,7 @@ export function PassageLibrary({
                   </div>
                   {saved && (
                     <MetaPill tone={saved.status === "Used" ? "lime" : "blue"}>
-                      {saved.status || "Linked"}
+                      {valueLabel(t.values.status, saved.status || "Linked")}
                     </MetaPill>
                   )}
                 </header>
@@ -290,7 +286,7 @@ export function PassageLibrary({
                 </div>
                 <div className="passage-organize">
                   <label>
-                    <span>Paper</span>
+                    <span>{t.passages.paper}</span>
                     <select
                       value={selectedPaper}
                       onChange={(event) =>
@@ -300,7 +296,7 @@ export function PassageLibrary({
                         }))
                       }
                     >
-                      <option value="">Not linked</option>
+                      <option value="">{t.common.notLinked}</option>
                       {state.manuscripts.map((item) => (
                         <option key={item.id} value={item.id}>
                           {item.title}
@@ -309,7 +305,7 @@ export function PassageLibrary({
                     </select>
                   </label>
                   <label>
-                    <span>Section · {sectionOrigin}</span>
+                    <span>{t.passages.section(sectionOrigin)}</span>
                     <select
                       value={selectedSection}
                       onChange={(event) =>
@@ -320,12 +316,14 @@ export function PassageLibrary({
                       }
                     >
                       {manuscriptSections.map((section) => (
-                        <option key={section}>{section}</option>
+                        <option key={section} value={section}>
+                          {valueLabel(t.values.section, section)}
+                        </option>
                       ))}
                     </select>
                   </label>
                   <label>
-                    <span>Keywords</span>
+                    <span>{t.passages.keywords}</span>
                     <input
                       value={keywords[passage.key] ?? saved?.keywords ?? ""}
                       onChange={(event) =>
@@ -334,7 +332,7 @@ export function PassageLibrary({
                           [passage.key]: event.target.value,
                         }))
                       }
-                      placeholder="e.g. validity, COD"
+                      placeholder={t.passages.keywordsPlaceholder}
                     />
                   </label>
                 </div>
@@ -344,7 +342,7 @@ export function PassageLibrary({
                       window.location.href = passage.url;
                     }}
                   >
-                    Open in Zotero
+                    {t.passages.openZotero}
                   </button>
                   <button
                     onClick={async () => {
@@ -353,17 +351,17 @@ export function PassageLibrary({
                       window.setTimeout(() => setCopied(""), 1600);
                     }}
                   >
-                    {copied === passage.key ? "Copied" : "Copy Citation"}
+                    {copied === passage.key ? t.passages.copied : t.passages.copy}
                   </button>
                   <button
                     className="passage-link"
                     disabled={!selectedPaper}
                     onClick={() => void link(passage)}
                   >
-                    {saved ? "Update link" : "Link passage"}
+                    {saved ? t.passages.update : t.passages.link}
                   </button>
                   {saved && saved.status !== "Used" && (
-                    <button onClick={() => void markUsed(passage)}>Mark used</button>
+                    <button onClick={() => void markUsed(passage)}>{t.passages.markUsed}</button>
                   )}
                 </footer>
               </article>

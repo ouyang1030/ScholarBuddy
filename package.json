@@ -1,7 +1,7 @@
 {
   "name": "scholarbuddy-sports-research-os",
   "version": "0.1.0",
-  "description": "A local-first research workbench for evidence-driven sports analytics workflows.",
+  "description": "A local-first research workbench for evidence-driven sports science and other workflows.",
   "license": "Apache-2.0",
   "private": true,
   "engines": {

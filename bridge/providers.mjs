@@ -3,6 +3,7 @@
 import { createHash } from "node:crypto";
 import { AI_PROVIDER_DEFINITIONS, AI_PROVIDERS } from "../shared/constants.mjs";
 import { httpError } from "./http.mjs";
+import { t } from "./i18n.mjs";
 
 export const providerDefinitions = Object.fromEntries(
   AI_PROVIDER_DEFINITIONS.map((provider) => [
@@ -286,7 +287,7 @@ export async function providerFetch(target, request, signal) {
       ]),
     });
   } catch (cause) {
-    const error = new Error(`${target.label} request timed out or could not connect.`, { cause });
+    const error = new Error(t("providers.timeout", target.label), { cause });
     error.status = 504;
     error.code = "provider_timeout";
     throw error;
@@ -325,8 +326,8 @@ export async function providerFetch(target, request, signal) {
       : "";
     const authenticationFailure = response.status === 401 || response.status === 403;
     const summary = authenticationFailure
-      ? `${target.label} rejected its credentials.`
-      : `${target.label} request failed (HTTP ${response.status}${publicCode ? `, ${publicCode}` : ""}).`;
+      ? t("providers.rejected", target.label)
+      : t("providers.failed", target.label, response.status, publicCode);
     process.stderr.write(
       `${target.label} provider failure: HTTP ${response.status}${providerCode ? ` ${providerCode}` : ""}${detail ? ` — ${detail}` : ""}\n`,
     );
@@ -343,23 +344,23 @@ function providerTestCall(config, payload) {
   const provider = String(payload?.provider || "");
   const definition = providerDefinitions[provider];
   if (!definition) {
-    throw httpError(422, "Select a supported AI provider.", "provider_invalid");
+    throw httpError(422, t("setupErrors.providerInvalid"), "provider_invalid");
   }
   const suppliedApiKey = String(payload?.apiKey || "").trim();
   if (suppliedApiKey && (suppliedApiKey.length < 8 || suppliedApiKey.length > 2_000)) {
-    throw httpError(422, "Enter a valid API key.");
+    throw httpError(422, t("setupErrors.apiKeyInvalid"));
   }
   const model = String(
     payload?.model || config[definition.model] || definition.defaultModel,
   ).trim();
   if (!model || model.length > 200 || /[\r\n]/.test(model)) {
-    throw httpError(422, "Model name is invalid.");
+    throw httpError(422, t("setupErrors.modelInvalid"));
   }
   const apiKey = suppliedApiKey || config[definition.key];
   if (!apiKey) {
     throw httpError(
       422,
-      `Enter or save a ${definition.label} API key before testing.`,
+      t("setupErrors.keyBeforeTest", definition.label),
       "provider_not_configured",
     );
   }

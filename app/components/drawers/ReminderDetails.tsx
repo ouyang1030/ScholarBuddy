@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
-import { localDateKey } from "../../lib/format";
+import { useLocale, useT, valueLabel } from "../../i18n";
+import { calendarDisplayName, localDateKey, shortDate, timeLabel } from "../../lib/format";
 import { bridgeFetch } from "../../lib/bridge-client";
 import type { RecordItem, CalendarEvent } from "../../types";
 import { closeWithTransition, DrawerHeader } from "../primitives";
@@ -18,8 +19,10 @@ export function ReminderDetails({
   onClose: () => void;
   ref?: React.Ref<HTMLElement>;
 }) {
+  const t = useT();
+  const { locale } = useLocale();
   const [events, setEvents] = useState<CalendarEvent[]>([]);
-  const [error, setError] = useState("");
+  const [error, setError] = useState(false);
   const [loading, setLoading] = useState(true);
   useEffect(() => {
     const controller = new AbortController();
@@ -43,10 +46,7 @@ export function ReminderDetails({
     )
       .then((results) => setEvents(results.flat()))
       .catch(() => {
-        if (!controller.signal.aborted)
-          setError(
-            "Calendar details could not be loaded. Check your local connection and Calendar permission.",
-          );
+        if (!controller.signal.aborted) setError(true);
       })
       .finally(() => {
         if (!controller.signal.aborted) setLoading(false);
@@ -68,13 +68,13 @@ export function ReminderDetails({
         onMouseDown={(event) => event.stopPropagation()}
       >
         <DrawerHeader
-          label="Reminder details"
+          label={t.reminderDetails.label}
           mark="◷"
-          title="Upcoming reminders"
+          title={t.reminderDetails.title}
           titleId="reminder-details-title"
           onClose={onClose}
         />
-        {error && <p role="alert">{error}</p>}
+        {error && <p role="alert">{t.reminderDetails.loadFailed}</p>}
         {items.map((item, index) => {
           const record =
             item.category === "operations"
@@ -90,31 +90,36 @@ export function ReminderDetails({
           return (
             <article className="reminder-detail" key={`${item.category}:${item.id}:${index}`}>
               <span className="label">
-                {item.category === "operations" ? "PHD OPERATION" : "CALENDAR EVENT"}
+                {item.category === "operations"
+                  ? t.reminderDetails.operation
+                  : t.reminderDetails.event}
               </span>
               <h3>
                 {record?.title ||
                   event?.title ||
-                  (loading ? "Loading…" : "This item is no longer available")}
+                  (loading ? t.reminderDetails.loading : t.reminderDetails.gone)}
               </h3>
               {record && (
                 <>
                   <p>
-                    Due {record.dueDate || "date not set"} · {record.status}
+                    {t.reminderDetails.due(
+                      record.dueDate ? shortDate(record.dueDate, locale) : t.common.notSet,
+                    )}{" "}
+                    · {valueLabel(t.values.status, record.status)}
                   </p>
                   <button className="primary-button" onClick={() => onOpenOperation(record)}>
-                    Open operation
+                    {t.reminderDetails.open}
                   </button>
                 </>
               )}
               {event && (
                 <>
                   <p>
-                    {event.allDay ? "All day · " : ""}
-                    {new Date(event.start).toLocaleString()} —{" "}
-                    {new Date(event.end).toLocaleString()}
+                    {event.allDay ? t.reminderDetails.allDay : ""}
+                    {shortDate(event.start, locale)} {timeLabel(event.start, locale)} —{" "}
+                    {shortDate(event.end, locale)} {timeLabel(event.end, locale)}
                   </p>
-                  <p>{event.calendar}</p>
+                  <p>{calendarDisplayName(event.calendar, locale)}</p>
                 </>
               )}
             </article>

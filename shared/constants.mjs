@@ -24,7 +24,7 @@ export const COLLECTION_LABELS = {
   "research-debt": "Feedback",
   experiments: "Experiment",
   reviews: "Feedback",
-  operations: "PhD operation",
+  operations: "Operation",
   journal: "Research log entry",
   ideas: "Idea",
   "reading-queue": "Reading queue item",

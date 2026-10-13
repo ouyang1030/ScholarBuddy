@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { bridgeFetch } from "../../lib/bridge-client";
+import { useLocale, useT } from "../../i18n";
 import { focusCalendar, onFocusCalendarChange, setFocusCalendar } from "../../lib/focus-store";
 import { calendarDisplayName, localDateKey } from "../../lib/format";
 
@@ -11,6 +12,8 @@ import { calendarDisplayName, localDateKey } from "../../lib/format";
  * so the choice sits here with the other per-Mac connections.
  */
 export function FocusCalendarSetting({ paired }: { paired: boolean }) {
+  const t = useT();
+  const { locale } = useLocale();
   const [calendar, setCalendar] = useState("");
   const [calendars, setCalendars] = useState<string[]>([]);
   useEffect(() => {
@@ -42,15 +45,11 @@ export function FocusCalendarSetting({ paired }: { paired: boolean }) {
   return (
     <section className="reminder-settings" aria-labelledby="focus-calendar-title">
       <div className="drawer-section-title">
-        <strong id="focus-calendar-title">Focus sessions</strong>
+        <strong id="focus-calendar-title">{t.focusCalendar.title}</strong>
       </div>
       <label className="setting-row">
         <span className="setting-row-copy">
-          <strong>Save sessions to Calendar</strong>
-          <small>
-            Each finished session becomes an event in the calendar you choose. Off until you pick
-            one; your focus history in Profile is kept either way.
-          </small>
+          <strong>{t.focusCalendar.setting}</strong>
         </span>
         <select
           value={calendar}
@@ -59,10 +58,10 @@ export function FocusCalendarSetting({ paired }: { paired: boolean }) {
             setFocusCalendar(event.target.value);
           }}
         >
-          <option value="">Off</option>
+          <option value="">{t.focusCalendar.off}</option>
           {choices.map((name) => (
             <option key={name} value={name}>
-              {calendarDisplayName(name)}
+              {calendarDisplayName(name, locale)}
             </option>
           ))}
         </select>

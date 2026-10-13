@@ -4,6 +4,22 @@ All notable changes will be documented here. This project follows semantic versi
 
 ## Unreleased
 
+### Added
+
+- The interface is available in English and Simplified Chinese. Switch with **EN | 中文** in the top bar; the choice is kept in a `scholarbuddy-locale` cookie, and without one the browser's language decides. The page is rendered in that language from the first frame.
+- AI answers follow the interface language. Drafting and reviewing a manuscript section (`@write-section`, `@reviewer-critique`) stay in English; citation markers and the action block are unchanged in either language.
+- The Bridge speaks the same language. The setup and pairing pages open in the interface language and have their own **EN | 中文** switch. Unreadable-note reasons, vault and mail coverage notes, activity warnings, and Bridge errors follow the language of each request. Reminder notifications use the language the workbench last used with this Bridge, and the helper's macOS permission prompt has a Chinese version.
+
+### Changed
+
+- PhD Operations is now simply Operations (事务 in Chinese).
+- The language button replaces the initials button at the right of the top bar. Profile stays in the sidebar.
+- Interface copy is shorter: page and drawer descriptions, explanatory placeholders, and repeated hints are gone, and the user guide is condensed.
+- Statuses, stages, sections, and the other record vocabularies are still written to the vault in English whatever the interface language; only their labels are translated.
+- Dates, times, and large numbers follow the interface language; token totals use compact notation (1.2K, 1.2万).
+
+## 1.0.0
+
 ### Renamed, with no fallback to the old names
 
 Every remaining `WorkBuddy` name is now `ScholarBuddy`:

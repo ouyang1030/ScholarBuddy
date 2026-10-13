@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useT, valueLabel } from "../../i18n";
 import { clampProgress } from "../../lib/format";
 import type { DataProps } from "../../lib/workbench";
 import type { CollectionKey } from "../../types";
@@ -8,24 +9,25 @@ import { EmptyState, MetaPill } from "../primitives";
 import { RecordModule } from "./RecordModule";
 
 export function ProjectPortfolio({ state, openEditor }: Pick<DataProps, "state" | "openEditor">) {
+  const t = useT();
   const projects = state.projects;
   return (
     <>
       <section className="page-intro compact">
         <div>
-          <p className="eyebrow">PROJECT PORTFOLIO</p>
+          <p className="eyebrow">{t.projects.eyebrow}</p>
           <h1>
-            Research <em>projects.</em>
+            {t.projects.titleLead}
+            <em>{t.projects.titleEm}</em>
           </h1>
-          <p>Questions, experiments, and papers stay inside the project that gives them meaning.</p>
         </div>
         <button className="primary-button" onClick={() => openEditor("projects")}>
-          New Project <b>+</b>
+          {t.projects.new} <b>+</b>
         </button>
       </section>
       {!projects.length ? (
         <section className="record-board">
-          <EmptyState title="No project yet" />
+          <EmptyState title={t.projects.none} />
         </section>
       ) : (
         <section className="project-flow-board">
@@ -48,26 +50,26 @@ export function ProjectPortfolio({ state, openEditor }: Pick<DataProps, "state" 
             const flow = [
               {
                 key: "questions",
-                label: "Questions",
+                label: t.projects.questions,
                 items: questions,
                 collection: "research-questions" as CollectionKey,
-                empty: "No questions",
+                empty: t.projects.noQuestions,
                 defaults: { linkedProject: project.id },
               },
               {
                 key: "experiments",
-                label: "Experiments",
+                label: t.projects.experiments,
                 items: experiments,
                 collection: "experiments" as CollectionKey,
-                empty: "No experiments",
+                empty: t.projects.noExperiments,
                 defaults: { linkedProject: project.id },
               },
               {
                 key: "papers",
-                label: "Papers",
+                label: t.projects.papers,
                 items: papers,
                 collection: "manuscripts" as CollectionKey,
-                empty: "No papers",
+                empty: t.projects.noPapers,
                 defaults: { projectId: project.id, projectTitle: project.title, stage: "Concept" },
               },
             ];
@@ -78,7 +80,9 @@ export function ProjectPortfolio({ state, openEditor }: Pick<DataProps, "state" 
                     <span className="project-flow-id">
                       <span className="object-id">{project.id}</span>
                       <MetaPill tone={project.active ? "lime" : "blue"}>
-                        {project.active ? "Active" : project.status || "Planned"}
+                        {project.active
+                          ? t.projects.active
+                          : valueLabel(t.values.status, project.status || "Planned")}
                       </MetaPill>
                     </span>
                     <h2>{project.title}</h2>
@@ -89,21 +93,22 @@ export function ProjectPortfolio({ state, openEditor }: Pick<DataProps, "state" 
                       className="quiet-button"
                       onClick={() => openEditor("projects", project)}
                     >
-                      Edit project
+                      {t.projects.edit}
                     </button>
                   </span>
                 </header>
                 <div className="project-flow-meta">
                   {project.phase && (
                     <span>
-                      Phase <b>{project.phase}</b>
+                      {t.projects.phase} <b>{project.phase}</b>
                     </span>
                   )}
                   <span>
-                    Progress <b>{clampProgress(project.progress)}%</b>
+                    {t.projects.progress} <b>{clampProgress(project.progress)}%</b>
                   </span>
                   <span>
-                    Outputs <b>{questions.length + experiments.length + papers.length}</b>
+                    {t.projects.outputs}{" "}
+                    <b>{questions.length + experiments.length + papers.length}</b>
                   </span>
                 </div>
                 <div className="project-flow-columns">
@@ -116,7 +121,10 @@ export function ProjectPortfolio({ state, openEditor }: Pick<DataProps, "state" 
                           <b>{group.items.length}</b>
                         </span>
                         <button
-                          aria-label={`Add ${group.label.slice(0, -1).toLowerCase()} to ${project.title}`}
+                          aria-label={t.projects.addTo(
+                            t.collections[group.collection],
+                            project.title,
+                          )}
                           onClick={() => openEditor(group.collection, group.defaults)}
                         >
                           ＋
@@ -134,8 +142,11 @@ export function ProjectPortfolio({ state, openEditor }: Pick<DataProps, "state" 
                               <span>{item.title}</span>
                               <small>
                                 {group.key === "papers"
-                                  ? item.stage || item.status || "Concept"
-                                  : item.status || "Active"}
+                                  ? valueLabel(
+                                      t.values.stage,
+                                      item.stage || item.status || "Concept",
+                                    )
+                                  : valueLabel(t.values.status, item.status || "Active")}
                               </small>
                             </button>
                           ))}
@@ -154,6 +165,7 @@ export function ProjectPortfolio({ state, openEditor }: Pick<DataProps, "state" 
 }
 
 export function ProjectsModule({ state, openEditor }: Pick<DataProps, "state" | "openEditor">) {
+  const t = useT();
   const [tab, setTab] = useState<"projects" | "research-questions" | "experiments" | "ideas">(
     "projects",
   );
@@ -161,52 +173,51 @@ export function ProjectsModule({ state, openEditor }: Pick<DataProps, "state" | 
     "research-questions": {
       title: (
         <>
-          Research <em>questions.</em>
+          {t.projects.questionsLead}
+          <em>{t.projects.questionsEm}</em>
         </>
       ),
-      eyebrow: "QUESTION MAP",
-      description: "Keep questions connected to the project that gives them meaning.",
+      eyebrow: t.projects.questionMap,
     },
     experiments: {
       title: (
         <>
-          Data & <em>experiments.</em>
+          {t.projects.experimentsLead}
+          <em>{t.projects.experimentsEm}</em>
         </>
       ),
-      eyebrow: "EXPERIMENT REGISTER",
-      description: "Track methods, reproducible runs, outcomes, and blockers.",
+      eyebrow: t.projects.experimentRegister,
     },
     ideas: {
       title: (
         <>
-          Idea <em>inbox.</em>
+          {t.projects.ideasLead}
+          <em>{t.projects.ideasEm}</em>
         </>
       ),
-      eyebrow: "CAPTURED IDEAS",
-      description:
-        "Everything captured on Today, including the ideas already promoted to a question or dropped.",
+      eyebrow: t.projects.capturedIdeas,
     },
   };
   return (
     <>
       <div className="module-tabs">
         <button className={tab === "projects" ? "active" : ""} onClick={() => setTab("projects")}>
-          Projects
+          {t.nav.projects}
         </button>
         <button
           className={tab === "experiments" ? "active" : ""}
           onClick={() => setTab("experiments")}
         >
-          Experiments
+          {t.projects.experiments}
         </button>
         <button
           className={tab === "research-questions" ? "active" : ""}
           onClick={() => setTab("research-questions")}
         >
-          Questions
+          {t.projects.questions}
         </button>
         <button className={tab === "ideas" ? "active" : ""} onClick={() => setTab("ideas")}>
-          Ideas
+          {t.projects.ideas}
         </button>
       </div>
       {tab === "projects" ? (
@@ -216,7 +227,6 @@ export function ProjectsModule({ state, openEditor }: Pick<DataProps, "state" | 
           collection={tab}
           title={configs[tab].title}
           eyebrow={configs[tab].eyebrow}
-          description={configs[tab].description}
           state={state}
           openEditor={openEditor}
           showProgress={tab !== "ideas"}

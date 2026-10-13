@@ -5,6 +5,15 @@ import { fileURLToPath } from "node:url";
 import { parseEnv, updateLocalConfig } from "../bridge/local-settings.mjs";
 
 const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const [major, minor] = process.versions.node.split(".").map(Number);
+// An older Node would install a background Bridge that exits on start, which the
+// browser can only report as "refused to connect".
+if (major < 22 || (major === 22 && minor < 13)) {
+  process.stderr.write(
+    `ScholarBuddy needs Node.js 22.13 or newer; this is ${process.version}. Install it from https://nodejs.org and run setup again.\n`,
+  );
+  process.exit(1);
+}
 const source = path.join(repository, ".env.local.example");
 const target = path.join(repository, ".env.local");
 // Whatever is listening on these ports may use the Bridge, so an installation
@@ -64,7 +73,7 @@ if (process.platform === "darwin") {
   process.stdout.write(
     [
       "Next steps:",
-      "1. Run `npm run bridge`.",
+      `1. Run \`node "${path.join(repository, "bridge", "server.mjs")}"\`.`,
       "2. Open http://127.0.0.1:32145/setup in a browser on this computer.",
       "3. Configure local services and connect ScholarBuddy.",
       "",

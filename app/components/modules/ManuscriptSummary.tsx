@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { clampProgress, daysSince } from "../../lib/format";
+import { useLocale, useT, valueLabel } from "../../i18n";
+import { clampProgress, daysSince, formatNumber } from "../../lib/format";
 import type { RecordItem, WorkbenchState } from "../../types";
 
 /* ------------------------------------------------------------------ */
@@ -122,6 +123,8 @@ export function ManuscriptSummary({
   state: WorkbenchState;
   onSelectPaper: (id: string) => void;
 }) {
+  const t = useT();
+  const { locale } = useLocale();
   const [expanded, setExpanded] = useState<PipelineStage | null>(null);
   const pipeline = computePipeline(state.manuscripts);
   const kpis = computeKpis(state.manuscripts, state["submission-attempts"]);
@@ -133,16 +136,16 @@ export function ManuscriptSummary({
       {/* KPI cards */}
       <div className="summary-kpis">
         <article className="summary-kpi card">
-          <small>Active papers</small>
+          <small>{t.summary.active}</small>
           <strong>{kpis.active}</strong>
         </article>
         <article className="summary-kpi card">
-          <small>Acceptance rate</small>
+          <small>{t.summary.acceptance}</small>
           <strong>{kpis.acceptanceRate !== null ? `${kpis.acceptanceRate}%` : "—"}</strong>
         </article>
         <article className="summary-kpi card">
-          <small>Longest wait</small>
-          <strong>{kpis.longestWait > 0 ? `${kpis.longestWait}d` : "—"}</strong>
+          <small>{t.summary.longestWait}</small>
+          <strong>{kpis.longestWait > 0 ? t.summary.days(kpis.longestWait) : "—"}</strong>
           {kpis.longestAttempt && (
             <span>{kpis.longestAttempt.journal || kpis.longestAttempt.title}</span>
           )}
@@ -153,10 +156,8 @@ export function ManuscriptSummary({
       <article className="summary-pipeline card">
         <div className="section-heading">
           <div>
-            <span className="label">MANUSCRIPT PIPELINE</span>
-            <p>
-              {total} paper{total === 1 ? "" : "s"} across all stages
-            </p>
+            <span className="label">{t.summary.pipeline}</span>
+            <p>{t.summary.total(total)}</p>
           </div>
         </div>
         <div className="pipeline-funnel">
@@ -178,7 +179,7 @@ export function ManuscriptSummary({
                 >
                   <span className="funnel-accent" />
                   <span className="funnel-icon">{STAGE_ICONS[row.stage]}</span>
-                  <span className="funnel-label">{row.stage}</span>
+                  <span className="funnel-label">{valueLabel(t.values.status, row.stage)}</span>
                   <span className="funnel-count">{row.count}</span>
                   {row.count > 0 && (
                     <span className="funnel-chevron">{isExpanded ? "▾" : "▸"}</span>
@@ -198,8 +199,10 @@ export function ManuscriptSummary({
                           <strong>{ms.title}</strong>
                           <small>
                             {ms.journal ? `${ms.journal} · ` : ""}
-                            {(ms.wordCount || 0).toLocaleString()} /{" "}
-                            {(ms.targetWords || 0).toLocaleString()} words
+                            {t.today.words(
+                              formatNumber(ms.wordCount || 0, locale),
+                              formatNumber(ms.targetWords || 0, locale),
+                            )}
                           </small>
                         </span>
                         <span className="funnel-detail-right">

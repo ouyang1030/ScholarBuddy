@@ -78,7 +78,7 @@ test("missed nodes collapse to one item and future nodes still fire", () => {
   const due = dueReminders(all, {}, now);
   assert.equal(due.length, 2);
   const notification = reminderNotification(due, "https://scholarbuddy.tech");
-  assert.equal(notification.title, "PhD Operation deadline");
+  assert.equal(notification.title, "Operation deadline");
   assert.equal(notification.body.split("\n").length, 1);
   assert.equal(new URLSearchParams(new URL(notification.url).hash.slice(1)).get("id"), "OPS-1");
   const delivered = Object.fromEntries(due.map((item) => [item.key, item.expires]));
@@ -172,7 +172,7 @@ test("operations notes that could not be read are named while the rest are still
   assert.equal(sends(f).length, 1);
   assert.match(
     (await service.status()).sourceErrors.operations,
-    /^1 PhD Operations note could not be read/,
+    /^1 Operations note could not be read/,
   );
 });
 

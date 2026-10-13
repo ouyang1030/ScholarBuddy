@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { bridgeFetch } from "../../lib/bridge-client";
+import { bridgeFailure, failureText, useLocale, useT, valueLabel } from "../../i18n";
 import { localDateKey } from "../../lib/format";
 import {
   aiProviders,
@@ -78,7 +79,10 @@ export function ActionDrawer({
   onUnsavedChange?: (unsaved: boolean) => void;
   ref?: React.Ref<HTMLElement>;
 }) {
+  const t = useT();
+  const { locale } = useLocale();
   const contract = workflowContract(action.command)!;
+  const label = t.actions[action.command as keyof typeof t.actions].label;
   const recordedSections = manuscriptSectionEntries(paper?.description || "");
   const initialSection = recordedSections[0]?.section || "Introduction";
   const [running, setRunning] = useState(false);
@@ -89,7 +93,7 @@ export function ActionDrawer({
         : window.localStorage.getItem("scholarbuddy-ai-provider");
     return isAiProvider(saved) ? saved : "deepseek";
   });
-  const [input, setInput] = useState(action.label);
+  const [input, setInput] = useState(label);
   const [followUp, setFollowUp] = useState("");
   const [sources, setSources] = useState({ ...contract.sources });
   const [section, setSection] = useState(initialSection);
@@ -130,14 +134,15 @@ export function ActionDrawer({
   const activeProvider = aiProviders.find((item) => item.id === provider) || aiProviders[0];
   const conversationId = turns.at(-1)?.result.conversationId || "";
   const latest = turns.at(-1)?.result;
+  const sectionLabel = valueLabel(t.values.section, section);
   const outcomeLabel =
     contract.outcome === "section"
-      ? `Update ${section}`
+      ? t.workflow.outcomeSection(sectionLabel)
       : contract.outcome === "reviews"
-        ? "Add review issues"
+        ? t.workflow.outcomeReviews
         : contract.outcome === "tasks"
-          ? "Add plan to Today"
-          : "Save with evidence";
+          ? t.workflow.outcomeTasks
+          : t.workflow.outcomeNote;
   const focus =
     contract.focus === "section"
       ? {
@@ -181,6 +186,9 @@ export function ActionDrawer({
           provider,
           input: question,
           command: action.command,
+          // Manuscript workflows answer in English whatever this says; the
+          // Bridge decides, so the rule lives in one place.
+          language: locale,
           sources,
           focus,
           conversationId: continues ? conversationId : "",
@@ -191,7 +199,7 @@ export function ActionDrawer({
       });
       if (!response.ok || !response.body) {
         const body = await response.json().catch(() => ({}));
-        throw new Error(body.error || "Workflow failed.");
+        throw bridgeFailure(body, "");
       }
       const result = (await readEventStream(response.body, (event, payload) => {
         const data = payload as { text: string; reasoning: string };
@@ -206,12 +214,10 @@ export function ActionDrawer({
       if (!active.signal.aborted)
         setError(
           e instanceof DOMException && e.name === "TimeoutError"
-            ? "The AI workflow timed out."
+            ? t.workflow.timedOut
             : e instanceof TypeError
-              ? "The local bridge is unreachable or local access is blocked."
-              : e instanceof Error
-                ? e.message
-                : "Workflow failed.",
+              ? t.errors.unreachable
+              : failureText(t, e, t.workflow.failed),
         );
     } finally {
       stopFlushing();
@@ -251,7 +257,7 @@ export function ActionDrawer({
       setAppliedActions((current) => [...current, item.title]);
       return true;
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not save that action.");
+      setError(failureText(t, e, t.errors.saveFailed));
       return false;
     }
   };
@@ -269,7 +275,7 @@ export function ActionDrawer({
     try {
       return await saveEvidenceNote();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Evidence note could not be saved.");
+      setError(failureText(t, e, t.workflow.noteFailed));
       return "";
     }
   };
@@ -277,20 +283,21 @@ export function ActionDrawer({
     if (!latest) return;
     try {
       if (contract.outcome === "section") {
-        if (!paper) throw new Error("Choose a manuscript before writing a section.");
+        if (!paper) throw new Error(t.workflow.choosePaper);
         // The model was asked for a body and sometimes returns its own heading
         // on top of it. What actually gets written is checked here rather than
         // discovered later as a duplicate heading in the manuscript.
         const body = sectionBody(latest.output, section);
-        if (!body)
-          throw new Error(`The answer holds no ${section} text to write. Run the workflow again.`);
+        if (!body) throw new Error(t.workflow.noSectionText(sectionLabel));
         await saveRecord("manuscripts", {
           ...paper,
           description: replaceManuscriptSection(paper.description || "", section, body),
         });
         setSectionText(body);
         const notePath = await trySaveEvidenceNote();
-        setSavedPath(`${section} updated${notePath ? " · evidence saved" : ""}`);
+        setSavedPath(
+          `${t.workflow.sectionUpdated(sectionLabel)}${notePath ? t.workflow.withEvidence : ""}`,
+        );
         return;
       }
       if (contract.outcome === "tasks") {
@@ -298,7 +305,7 @@ export function ActionDrawer({
           (item) => item.kind === "task" && !appliedActions.includes(item.title),
         );
         const added = await applyAll(tasks);
-        setSavedPath(added ? `${added} tasks added` : "No new tasks");
+        setSavedPath(added ? t.workflow.tasksAdded(added) : t.workflow.noNewTasks);
         return;
       }
       if (contract.outcome === "reviews") {
@@ -322,13 +329,13 @@ export function ActionDrawer({
           });
         const notePath = await trySaveEvidenceNote();
         setSavedPath(
-          `${reviews.length ? `${added} review items added` : "Review added"}${notePath ? " · evidence saved" : ""}`,
+          `${reviews.length ? t.workflow.reviewsAdded(added) : t.workflow.reviewAdded}${notePath ? t.workflow.withEvidence : ""}`,
         );
         return;
       }
       setSavedPath(await saveEvidenceNote());
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not save to Obsidian.");
+      setError(failureText(t, e, t.errors.saveFailed));
     }
   };
   // The manifest is what turns [Z1] in the answer back into a paper. A workflow
@@ -370,7 +377,7 @@ export function ActionDrawer({
       }),
     });
     const body = await response.json();
-    if (!response.ok) throw new Error(body.error);
+    if (!response.ok) throw bridgeFailure(body, "");
     return body.path as string;
   };
   return (
@@ -385,17 +392,16 @@ export function ActionDrawer({
         className="action-drawer"
         role="dialog"
         aria-modal="true"
-        aria-label={action.label}
+        aria-label={label}
         tabIndex={-1}
         onMouseDown={(e) => e.stopPropagation()}
       >
         <DrawerHeader
-          label="Structured AI workflow"
+          label={t.workflow.label}
           mark="✦"
           tone={action.tone}
           eyebrow={action.command}
-          title={action.label}
-          description="Selected sources must be retrieved successfully before the model runs."
+          title={label}
           onClose={onClose}
         />
         <div className="provider-switch">
@@ -417,8 +423,8 @@ export function ActionDrawer({
         <div className="drawer-section">
           <div className="drawer-section-title">
             <span>01</span>
-            <strong>Task input</strong>
-            <b>Required</b>
+            <strong>{t.workflow.task}</strong>
+            <b>{t.workflow.required}</b>
           </div>
           <textarea value={input} onChange={(e) => setInput(e.target.value)} />
         </div>
@@ -426,11 +432,11 @@ export function ActionDrawer({
           <div className="drawer-section workflow-focus-input">
             <div className="drawer-section-title">
               <span>02</span>
-              <strong>Exact manuscript section</strong>
-              <b>Required</b>
+              <strong>{t.workflow.sectionTitle}</strong>
+              <b>{t.workflow.required}</b>
             </div>
             <label>
-              <span>Section</span>
+              <span>{t.workflow.section}</span>
               <select
                 value={section}
                 onChange={(event) => {
@@ -440,16 +446,17 @@ export function ActionDrawer({
                 }}
               >
                 {manuscriptSections.slice(1).map((item) => (
-                  <option key={item}>{item}</option>
+                  <option key={item} value={item}>
+                    {valueLabel(t.values.section, item)}
+                  </option>
                 ))}
               </select>
             </label>
             <label>
-              <span>{paper ? paper.title : "Paste the section text"}</span>
+              <span>{paper ? paper.title : t.workflow.sectionText}</span>
               <textarea
                 value={sectionText}
                 onChange={(event) => setSectionText(event.target.value)}
-                placeholder={`Paste or write the ${section.toLowerCase()} section here…`}
               />
             </label>
           </div>
@@ -458,43 +465,38 @@ export function ActionDrawer({
           <div className="drawer-section workflow-focus-input result-focus-input">
             <div className="drawer-section-title">
               <span>02</span>
-              <strong>Structured result</strong>
-              <b>Required</b>
+              <strong>{t.workflow.resultTitle}</strong>
+              <b>{t.workflow.required}</b>
             </div>
             <label className="wide">
-              <span>Result to explain</span>
+              <span>{t.workflow.resultSummary}</span>
               <textarea
                 value={resultFocus.resultSummary}
                 onChange={(event) =>
                   setResultFocus({ ...resultFocus, resultSummary: event.target.value })
                 }
-                placeholder="State the result exactly as reported…"
               />
             </label>
-            {[
-              ["estimate", "Estimate / effect size"],
-              ["confidenceInterval", "Confidence interval"],
-              ["pValue", "p value"],
-              ["sampleSize", "Sample size"],
-              ["model", "Model / statistical test"],
-            ].map(([key, label]) => (
-              <label key={key}>
-                <span>{label}</span>
-                <input
-                  value={resultFocus[key as keyof typeof resultFocus]}
-                  onChange={(event) =>
-                    setResultFocus({ ...resultFocus, [key]: event.target.value })
-                  }
-                />
-              </label>
-            ))}
+            {(["estimate", "confidenceInterval", "pValue", "sampleSize", "model"] as const).map(
+              (key) => (
+                <label key={key}>
+                  <span>{t.workflow[key]}</span>
+                  <input
+                    value={resultFocus[key]}
+                    onChange={(event) =>
+                      setResultFocus({ ...resultFocus, [key]: event.target.value })
+                    }
+                  />
+                </label>
+              ),
+            )}
           </div>
         )}
         <div className="drawer-section">
           <div className="drawer-section-title">
             <span>{["section", "result"].includes(contract.focus) ? "03" : "02"}</span>
-            <strong>Live sources</strong>
-            <b className="ready">Verified before AI</b>
+            <strong>{t.workflow.sources}</strong>
+            <b className="ready">{t.workflow.verified}</b>
           </div>
           <div className="drawer-sources">
             {contract.visibleSources.includes("kbase") && (
@@ -504,8 +506,8 @@ export function ActionDrawer({
                   checked={sources.kbase}
                   onChange={(e) => setSources({ ...sources, kbase: e.target.checked })}
                 />
-                <span>Paper frame &amp; passages</span>
-                <b>{contextPassages(state, paper?.id || "").length} passages</b>
+                <span>{t.workflow.paperSource}</span>
+                <b>{t.workflow.passages(contextPassages(state, paper?.id || "").length)}</b>
               </label>
             )}
             {contract.visibleSources.includes("obsidian") && (
@@ -515,8 +517,8 @@ export function ActionDrawer({
                   checked={sources.obsidian}
                   onChange={(e) => setSources({ ...sources, obsidian: e.target.checked })}
                 />
-                <span>Obsidian notes</span>
-                <b>Live search</b>
+                <span>{t.workflow.obsidianSource}</span>
+                <b>{t.workflow.liveSearch}</b>
               </label>
             )}
             {contract.visibleSources.includes("zotero") && (
@@ -526,8 +528,8 @@ export function ActionDrawer({
                   checked={sources.zotero}
                   onChange={(e) => setSources({ ...sources, zotero: e.target.checked })}
                 />
-                <span>Zotero literature</span>
-                <b>{contract.focus === "claim" ? "PDF excerpts" : "Live search"}</b>
+                <span>{t.workflow.zoteroSource}</span>
+                <b>{contract.focus === "claim" ? t.workflow.pdfExcerpts : t.workflow.liveSearch}</b>
               </label>
             )}
             {contract.visibleSources.includes("calendar") && (
@@ -537,8 +539,8 @@ export function ActionDrawer({
                   checked={sources.calendar}
                   onChange={(e) => setSources({ ...sources, calendar: e.target.checked })}
                 />
-                <span>Committed time</span>
-                <b>7 days · titles only</b>
+                <span>{t.workflow.calendarSource}</span>
+                <b>{t.workflow.calendarScope}</b>
               </label>
             )}
           </div>
@@ -547,7 +549,7 @@ export function ActionDrawer({
           <div className="workflow-error">
             <span>!</span>
             <p>{error}</p>
-            <button onClick={openConnections}>Connections</button>
+            <button onClick={openConnections}>{t.workflow.connections}</button>
           </div>
         )}
         {turns.map((turn, index) => (
@@ -559,10 +561,11 @@ export function ActionDrawer({
                     turn.result.provider}
                 </b>
                 <small>
-                  {turn.result.model} · Zotero {turn.result.retrieval.zotero.status} · Obsidian{" "}
-                  {turn.result.retrieval.obsidian.status}
+                  {turn.result.model} · Zotero{" "}
+                  {valueLabel(t.workflow.status, turn.result.retrieval.zotero.status)} · Obsidian{" "}
+                  {valueLabel(t.workflow.status, turn.result.retrieval.obsidian.status)}
                   {turn.result.retrieval.calendar?.selected
-                    ? ` · Calendar ${turn.result.retrieval.calendar.status}`
+                    ? ` · ${t.workflow.calendarSource} ${valueLabel(t.workflow.status, turn.result.retrieval.calendar.status)}`
                     : ""}
                 </small>
               </span>
@@ -573,35 +576,33 @@ export function ActionDrawer({
             {index > 0 && <p className="workflow-question">{turn.question}</p>}
             {turn.result.reasoning ? (
               <details className="reasoning-block">
-                <summary>🧠 Thinking process</summary>
+                <summary>{t.workflow.thinking}</summary>
                 <pre>{turn.result.reasoning}</pre>
               </details>
             ) : null}
             {coverageNotes(turn.result).map((note) => (
               <div className="citation-warning" key={note}>
-                {note} Sources beyond that are missing from this answer.
+                {note} {t.workflow.coverageMissing}
               </div>
             ))}
             {turn.result.invalidReferenceIds.length > 0 && (
               <div className="citation-warning">
-                Unknown reference IDs: {turn.result.invalidReferenceIds.join(", ")}
+                {t.workflow.unknownIds(turn.result.invalidReferenceIds.join(", "))}
               </div>
             )}
             <pre>{turn.result.output}</pre>
             {turn.result.actions.length > 0 && (
               <div className="workflow-actions">
-                <span className="label">NEXT ACTIONS</span>
+                <span className="label">{t.workflow.nextActions}</span>
                 {turn.result.actions.map((item) => (
                   <article key={item.id}>
                     <span>
                       <strong>{item.title}</strong>
                       <small>
-                        {item.kind === "review"
-                          ? `Feedback · ${item.severity}`
-                          : item.kind === "gap"
-                            ? `Feedback · ${item.severity}`
-                            : "Task for today"}
-                        {item.dueDate ? ` · due ${item.dueDate}` : ""}
+                        {item.kind === "review" || item.kind === "gap"
+                          ? t.workflow.feedbackItem(valueLabel(t.values.severity, item.severity))
+                          : t.workflow.taskItem}
+                        {item.dueDate ? t.workflow.due(item.dueDate) : ""}
                       </small>
                     </span>
                     <button
@@ -610,10 +611,10 @@ export function ActionDrawer({
                       onClick={() => applyAction(item)}
                     >
                       {appliedActions.includes(item.title)
-                        ? "Added ✓"
+                        ? t.workflow.added
                         : item.kind === "review" || item.kind === "gap"
-                          ? "Add feedback"
-                          : "Add to today"}
+                          ? t.workflow.addFeedback
+                          : t.workflow.addToday}
                     </button>
                   </article>
                 ))}
@@ -621,11 +622,11 @@ export function ActionDrawer({
             )}
             <details className="evidence-manifest">
               <summary>
-                Evidence manifest ·{" "}
-                {turn.result.manifest.zotero.length +
-                  turn.result.manifest.obsidian.length +
-                  turn.result.manifest.passages.length}{" "}
-                sources
+                {t.workflow.manifest(
+                  turn.result.manifest.zotero.length +
+                    turn.result.manifest.obsidian.length +
+                    turn.result.manifest.passages.length,
+                )}
               </summary>
               {turn.result.manifest.zotero.map((item) => (
                 <p key={item.id}>
@@ -639,8 +640,8 @@ export function ActionDrawer({
               ))}
               {turn.result.manifest.passages.map((item) => (
                 <p key={item.id}>
-                  <b>[{item.id}]</b> {item.title || "Passage"}
-                  {item.pageLabel ? `, p. ${item.pageLabel}` : ""} · Zotero {item.key}
+                  <b>[{item.id}]</b> {item.title || t.workflow.passage}
+                  {item.pageLabel ? t.workflow.page(item.pageLabel) : ""} · Zotero {item.key}
                 </p>
               ))}
             </details>
@@ -650,7 +651,7 @@ export function ActionDrawer({
           <section className="workflow-result streaming">
             {live.reasoning && (
               <details className="reasoning-block" open>
-                <summary>🧠 Thinking process</summary>
+                <summary>{t.workflow.thinking}</summary>
                 <pre>{live.reasoning}</pre>
               </details>
             )}
@@ -658,21 +659,19 @@ export function ActionDrawer({
               {live.text}
               <i className="stream-caret" />
             </pre>
-            <small className="stream-note">
-              Citations are audited against the evidence manifest when the answer completes.
-            </small>
+            <small className="stream-note">{t.workflow.streamNote}</small>
           </section>
         )}
         {turns.length > 0 && (
           <div className="drawer-section follow-up">
             <div className="drawer-section-title">
               <span>03</span>
-              <strong>Follow-up</strong>
-              <b>Same sources</b>
+              <strong>{t.workflow.followUp}</strong>
+              <b>{t.workflow.sameSources}</b>
             </div>
             <textarea
               value={followUp}
-              placeholder="Ask about the answer above — the retrieved sources and their [Z1] ids stay fixed."
+              placeholder={t.workflow.followUpPlaceholder}
               onChange={(e) => setFollowUp(e.target.value)}
             />
             <button
@@ -680,7 +679,7 @@ export function ActionDrawer({
               disabled={running || !followUp.trim()}
               onClick={() => run(followUp, true)}
             >
-              {running ? "Working…" : "Ask follow-up"}
+              {running ? t.workflow.working : t.workflow.ask}
             </button>
           </div>
         )}
@@ -688,7 +687,7 @@ export function ActionDrawer({
           <div>
             <SourceDot />
             <span>
-              <strong>Traceable-source workflow</strong>
+              <strong>{t.workflow.footer}</strong>
               <small>
                 {activeProvider.name} · {activeProvider.fallbackModel}
               </small>
@@ -699,7 +698,7 @@ export function ActionDrawer({
             disabled={running || !ready}
             onClick={() => run(input, false)}
           >
-            {running ? "Working…" : turns.length ? "Run again" : "Run workflow"}
+            {running ? t.workflow.working : turns.length ? t.workflow.runAgain : t.workflow.run}
           </button>
         </div>
       </aside>

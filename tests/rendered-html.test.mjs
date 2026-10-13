@@ -79,16 +79,16 @@ test("server-renders the Sports Research OS", async () => {
   assert.match(html, /ScholarBuddy — Sports Research OS/i);
   assert.match(html, /Move one thing forward/i);
   assert.match(html, /Define one result worth finishing today/i);
-  assert.match(html, /macOS Calendar \/ Live/i);
+  assert.match(html, /TODAY’S SCHEDULE/);
   assert.match(html, /Preparing focus timer/i);
   assert.match(html, /LIVE LIBRARY/i);
-  assert.match(html, /Paper feedback \/ Obsidian/i);
-  assert.match(html, /Research log \/ Obsidian/i);
-  assert.match(html, /Idea inbox \/ Obsidian/i);
-  assert.match(html, /What actually changed today/i);
-  assert.match(html, /Catch it now, judge it later/i);
+  assert.match(html, /PAPER FEEDBACK/);
+  assert.match(html, /RESEARCH LOG/);
+  assert.match(html, /IDEA INBOX/);
+  assert.match(html, /What changed today\?/);
+  assert.match(html, /Capture an idea…/);
   assert.match(html, /No active project/i);
-  assert.match(html, /Loading Obsidian records/i);
+  assert.match(html, /Loading records…/);
   assert.match(html, /About ScholarBuddy/i);
   assert.match(html, /Manuscripts/i);
   assert.match(html, /Operations/i);
@@ -147,7 +147,7 @@ test("client routes all bridge calls through pairing auth and keeps daily and so
   assert.match(clientSource, /\/pair\/exchange/);
   assert.match(source, /Configure this Mac/);
   assert.match(source, /bridge-pair/);
-  assert.match(source, /temporary code/i);
+  assert.match(source, /Pairing code/);
   assert.match(source, /task\.date === today/);
   // Capture must reach Obsidian, must be reachable from any module, and must not
   // lose typed text while the Bridge is unavailable.
@@ -178,7 +178,8 @@ test("client routes all bridge calls through pairing auth and keeps daily and so
   assert.match(source, /scholarbuddy-ai-provider/);
   assert.match(source, /manuscriptId/);
   assert.match(source, /projectId/);
-  assert.match(source, /One paper, <em>one context/);
+  assert.match(source, /titleLead: "One paper, "/);
+  assert.match(source, /<em>\{t\.paper\.titleEm\}<\/em>/);
   assert.match(source, /scholarbuddy-focus-en-v2/);
   assert.match(source, /Focus session length/);
   assert.match(source, /scholarbuddy-focus-completed/);
@@ -199,14 +200,14 @@ test("client routes all bridge calls through pairing auth and keeps daily and so
   assert.match(source, /热烈祝贺/);
   assert.match(source, /Herzlichen Glückwunsch/);
   assert.match(source, /saved\.stage === "Accepted" \|\| saved\.stage === "Published"/);
-  assert.match(source, /Focus sessions and research milestones/);
+  assert.match(source, /title: "Focus and milestones"/);
   assert.match(source, /Calendar sync pending/);
   // Sessions reach Calendar only after the researcher names one, and only that one.
   assert.match(source, /if \(calendarRef\.current\) setPending/);
   assert.match(source, /const calendar = calendarRef\.current;\s+if \(!calendar\) break;/);
   assert.match(source, /window\.addEventListener\("storage", stored\)/);
   assert.match(source, /scholarbuddy-focus-calendar/);
-  assert.match(source, /<option value="">Off<\/option>/);
+  assert.match(source, /<option value="">\{t\.focusCalendar\.off\}<\/option>/);
   // Tasks an AI plan adds in one tick must not share an id.
   assert.match(source, /id: nextTaskId\(stored\)/);
   assert.match(source, /id: nextTaskId\(items\)/);
@@ -216,7 +217,10 @@ test("client routes all bridge calls through pairing auth and keeps daily and so
     source,
     /if \(canDismiss\(\)\) closeWithTransition\(onClose, event\.currentTarget\)/,
   );
-  assert.match(source, /top === "editor" && unsaved\.editor && !confirmDiscard\("record"\)/);
+  assert.match(
+    source,
+    /top === "editor" && unsaved\.editor && !confirmDiscard\(tRef\.current, "record"\)/,
+  );
   assert.match(source, /Disconnect this browser/);
   assert.match(source, /could not be loaded/);
   assert.match(source, /project-flow-columns/);
@@ -232,14 +236,17 @@ test("client routes all bridge calls through pairing auth and keeps daily and so
   assert.doesNotMatch(source, /Description \/ notes/);
   assert.match(source, /calendarDisplayName/);
   assert.doesNotMatch(source, /Delete this event\?/);
-  assert.match(source, /<small>\{calendarDisplayName\(event\.calendar\)\}<\/small>/);
-  assert.match(source, /Confirm deletion of \$\{event\.title\}/);
+  assert.match(source, /<small>\{calendarDisplayName\(event\.calendar, locale\)\}<\/small>/);
+  assert.match(source, /Confirm deletion of \$\{title\}/);
+  assert.match(source, /t\.calendar\.confirmDelete\(event\.title\)/);
   assert.match(source, /\[\s*6,\s*10,\s*16,\s*23,\s*31,\s*19,\s*28,\s*39/);
-  assert.match(source, /aria-label=\{\s*running\s*\?\s*"Pause focus session"/);
-  assert.match(source, /aria-label="Reset focus timer"/);
+  assert.match(source, /aria-label=\{\s*running\s*\?\s*t\.focus\.pause\b/);
+  assert.match(source, /pause: "Pause focus session"/);
+  assert.match(source, /aria-label=\{t\.focus\.reset\}/);
+  assert.match(source, /reset: "Reset focus timer"/);
   assert.match(clientSource, /bridgeHealthFetch/);
   assert.match(source, /Passage Library/);
-  assert.match(source, /Using Passage Library/);
+  assert.match(source, /title: "Passage library"/);
   assert.match(source, /Hosted access/);
   assert.match(source, /\/zotero\/passages/);
   assert.match(source, /annotationKey/);
@@ -251,7 +258,7 @@ test("client routes all bridge calls through pairing auth and keeps daily and so
   assert.match(source, /passage-year-block/);
   assert.match(source, /LinkedPassages/);
   assert.match(clientSource, /scholarbuddy-bridge-url/);
-  assert.match(source, /Bridge unreachable · open in a Mac browser/);
+  assert.match(source, /bridgeUnreachable: "Bridge unreachable"/);
   assert.match(css, /\.record-board > \.real-empty \{ grid-column: 1 \/ -1; \}/);
   assert.match(css, /\.real-summary-grid \{ margin-top: 18px;[\s\S]*repeat\(2/);
   assert.match(css, /\.editable-section \{ margin-top: 22px; padding: 24px; \}/);

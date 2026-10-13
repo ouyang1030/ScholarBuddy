@@ -3,6 +3,7 @@ import { execFile } from "node:child_process";
 import { chmod, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { promisify } from "node:util";
 import { AI_PROVIDER_DEFINITIONS } from "../shared/constants.mjs";
+import { t } from "./i18n.mjs";
 
 const execFileAsync = promisify(execFile);
 const keychainService = "tech.scholarbuddy.bridge";
@@ -97,11 +98,10 @@ export async function readKeychainSecret(provider) {
 }
 
 export async function saveKeychainSecret(provider, secret) {
-  if (process.platform !== "darwin")
-    throw new Error("Secure key storage currently requires macOS. Use .env.local on this system.");
+  if (process.platform !== "darwin") throw new Error(t("setupErrors.keychainMacOnly"));
   if (!providerSecrets[provider]) throw new Error("Unknown AI provider.");
   const clean = String(secret || "").trim();
-  if (clean.length < 8 || clean.length > 2_000) throw new Error("Enter a valid API key.");
+  if (clean.length < 8 || clean.length > 2_000) throw new Error(t("setupErrors.apiKeyInvalid"));
   await execFileAsync(
     "/usr/bin/security",
     [

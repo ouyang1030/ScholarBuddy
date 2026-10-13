@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { clampProgress, daysSince, localDateKey, shortDate } from "../../lib/format";
+import { failureText, useLocale, useT, valueLabel } from "../../i18n";
+import { clampProgress, daysSince, formatNumber, localDateKey, shortDate } from "../../lib/format";
 import { isOpen, submissionStages } from "../../lib/workbench";
 import type { DataProps } from "../../lib/workbench";
 import type {
@@ -42,6 +43,8 @@ export function SubmissionTracker({
   verifyAttempt,
   syncEmail,
 }: SubmissionTrackerProps) {
+  const t = useT();
+  const { locale } = useLocale();
   const attempts = state["submission-attempts"].filter(
     (item) => item.manuscriptId === manuscript.id,
   );
@@ -77,7 +80,7 @@ export function SubmissionTracker({
   const submitEvent = async () => {
     if (!attempt) return;
     if (!eventForm.status) {
-      setMessage("Choose the new stage first.");
+      setMessage(t.submission.chooseFirst);
       return;
     }
     setMessage("");
@@ -98,7 +101,7 @@ export function SubmissionTracker({
         description: "",
       });
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Could not add the status event.");
+      setMessage(failureText(t, error, t.errors.saveFailed));
     }
   };
   const markChecked = async () => {
@@ -106,9 +109,9 @@ export function SubmissionTracker({
     setMessage("");
     try {
       await verifyAttempt(attempt.id);
-      setMessage("Status checked today · no timeline event added");
+      setMessage(t.submission.checkedToday);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Could not mark the submission checked.");
+      setMessage(failureText(t, error, t.errors.saveFailed));
     }
   };
   const checkEmail = useCallback(async () => {
@@ -119,14 +122,19 @@ export function SubmissionTracker({
       const result = await syncEmail();
       setPendingCandidates(result.pending);
       setMessage(
-        `${result.updated.length} status update${result.updated.length === 1 ? "" : "s"} added · ${result.verified || 0} existing status${result.verified === 1 ? "" : "es"} verified · ${result.pending.length} need confirmation · ${result.scanned} emails checked${result.partial ? ` · ${result.partial}` : ""}`,
+        `${t.submission.mailResult({
+          updated: result.updated.length,
+          verified: result.verified || 0,
+          pending: result.pending.length,
+          scanned: result.scanned,
+        })}${result.partial ? ` · ${result.partial}` : ""}`,
       );
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Mail could not be checked.");
+      setMessage(failureText(t, error, t.manuscript.mailFailed));
     } finally {
       setSyncing(false);
     }
-  }, [syncEmail]);
+  }, [syncEmail, t]);
   // The ref keeps this to one scan per mount: checkEmail changes identity whenever
   // the parent re-renders, which a background state poll does every minute.
   useEffect(() => {
@@ -137,31 +145,31 @@ export function SubmissionTracker({
   return (
     <section className="submission-tracker">
       <div className="tracker-toolbar">
-        <span className="label">SUBMISSION TRACKER</span>
+        <span className="label">{t.submission.label}</span>
         <span>
           <button
             className="quiet-button"
             disabled={syncing || !attempts.length}
             onClick={checkEmail}
           >
-            {syncing ? "Checking Mail…" : "Check email updates"}
+            {syncing ? t.submission.checking : t.submission.check}
           </button>
           <button className="primary-button" onClick={createAttempt}>
-            New submission
+            {t.submission.new}
           </button>
         </span>
       </div>
       {message && <div className="tracker-message">{message}</div>}
       {pendingCandidates.length > 0 && (
         <section className="pending-email-updates">
-          <span className="label">NEEDS CONFIRMATION</span>
+          <span className="label">{t.submission.confirmLabel}</span>
           {pendingCandidates.map((candidate) => (
             <article key={`${candidate.email.id}-${candidate.status}`}>
               <div>
-                <strong>{candidate.status}</strong>
+                <strong>{valueLabel(t.values.status, candidate.status)}</strong>
                 <p>{candidate.email.subject}</p>
                 <small>
-                  {candidate.email.sender} · {shortDate(candidate.email.receivedAt)}
+                  {candidate.email.sender} · {shortDate(candidate.email.receivedAt, locale)}
                 </small>
               </div>
               <span>
@@ -171,7 +179,7 @@ export function SubmissionTracker({
                     setPendingCandidates((items) => items.filter((item) => item !== candidate))
                   }
                 >
-                  Dismiss for now
+                  {t.submission.dismiss}
                 </button>
                 <button
                   className="primary-button"
@@ -190,7 +198,7 @@ export function SubmissionTracker({
                     setPendingCandidates((items) => items.filter((item) => item !== candidate));
                   }}
                 >
-                  Confirm update
+                  {t.submission.confirm}
                 </button>
               </span>
             </article>
@@ -198,7 +206,7 @@ export function SubmissionTracker({
         </section>
       )}
       {!attempts.length ? (
-        <EmptyState title="No submission attempts yet" />
+        <EmptyState title={t.submission.none} />
       ) : (
         <>
           <div className="attempt-tabs">
@@ -209,9 +217,10 @@ export function SubmissionTracker({
                 onClick={() => setSelectedId(item.id)}
               >
                 <span>{item.submissionId || item.id}</span>
-                <strong>{item.journal || "Journal not set"}</strong>
+                <strong>{item.journal || t.submission.noJournal}</strong>
                 <small>
-                  {item.status || "Preparing"} · {item.round || "Initial"}
+                  {valueLabel(t.values.status, item.status || "Preparing")} ·{" "}
+                  {valueLabel(t.values.round, item.round || "Initial")}
                 </small>
               </button>
             ))}
@@ -220,29 +229,31 @@ export function SubmissionTracker({
             <>
               <article className="submission-status-card">
                 <div className="submission-stage">
-                  <span>CURRENT STAGE</span>
-                  <h3>{attempt.status || "Preparing"}</h3>
+                  <span>{t.submission.currentStage}</span>
+                  <h3>{valueLabel(t.values.status, attempt.status || "Preparing")}</h3>
                   <p>
-                    {daysSince(attempt.stageStartedAt || attempt.submittedAt)} days in this stage ·
-                    verified {shortDate(attempt.lastVerifiedAt)}
+                    {t.submission.inStage(
+                      daysSince(attempt.stageStartedAt || attempt.submittedAt),
+                      shortDate(attempt.lastVerifiedAt, locale),
+                    )}
                   </p>
                 </div>
                 <div className="submission-facts">
                   <span>
-                    <small>Submission ID</small>
-                    <strong>{attempt.submissionId || "Not assigned"}</strong>
+                    <small>{t.submission.id}</small>
+                    <strong>{attempt.submissionId || t.submission.notAssigned}</strong>
                   </span>
                   <span>
-                    <small>Journal</small>
-                    <strong>{attempt.journal || "Not set"}</strong>
+                    <small>{t.submission.journal}</small>
+                    <strong>{attempt.journal || t.common.notSet}</strong>
                   </span>
                   <span>
-                    <small>Corresponding author</small>
-                    <strong>{attempt.correspondingAuthor || "Not set"}</strong>
+                    <small>{t.submission.author}</small>
+                    <strong>{attempt.correspondingAuthor || t.common.notSet}</strong>
                   </span>
                   <span>
-                    <small>Follow-up</small>
-                    <strong>{shortDate(attempt.followUpDue)}</strong>
+                    <small>{t.submission.followUp}</small>
+                    <strong>{shortDate(attempt.followUpDue, locale)}</strong>
                   </span>
                 </div>
                 <div className="submission-actions">
@@ -250,7 +261,7 @@ export function SubmissionTracker({
                     className="quiet-button"
                     onClick={() => openEditor("submission-attempts", attempt)}
                   >
-                    Edit details
+                    {t.submission.editDetails}
                   </button>
                   <button
                     className="quiet-button"
@@ -265,34 +276,36 @@ export function SubmissionTracker({
                       }
                     }}
                   >
-                    Open portal ↗
+                    {t.submission.portal}
                   </button>
                   <button
                     className="primary-button"
                     onClick={() => setAddingEvent((value) => !value)}
                   >
-                    Add status
+                    {t.submission.addStatus}
                   </button>
                 </div>
               </article>
               {addingEvent && (
                 <div className="status-event-form">
                   <label>
-                    <span>New stage</span>
+                    <span>{t.submission.newStage}</span>
                     <select
                       value={eventForm.status}
                       onChange={(event) =>
                         setEventForm({ ...eventForm, status: event.target.value })
                       }
                     >
-                      <option value="">Choose a stage…</option>
+                      <option value="">{t.submission.chooseStage}</option>
                       {submissionStages.map((stage) => (
-                        <option key={stage}>{stage}</option>
+                        <option key={stage} value={stage}>
+                          {valueLabel(t.values.status, stage)}
+                        </option>
                       ))}
                     </select>
                   </label>
                   <label>
-                    <span>Date</span>
+                    <span>{t.submission.date}</span>
                     <input
                       type="date"
                       value={eventForm.eventDate}
@@ -302,9 +315,9 @@ export function SubmissionTracker({
                     />
                   </label>
                   <details className="status-event-details">
-                    <summary>More details</summary>
+                    <summary>{t.submission.more}</summary>
                     <label>
-                      <span>Publisher wording</span>
+                      <span>{t.submission.wording}</span>
                       <input
                         value={eventForm.rawStatus}
                         onChange={(event) =>
@@ -314,7 +327,7 @@ export function SubmissionTracker({
                       />
                     </label>
                     <label>
-                      <span>Note</span>
+                      <span>{t.submission.note}</span>
                       <input
                         value={eventForm.description}
                         onChange={(event) =>
@@ -325,10 +338,10 @@ export function SubmissionTracker({
                   </details>
                   <div>
                     <button className="quiet-button" onClick={() => setAddingEvent(false)}>
-                      Cancel
+                      {t.common.cancel}
                     </button>
                     <button className="primary-button" onClick={submitEvent}>
-                      Add to timeline
+                      {t.submission.addToTimeline}
                     </button>
                   </div>
                 </div>
@@ -336,27 +349,22 @@ export function SubmissionTracker({
               <section className="submission-timeline">
                 <div className="section-heading">
                   <div>
-                    <span className="label">STATUS HISTORY</span>
-                    <p>
-                      {events.length} verified event{events.length === 1 ? "" : "s"}
-                    </p>
+                    <span className="label">{t.submission.history}</span>
                   </div>
                 </div>
                 {!events.length ? (
-                  <EmptyState title="No status history yet" />
+                  <EmptyState title={t.submission.noHistory} />
                 ) : (
                   events.map((event) => (
                     <article key={event.id}>
                       <i />
-                      <time>{shortDate(event.eventDate || event.createdAt)}</time>
+                      <time>{shortDate(event.eventDate || event.createdAt, locale)}</time>
                       <div>
-                        <strong>{event.status}</strong>
+                        <strong>{valueLabel(t.values.status, event.status)}</strong>
                         {event.rawStatus && <p>{event.rawStatus}</p>}
                         {event.description && <p>{event.description}</p>}
-                        {!event.rawStatus && !event.description && <p>Confirmed status update</p>}
-                        <small>
-                          {event.source || "Manual"} · {event.confidence || "confirmed"}
-                        </small>
+                        {!event.rawStatus && !event.description && <p>{t.submission.confirmed}</p>}
+                        <small>{valueLabel(t.values.source, event.source || "Manual")}</small>
                       </div>
                     </article>
                   ))
@@ -381,6 +389,7 @@ export function PaperFeedbackList({
   openEditor: (collection: CollectionKey, record?: Partial<RecordItem>) => void;
   context: "develop" | "review";
 }) {
+  const t = useT();
   const severityRank: Record<string, number> = { Critical: 0, Major: 1, Minor: 2 };
   const records = [
     ...state.reviews.map((item) => ({ item, collection: "reviews" as const })),
@@ -416,17 +425,22 @@ export function PaperFeedbackList({
             <span>
               <strong>{item.description || item.title}</strong>
               <small>
-                {[item.reviewRound, item.reviewSource, item.manuscriptSection, item.type]
+                {[
+                  valueLabel(t.values.round, item.reviewRound),
+                  item.reviewSource,
+                  valueLabel(t.values.section, item.manuscriptSection),
+                  valueLabel(t.values.category, item.type),
+                ]
                   .filter(Boolean)
-                  .join(" · ") || "No optional details"}
+                  .join(" · ") || t.feedback.noDetails}
               </small>
               {detail && (
                 <small className="issue-response">
-                  {item.status === "Resolved" ? "Result" : "Plan"}: {detail}
+                  {item.status === "Resolved" ? t.feedback.result(detail) : t.feedback.plan(detail)}
                 </small>
               )}
             </span>
-            <b>{item.status || "Open"}</b>
+            <b>{valueLabel(t.values.status, item.status || "Open")}</b>
           </button>
         );
       })}
@@ -437,19 +451,17 @@ export function PaperFeedbackList({
       <div className="section-heading">
         <div>
           <span className="label">
-            {context === "review" ? "FEEDBACK & RESPONSES" : "FEEDBACK & SOLUTIONS"}
+            {context === "review" ? t.feedback.review : t.feedback.develop}
           </span>
         </div>
         <button className="quiet-button" onClick={() => openEditor("reviews", defaults)}>
-          Add feedback
+          {t.feedback.add}
         </button>
       </div>
-      {!openRecords.length ? <EmptyState title="No open feedback" /> : renderRecords(openRecords)}
+      {!openRecords.length ? <EmptyState title={t.feedback.none} /> : renderRecords(openRecords)}
       {history.length > 0 && (
         <details className="paper-work-history">
-          <summary>
-            History · {history.length} closed item{history.length === 1 ? "" : "s"}
-          </summary>
+          <summary>{t.feedback.history(history.length)}</summary>
           {renderRecords(history)}
         </details>
       )}
@@ -474,6 +486,8 @@ export function ManuscriptModule({
   onSelect: (id: string) => void;
   initialView?: "develop" | "review" | "submission" | "summary";
 }) {
+  const t = useT();
+  const { locale } = useLocale();
   const records = state.manuscripts;
   const [view, setView] = useState<"develop" | "review" | "submission" | "summary">(
     initialView || "develop",
@@ -484,23 +498,20 @@ export function ManuscriptModule({
       <>
         <section className="page-intro compact">
           <div>
-            <p className="eyebrow">PAPER WORKSPACE</p>
+            <p className="eyebrow">{t.paper.eyebrow}</p>
             <h1>
-              Start a <em>paper.</em>
+              {t.paper.startLead}
+              <em>{t.paper.startEm}</em>
             </h1>
-            <p>
-              Create a paper before the first draft, then keep evidence, feedback, revision, and
-              submission work together.
-            </p>
           </div>
           <button
             className="primary-button"
             onClick={() => openEditor("manuscripts", { stage: "Concept" })}
           >
-            New paper <b>+</b>
+            {t.paper.new} <b>+</b>
           </button>
         </section>
-        <EmptyState title="No papers yet" />
+        <EmptyState title={t.paper.none} />
       </>
     );
   if (!selected) return null;
@@ -511,14 +522,11 @@ export function ManuscriptModule({
     <>
       <section className="page-intro compact manuscript-page-title">
         <div>
-          <p className="eyebrow">PAPER WORKSPACE</p>
+          <p className="eyebrow">{t.paper.eyebrow}</p>
           <h1>
-            One paper, <em>one context.</em>
+            {t.paper.titleLead}
+            <em>{t.paper.titleEm}</em>
           </h1>
-          <p>
-            Develop the draft, resolve feedback, and track every submission round without leaving
-            this paper.
-          </p>
         </div>
         <button
           className="primary-button"
@@ -530,7 +538,7 @@ export function ManuscriptModule({
             })
           }
         >
-          New paper <b>+</b>
+          {t.paper.new} <b>+</b>
         </button>
       </section>
       <div className="manuscript-selector">
@@ -543,53 +551,55 @@ export function ManuscriptModule({
             <span>{item.id}</span>
             <strong>{item.title}</strong>
             <small>
-              {item.stage || item.status || "Concept"} · {item.journal || "Journal not set"}
+              {valueLabel(t.values.stage, item.stage || item.status || "Concept")} ·{" "}
+              {item.journal || t.paper.noJournal}
             </small>
           </button>
         ))}
       </div>
       <article className="paper-context card">
         <div>
-          <span className="label">CURRENT PAPER</span>
+          <span className="label">{t.paper.current}</span>
           <h2>{selected.title}</h2>
           <p>
-            {selected.projectTitle || "No linked project"} ·{" "}
-            {selected.journal || "No target journal"}
+            {selected.projectTitle || t.paper.noProject} · {selected.journal || t.paper.noTarget}
           </p>
         </div>
         <div className="paper-context-meta">
           <span>
-            <small>Stage</small>
-            <strong>{selected.stage || selected.status || "Concept"}</strong>
+            <small>{t.paper.stage}</small>
+            <strong>
+              {valueLabel(t.values.stage, selected.stage || selected.status || "Concept")}
+            </strong>
           </span>
           <span>
-            <small>Next action</small>
-            <strong>{selected.nextAction || "Set the next concrete action"}</strong>
+            <small>{t.paper.nextAction}</small>
+            <strong>{selected.nextAction || t.paper.noNextAction}</strong>
           </span>
           <span>
-            <small>Open work</small>
-            <strong>{openIssues} open issues</strong>
+            <small>{t.paper.openWork}</small>
+            <strong>{t.paper.openIssues(openIssues)}</strong>
           </span>
         </div>
         <button className="quiet-button" onClick={() => openEditor("manuscripts", selected)}>
-          Edit paper
+          {t.paper.edit}
         </button>
       </article>
       <div className="module-tabs workflow-tabs">
         <button className={view === "develop" ? "active" : ""} onClick={() => setView("develop")}>
-          Develop
+          {t.paper.develop}
         </button>
         <button className={view === "review" ? "active" : ""} onClick={() => setView("review")}>
-          Review & revise
+          {t.paper.review}
         </button>
         <button
           className={view === "submission" ? "active" : ""}
           onClick={() => setView("submission")}
         >
-          Submission
+          {t.paper.submission}
         </button>
         <button className={view === "summary" ? "active" : ""} onClick={() => setView("summary")}>
-          Summary
+          {t.paper.summary}
         </button>
       </div>
       {view === "develop" && (
@@ -597,12 +607,16 @@ export function ManuscriptModule({
           <article className="manuscript-overview card manuscript-focus">
             <div className="manuscript-main">
               <div>
-                <h2>Draft & evidence</h2>
+                <h2>{t.paper.draft}</h2>
                 <p>
-                  {(selected.wordCount || 0).toLocaleString()} /{" "}
-                  {(selected.targetWords || 0).toLocaleString()} words · Writing progress{" "}
-                  {clampProgress(selected.progress)}% · Evidence coverage{" "}
-                  {clampProgress(selected.evidenceCoverage)}%
+                  {t.paper.progressLine(
+                    t.today.words(
+                      formatNumber(selected.wordCount || 0, locale),
+                      formatNumber(selected.targetWords || 0, locale),
+                    ),
+                    clampProgress(selected.progress),
+                    clampProgress(selected.evidenceCoverage),
+                  )}
                 </p>
               </div>
               <ProgressRing value={selected.progress || 0} />

@@ -3,13 +3,21 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import path from "node:path";
 import { helperApp, buildReminderHelper } from "../scripts/build-reminder-helper.mjs";
+import { t } from "./i18n.mjs";
 const exec = promisify(execFile);
+// The helper answers in English. The two refusals a person can act on are put
+// into the Bridge's language here; anything else is passed on as it came.
+const HELPER_REFUSALS = {
+  "Allow notifications for ScholarBuddy Reminders in System Settings.":
+    "reminders.allowNotifications",
+  "Allow Calendar access for ScholarBuddy Reminders in System Settings.": "reminders.allowCalendar",
+};
 export function nativeReminders(directory) {
   return async (action, payload = {}) => {
     if (process.platform !== "darwin") {
       if (action === "status")
         return { permission: "unsupported", calendarPermission: "unsupported" };
-      const error = new Error("System reminders currently require macOS.");
+      const error = new Error(t("reminders.macOnly"));
       error.code = "reminder_setup";
       throw error;
     }
@@ -17,9 +25,7 @@ export function nativeReminders(directory) {
       try {
         await buildReminderHelper();
       } catch {
-        const error = new Error(
-          "The notification helper could not be installed. Install Apple's Command Line Tools with xcode-select --install, then turn reminders on again.",
-        );
+        const error = new Error(t("reminders.helperInstall"));
         error.code = "reminder_setup";
         throw error;
       }
@@ -30,7 +36,7 @@ export function nativeReminders(directory) {
       if (action === "status")
         return { permission: "notInstalled", calendarPermission: "notDetermined" };
       if (action === "clear") return { ok: true };
-      throw new Error("The notification helper is unavailable. Turn reminders on to set it up.");
+      throw new Error(t("reminders.helperMissing"));
     }
     await mkdir(directory, { recursive: true, mode: 0o700 });
     const folder = await mkdtemp(path.join(directory, "request-"));
@@ -44,7 +50,10 @@ export function nativeReminders(directory) {
         { timeout: action === "authorize" ? 180_000 : 20_000 },
       );
       const result = JSON.parse(await readFile(output, "utf8"));
-      if (result.error) throw new Error(result.error);
+      if (result.error)
+        throw new Error(
+          HELPER_REFUSALS[result.error] ? t(HELPER_REFUSALS[result.error]) : result.error,
+        );
       return result;
     } finally {
       await rm(folder, { recursive: true, force: true });

@@ -44,6 +44,7 @@ import {
 import { vaultCoverageNote, searchObsidian } from "./vault-search.mjs";
 import { bridgeStatus } from "./status.mjs";
 import { handleSetup } from "./setup.mjs";
+import { currentLanguage, inLanguage, languageOf, requestLanguage, t } from "./i18n.mjs";
 
 const REQUEST_TIMEOUT_MS = 15_000;
 
@@ -101,7 +102,12 @@ function readQuota(pathname) {
   return readWindow.count <= READ_LIMIT;
 }
 
-export async function handle(request, providedConfig) {
+// Everything a request makes the Bridge say is said in that request's language.
+export function handle(request, providedConfig) {
+  return inLanguage(requestLanguage(request), () => route(request, providedConfig));
+}
+
+async function route(request, providedConfig) {
   const config = providedConfig || (await getConfig());
   const url = new URL(request.url);
   if (url.pathname === "/setup" || url.pathname.startsWith("/setup/")) {
@@ -116,14 +122,13 @@ export async function handle(request, providedConfig) {
     return handleSetup(request, config);
   }
   if (url.pathname === "/pair" && request.method === "GET") {
-    if (request.headers.get("origin"))
-      return json("", { error: "Direct local navigation is required." }, 403);
-    return pairingPage(pairingBinding(config));
+    if (request.headers.get("origin")) return json("", { error: t("access.localOnly") }, 403);
+    return pairingPage(pairingBinding(config), currentLanguage());
   }
   if (url.pathname === "/pair/exchange") {
     const origin = request.headers.get("origin") || "";
     if (!allowedOrigins(config).includes(origin))
-      return json("", { error: "Origin is not allowed.", code: "origin_denied" }, 403);
+      return json("", { error: t("access.originDenied"), code: "origin_denied" }, 403);
     if (request.method === "OPTIONS")
       return new Response(null, { status: 204, headers: corsHeaders(origin) });
     if (request.method !== "POST") return json(origin, { error: "Method not allowed." }, 405);
@@ -131,7 +136,7 @@ export async function handle(request, providedConfig) {
     if (!redeemPairingCode(payload.code, pairingBinding(config), origin))
       return json(
         origin,
-        { error: "That pairing code is invalid or expired.", code: "pairing_code_invalid" },
+        { error: t("access.pairingCodeInvalid"), code: "pairing_code_invalid" },
         401,
       );
     if (!config._grants) return json(origin, { token: config._bridgeToken });
@@ -158,16 +163,19 @@ export async function handle(request, providedConfig) {
       {
         error:
           auth.code === "pairing_required"
-            ? "Pair this browser with the local bridge."
+            ? t("access.pairingRequired")
             : auth.code === "read_only"
-              ? "This site is paired read-only. Change its access on the Bridge's local setup page."
-              : "Origin is not allowed.",
+              ? t("access.readOnly")
+              : t("access.originDenied"),
         code: auth.code,
       },
       auth.status,
     );
   if (auth.preflight) return new Response(null, { status: 204, headers: corsHeaders(auth.origin) });
   const origin = auth.origin;
+  // Reminders are sent when no browser is asking, so they are written in the
+  // language the workbench last spoke to this Bridge in.
+  void config._reminders?.useLanguage?.(currentLanguage());
   if (url.pathname === "/profile" || url.pathname.startsWith("/profile/")) {
     const store = activityStore(config);
     await store.initialize();
@@ -221,17 +229,12 @@ export async function handle(request, providedConfig) {
     url.pathname === "/reminders/test" ||
     url.pathname === "/reminders/events"
   ) {
-    if (!config._reminders)
-      return json(
-        origin,
-        { error: "Restart the local Bridge to finish setting up reminders." },
-        503,
-      );
+    if (!config._reminders) return json(origin, { error: t("reminders.restart") }, 503);
     try {
       if (url.pathname === "/reminders/events" && request.method === "GET") {
         const date = url.searchParams.get("date") || "";
         if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(+new Date(`${date}T00:00:00`)))
-          return json(origin, { error: "Invalid calendar date." }, 422);
+          return json(origin, { error: t("reminders.invalidDate") }, 422);
         return json(origin, await config._reminders.events(date));
       }
       if (url.pathname === "/reminders" && request.method === "GET")
@@ -248,18 +251,14 @@ export async function handle(request, providedConfig) {
           error:
             error.status === 422 || error.code === "reminder_setup"
               ? error.message
-              : "Reminders could not complete this action. Check notification and Calendar permissions in System Settings, then try again.",
+              : t("reminders.failed"),
         },
         error.status || 503,
       );
     }
   }
   if (!readQuota(url.pathname))
-    return json(
-      origin,
-      { error: "Too many local source requests. Try again shortly.", code: "read_limit" },
-      429,
-    );
+    return json(origin, { error: t("access.readLimit"), code: "read_limit" }, 429);
   if (url.pathname === "/health" && request.method === "GET")
     return json(origin, { bridge: true, paired: true });
   if (url.pathname === "/status" && request.method === "GET")
@@ -379,92 +378,94 @@ async function readIncomingBody(incoming) {
 }
 
 export function createBridgeServer(configPromise = getConfig()) {
-  return createServer(async (incoming, outgoing) => {
-    let request;
-    let origin = "";
-    try {
-      const clientAbort = new AbortController();
-      incoming.once("aborted", () => clientAbort.abort(new Error("Client disconnected.")));
-      outgoing.once("close", () => {
-        if (!outgoing.writableEnded) clientAbort.abort(new Error("Client disconnected."));
-      });
-      const config = await configPromise;
-      origin = String(incoming.headers.origin || "");
-      const requestedHost = String(incoming.headers.host || "");
-      const host = /^(127\.0\.0\.1|localhost)(?::(\d{1,5}))?$/i.exec(requestedHost);
-      if (!host || (host[2] && (Number(host[2]) < 1 || Number(host[2]) > 65535))) {
-        throw httpError(
-          400,
-          "Host must be localhost or 127.0.0.1 with a valid port.",
-          "host_denied",
-        );
-      }
-      const url = `http://${requestedHost}${incoming.url}`;
-      const pathname = new URL(url).pathname;
-      const preliminary = new Request(url, {
+  return createServer((incoming, outgoing) =>
+    inLanguage(languageOf(incoming.url || "/", incoming.headers["accept-language"]), () =>
+      serve(configPromise, incoming, outgoing),
+    ),
+  );
+}
+
+async function serve(configPromise, incoming, outgoing) {
+  let request;
+  let origin = "";
+  try {
+    const clientAbort = new AbortController();
+    incoming.once("aborted", () => clientAbort.abort(new Error("Client disconnected.")));
+    outgoing.once("close", () => {
+      if (!outgoing.writableEnded) clientAbort.abort(new Error("Client disconnected."));
+    });
+    const config = await configPromise;
+    origin = String(incoming.headers.origin || "");
+    const requestedHost = String(incoming.headers.host || "");
+    const host = /^(127\.0\.0\.1|localhost)(?::(\d{1,5}))?$/i.exec(requestedHost);
+    if (!host || (host[2] && (Number(host[2]) < 1 || Number(host[2]) > 65535))) {
+      throw httpError(400, "Host must be localhost or 127.0.0.1 with a valid port.", "host_denied");
+    }
+    const url = `http://${requestedHost}${incoming.url}`;
+    const pathname = new URL(url).pathname;
+    const preliminary = new Request(url, {
+      method: incoming.method,
+      headers: incoming.headers,
+      signal: clientAbort.signal,
+    });
+    const isLocalEntry =
+      (pathname === "/pair" && incoming.method === "GET") ||
+      pathname === "/pair/exchange" ||
+      pathname === "/setup" ||
+      pathname.startsWith("/setup/");
+    const auth = isLocalEntry ? { ok: true } : authorize(preliminary, config);
+    if (!auth.ok || auth.preflight || ["GET", "HEAD", "OPTIONS"].includes(incoming.method))
+      request = preliminary;
+    else {
+      const body = await readIncomingBody(incoming);
+      request = new Request(url, {
         method: incoming.method,
         headers: incoming.headers,
+        body,
         signal: clientAbort.signal,
       });
-      const isLocalEntry =
-        (pathname === "/pair" && incoming.method === "GET") ||
-        pathname === "/pair/exchange" ||
-        pathname === "/setup" ||
-        pathname.startsWith("/setup/");
-      const auth = isLocalEntry ? { ok: true } : authorize(preliminary, config);
-      if (!auth.ok || auth.preflight || ["GET", "HEAD", "OPTIONS"].includes(incoming.method))
-        request = preliminary;
-      else {
-        const body = await readIncomingBody(incoming);
-        request = new Request(url, {
-          method: incoming.method,
-          headers: incoming.headers,
-          body,
-          signal: clientAbort.signal,
-        });
-      }
-      const response = await handle(request, config);
-      outgoing.writeHead(response.status, Object.fromEntries(response.headers));
-      // Buffering an event stream would defeat it, so those are piped through and
-      // the socket closing is what cancels the upstream provider request.
-      if (response.body && response.headers.get("content-type")?.startsWith("text/event-stream"))
-        await pipeline(Readable.fromWeb(response.body), outgoing);
-      else outgoing.end(Buffer.from(await response.arrayBuffer()));
-    } catch (error) {
-      if (outgoing.headersSent || outgoing.writableEnded) {
-        outgoing.destroy();
-        return;
-      }
-      const status = Number(error?.status) || 500;
-      const publicCodes = new Set([
-        "provider_not_configured",
-        "provider_timeout",
-        "provider_auth",
-        "provider_error",
-        "calendar_unavailable",
-        "config_invalid",
-      ]);
-      const code =
-        typeof error?.code === "string" && (status < 500 || publicCodes.has(error.code))
-          ? error.code
-          : status >= 500
-            ? "bridge_error"
-            : "invalid_request";
-      const safeMessage =
-        status < 500 || publicCodes.has(code)
-          ? error instanceof Error
-            ? error.message
-            : "Invalid request."
-          : "Bridge request failed.";
-      const response = json(
-        allowedOrigins(await configPromise).includes(origin) ? origin : "",
-        { error: safeMessage, code },
-        status,
-      );
-      outgoing.writeHead(response.status, Object.fromEntries(response.headers));
-      outgoing.end(Buffer.from(await response.arrayBuffer()));
     }
-  });
+    const response = await handle(request, config);
+    outgoing.writeHead(response.status, Object.fromEntries(response.headers));
+    // Buffering an event stream would defeat it, so those are piped through and
+    // the socket closing is what cancels the upstream provider request.
+    if (response.body && response.headers.get("content-type")?.startsWith("text/event-stream"))
+      await pipeline(Readable.fromWeb(response.body), outgoing);
+    else outgoing.end(Buffer.from(await response.arrayBuffer()));
+  } catch (error) {
+    if (outgoing.headersSent || outgoing.writableEnded) {
+      outgoing.destroy();
+      return;
+    }
+    const status = Number(error?.status) || 500;
+    const publicCodes = new Set([
+      "provider_not_configured",
+      "provider_timeout",
+      "provider_auth",
+      "provider_error",
+      "calendar_unavailable",
+      "config_invalid",
+    ]);
+    const code =
+      typeof error?.code === "string" && (status < 500 || publicCodes.has(error.code))
+        ? error.code
+        : status >= 500
+          ? "bridge_error"
+          : "invalid_request";
+    const safeMessage =
+      status < 500 || publicCodes.has(code)
+        ? error instanceof Error
+          ? error.message
+          : t("access.invalid")
+        : t("access.failed");
+    const response = json(
+      allowedOrigins(await configPromise).includes(origin) ? origin : "",
+      { error: safeMessage, code },
+      status,
+    );
+    outgoing.writeHead(response.status, Object.fromEntries(response.headers));
+    outgoing.end(Buffer.from(await response.arrayBuffer()));
+  }
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

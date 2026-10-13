@@ -1800,6 +1800,21 @@ test("each workflow command carries its own expert brief and the action contract
   }
 });
 
+test("answers follow the interface language except where the manuscript is written", () => {
+  const chinese = /Simplified Chinese/;
+  assert.match(systemPrompt("@ask-knowledge", "zh"), chinese);
+  assert.match(systemPrompt("@plan-today", "zh"), chinese);
+  assert.doesNotMatch(systemPrompt("@ask-knowledge", "en"), chinese);
+  assert.doesNotMatch(systemPrompt("@ask-knowledge"), chinese);
+  // Manuscript sections are drafted and reviewed in English for the journal.
+  assert.doesNotMatch(systemPrompt("@write-section", "zh"), chinese);
+  assert.doesNotMatch(systemPrompt("@reviewer-critique", "zh"), chinese);
+  // Whatever a browser sends, only a known language changes the prompt.
+  assert.equal(systemPrompt("@ask-knowledge", "constructor"), systemPrompt("@ask-knowledge"));
+  // The block the workbench parses keeps its English contract in either language.
+  assert.match(systemPrompt("@plan-today", "zh"), /scholarbuddy-actions/);
+});
+
 test("the six contextual workflows have distinct inputs, sources, and direct outcomes", () => {
   assert.deepEqual(Object.keys(WORKFLOW_CONTRACTS), [
     "@ask-knowledge",

@@ -1,6 +1,6 @@
 # ScholarBuddy — Sports Research OS
 
-ScholarBuddy is a local-first research workbench for sports analytics and other evidence-heavy research. The hosted interface organizes projects, manuscripts, reading, reviews, submissions, the daily research log, captured ideas, and daily focus. A loopback-only Bridge keeps Obsidian, Zotero, macOS Calendar, and macOS Mail on the researcher's own computer.
+ScholarBuddy is a local-first research workbench for sports science and other evidence-heavy research. The hosted interface organizes projects, manuscripts, reading, reviews, submissions, the daily research log, captured ideas, and daily focus. A loopback-only Bridge keeps Obsidian, Zotero, macOS Calendar, and macOS Mail on the researcher's own computer.
 
 ![ScholarBuddy](docs/homepage.png)
 
@@ -88,7 +88,7 @@ Setting `SCHOLARBUDDY_BRIDGE_TOKEN` opts out of all of this for automation: one 
 Open **Connections** in the sidebar to configure reminders. Reminders default to off. First enable selects both categories:
 
 - Calendar events: 24 elapsed hours before; all-day events at 09:00 the previous day.
-- PhD Operations deadlines (including Conference): one calendar month, seven days,
+- Operations deadlines (including Conference): one calendar month, seven days,
   and one day before, at 09:00 in this Mac's time zone. Month ends are clamped.
 
 No new fields or per-item setup are needed. Today tasks are excluded. Completed,
@@ -169,6 +169,14 @@ indexing but is not access control. The unused image optimization route returns
 - Record history is retained under `ScholarBuddy/.history`. “Delete permanently” removes both the live note and every archived version.
 
 See [PRIVACY.md](PRIVACY.md) and [SECURITY.md](SECURITY.md) before sharing a deployment.
+
+## Language
+
+The interface is available in English and Simplified Chinese. Switch with the round language button at the right of the top bar (**中** in English, **EN** in Chinese); without a choice, the browser's language decides. Records keep their statuses, stages, and section names in English in the vault, so a vault reads the same whichever language each browser uses. AI answers follow the interface language, except drafting and reviewing manuscript sections, which stay in English.
+
+The Bridge follows the same choice. The workbench sends the interface language with every Bridge request (as `Accept-Language`, which an older Bridge simply ignores), so unreadable-note reasons, coverage notes, and Bridge errors arrive in that language. The setup and pairing pages open in it and have their own **EN | 中文** switch. Reminder notifications are written in the language the workbench last used with this Bridge. The macOS permission prompt of the reminder helper follows the Mac's own language.
+
+Interface strings live in `app/i18n/en.ts` (the source of truth) and `app/i18n/zh.ts`, which the compiler holds to the same keys; the user guide is in `app/i18n/guide.ts`. The Bridge's are in `bridge/messages.mjs`. Log output, the command line, and refusals of malformed requests stay English.
 
 ## Personal activity profile
 

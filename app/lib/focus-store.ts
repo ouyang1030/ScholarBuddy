@@ -15,9 +15,9 @@ const DB = "scholarbuddy-focus-history-v1";
 let dbPromise: Promise<IDBDatabase> | undefined;
 let syncing: Promise<void> | undefined;
 let boundBridge = "";
-let storageError = "";
-export function focusStorageError() {
-  return storageError;
+let storageFailed = false;
+export function focusStorageFailed() {
+  return storageFailed;
 }
 
 // The calendar finished sessions are written to as events. Empty means they are
@@ -89,12 +89,11 @@ export async function saveFocusSegment(segment: FocusSegment, sync = true) {
       transaction.oncomplete = () => resolve();
       transaction.onerror = () => reject(transaction.error);
     });
-    storageError = "";
+    storageFailed = false;
     notify();
     if (sync) void syncFocus();
   } catch {
-    storageError =
-      "Focus history could not be saved in this browser. Keep this page open and retry.";
+    storageFailed = true;
     notify();
   }
 }

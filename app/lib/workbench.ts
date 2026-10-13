@@ -292,12 +292,13 @@ export type DataProps = {
   saveRecord: (collection: CollectionKey, record: Partial<RecordItem>) => Promise<RecordItem>;
   runAction: (action: Action) => void;
 };
+// An alert carries what happened and how many days; the interface words it in
+// the reader's language.
 export type SubmissionAlert = {
   attempt: RecordItem;
   kind: "revision-deadline" | "follow-up" | "stale-verification";
   tone: "critical" | "warning" | "quiet";
-  title: string;
-  detail: string;
+  days: number;
 };
 
 export function submissionAlertKey(alert: SubmissionAlert) {
@@ -315,24 +316,21 @@ export function submissionAlerts(state: WorkbenchState): SubmissionAlert[] {
         attempt,
         kind: "revision-deadline",
         tone: revision < 0 ? "critical" : "warning",
-        title: revision < 0 ? "Revision deadline has passed" : `Revision due in ${revision} days`,
-        detail: `${attempt.journal || "Journal"} · ${attempt.round || "Current round"}`,
+        days: revision,
       });
     else if (followUp !== null && followUp <= 0)
       alerts.push({
         attempt,
         kind: "follow-up",
         tone: "warning",
-        title: "Follow-up is due",
-        detail: `${attempt.status || "Submission"} · ${daysSince(attempt.stageStartedAt || attempt.submittedAt)} days in stage`,
+        days: daysSince(attempt.stageStartedAt || attempt.submittedAt),
       });
     else if (daysSince(attempt.lastVerifiedAt || attempt.submittedAt) >= 21)
       alerts.push({
         attempt,
         kind: "stale-verification",
         tone: "quiet",
-        title: "Submission has not been verified recently",
-        detail: `${daysSince(attempt.lastVerifiedAt || attempt.submittedAt)} days since the last check`,
+        days: daysSince(attempt.lastVerifiedAt || attempt.submittedAt),
       });
   }
   return alerts.slice(0, 5);
