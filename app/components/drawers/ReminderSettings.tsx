@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { bridgeFailure, failureText, useT } from "../../i18n";
 import { bridgeFetch } from "../../lib/bridge-client";
 import { SaveFeedback, SettingRow } from "../primitives";
 
@@ -19,6 +20,7 @@ type ReminderStatus = {
  * other per-Mac system settings rather than in their own sidebar entry.
  */
 export function ReminderSettings({ paired }: { paired: boolean }) {
+  const t = useT();
   const [loadedStatus, setLoadedStatus] = useState<ReminderStatus | null>(null);
   const [loadError, setLoadError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -29,7 +31,7 @@ export function ReminderSettings({ paired }: { paired: boolean }) {
   const refresh = useCallback(async () => {
     const response = await bridgeFetch("/reminders");
     const body = await response.json();
-    if (!response.ok) throw new Error(body.error || "Reminders could not be loaded.");
+    if (!response.ok) throw bridgeFailure(body, "");
     setLoadedStatus(body);
     setLoadError("");
   }, []);
@@ -40,16 +42,14 @@ export function ReminderSettings({ paired }: { paired: boolean }) {
     // done. Wait for the pairing this drawer is here to establish.
     if (!paired) return;
     const load = () =>
-      void refresh().catch((error) =>
-        setLoadError(error instanceof Error ? error.message : "Connect your Mac to use reminders."),
-      );
+      void refresh().catch((error) => setLoadError(failureText(t, error, t.reminders.loadFailed)));
     const start = window.setTimeout(load, 0);
     const timer = window.setInterval(load, 30_000);
     return () => {
       window.clearTimeout(start);
       window.clearInterval(timer);
     };
-  }, [busy, paired, refresh]);
+  }, [busy, paired, refresh, t]);
   const update = async (patch: Partial<Settings>) => {
     const key = Object.keys(patch)[0] as keyof Settings;
     setBusy(true);
@@ -66,14 +66,14 @@ export function ReminderSettings({ paired }: { paired: boolean }) {
         signal: AbortSignal.timeout(240_000),
       });
       const body = await response.json();
-      if (!response.ok) throw new Error(body.error);
+      if (!response.ok) throw bridgeFailure(body, "");
       setLoadedStatus((current) => (current ? { ...current, settings: body.settings } : current));
       await refresh();
       setSavedKey(key);
       window.setTimeout(() => setSavedKey((current) => (current === key ? null : current)), 1800);
     } catch (error) {
       setFailedKey(key);
-      setLoadError(error instanceof Error ? error.message : "Settings could not be saved.");
+      setLoadError(failureText(t, error, t.errors.saveFailed));
     } finally {
       setBusy(false);
       setSavingKey(null);
@@ -86,10 +86,10 @@ export function ReminderSettings({ paired }: { paired: boolean }) {
     try {
       const response = await bridgeFetch("/reminders/test", { method: "POST" });
       const body = await response.json();
-      if (!response.ok) throw new Error(body.error);
-      setMessage("Test sent. Check macOS Notification Center if no banner appears.");
+      if (!response.ok) throw bridgeFailure(body, "");
+      setMessage(t.reminders.testSent);
     } catch (error) {
-      setLoadError(error instanceof Error ? error.message : "Test could not be sent.");
+      setLoadError(failureText(t, error, t.reminders.testFailed));
     } finally {
       setBusy(false);
     }
@@ -97,30 +97,22 @@ export function ReminderSettings({ paired }: { paired: boolean }) {
   // Unpaired, there is nothing to load: the section explains itself from props
   // rather than from a request that could only come back 401.
   const status = paired ? loadedStatus : null;
-  const error = paired ? loadError : "Pair this browser with the local bridge to use reminders.";
+  const error = paired ? loadError : t.reminders.pairFirst;
   const settings = status?.settings;
   const enabled = Boolean(settings?.enabled);
   const permissionIssue = enabled && status?.permission !== "granted";
   return (
     <section className="reminder-settings" aria-labelledby="reminder-settings-title">
       <div className="drawer-section-title">
-        <strong id="reminder-settings-title">Reminders</strong>
+        <strong id="reminder-settings-title">{t.reminders.title}</strong>
       </div>
-      {!status && !error && <p role="status">Loading settings…</p>}
+      {!status && !error && <p role="status">{t.reminders.loading}</p>}
       <div className="reminder-switches" aria-busy={busy}>
         {(
           [
-            ["enabled", "Enable reminders", "Save your choices on this Mac."],
-            [
-              "calendar",
-              "Calendar events",
-              "24 hours before. All-day events: 09:00 the day before.",
-            ],
-            [
-              "operations",
-              "PhD Operations deadlines",
-              "1 month, 1 week and 1 day before, at 09:00.",
-            ],
+            ["enabled", t.reminders.enable, undefined],
+            ["calendar", t.reminders.calendar, t.reminders.calendarWhen],
+            ["operations", t.reminders.operations, t.reminders.operationsWhen],
           ] as const
         ).map(([key, label, detail]) => (
           <SettingRow
@@ -148,36 +140,21 @@ export function ReminderSettings({ paired }: { paired: boolean }) {
         ))}
       </div>
       <div className="reminder-status" aria-live="polite">
-        {busy && (
-          <p>
-            Applying… If macOS asks, allow ScholarBuddy Reminders to send notifications and read
-            your calendar.
-          </p>
-        )}
+        {busy && <p>{t.reminders.applying}</p>}
         {error && <p role="alert">{error}</p>}
         {permissionIssue && (
           <p>
-            {status?.permission === "unsupported"
-              ? "System reminders require macOS."
-              : "Notifications are not ready. Allow ScholarBuddy Reminders in System Settings → Notifications. If setup is incomplete, turn reminders off and on to retry."}
+            {status?.permission === "unsupported" ? t.reminders.macOnly : t.reminders.notifications}
           </p>
         )}
         {enabled && settings?.calendar && status?.calendarPermission !== "granted" && (
-          <p>
-            Allow ScholarBuddy Reminders in System Settings → Privacy & Security → Calendars.
-            Calendar access is read-only in this feature.
-          </p>
+          <p>{t.reminders.calendarPermission}</p>
         )}
         {enabled && status?.error && <p>{status.error}</p>}
         {enabled &&
           Object.values(status?.sourceErrors || {}).map((text) => <p key={text}>{text}</p>)}
-        {enabled && !permissionIssue && (
-          <p>
-            Reminders are on. Times use this Mac’s time zone. Your Mac must be awake and its local
-            connection running; Focus settings may silence banners.
-          </p>
-        )}
-        {!enabled && status && <p>Reminders are off. Your category choices are kept.</p>}
+        {enabled && !permissionIssue && <p>{t.reminders.on}</p>}
+        {!enabled && status && <p>{t.reminders.off}</p>}
         {message && <p>{message}</p>}
       </div>
       <div className="reminder-actions">
@@ -186,13 +163,9 @@ export function ReminderSettings({ paired }: { paired: boolean }) {
           disabled={busy || !enabled || status?.permission !== "granted"}
           onClick={() => void test()}
         >
-          Send test reminder
+          {t.reminders.test}
         </button>
       </div>
-      <p className="reminder-footnote">
-        Completed items stop automatically. Missed reminders for upcoming items are combined into
-        one notification.
-      </p>
     </section>
   );
 }

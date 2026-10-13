@@ -5,6 +5,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { repoRoot } from "./config.mjs";
 import { httpError, requireText, requireIsoDate } from "./http.mjs";
+import { t } from "./i18n.mjs";
 
 const calendarScript = path.join(repoRoot, "bridge", "calendar.jxa");
 
@@ -75,10 +76,7 @@ export function validateCalendar(payload, updating = false) {
 
 export async function chooseVault() {
   if (process.platform !== "darwin") {
-    throw httpError(
-      501,
-      "Folder selection is available on macOS. Enter an absolute vault path on this system.",
-    );
+    throw httpError(501, t("setupErrors.folderMacOnly"));
   }
   try {
     const { stdout } = await execFileAsync(
@@ -88,7 +86,7 @@ export async function chooseVault() {
     );
     return stdout.trim().replace(/\/$/, "");
   } catch (cause) {
-    const error = new Error("No folder was selected.", { cause });
+    const error = new Error(t("setupErrors.noFolder"), { cause });
     error.status = 400;
     throw error;
   }

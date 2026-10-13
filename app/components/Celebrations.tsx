@@ -1,5 +1,7 @@
 "use client";
 
+import { useT } from "../i18n";
+
 export function CelebrationSky({ grand = false }: { grand?: boolean }) {
   const colors = ["#f7d45c", "#ff6b78", "#6ee7ff", "#b7ed62", "#b98cff", "#ff9f43"];
   const bursts = [
@@ -51,18 +53,18 @@ export function CelebrationSky({ grand = false }: { grand?: boolean }) {
 }
 
 export function FocusCelebration({ onClose }: { onClose: () => void }) {
+  const t = useT();
   return (
     <div className="focus-celebration" role="status" aria-live="polite">
       <CelebrationSky />
       <section>
-        <span className="celebration-kicker">6 HOURS OF DEEP WORK</span>
-        <h2>Research moved forward today.</h2>
-        <p>Six focused hours. A serious day of scholarship—well done.</p>
+        <span className="celebration-kicker">{t.celebrate.focusKicker}</span>
+        <h2>{t.celebrate.focusTitle}</h2>
         <button onClick={onClose}>
-          Keep going <b>→</b>
+          {t.celebrate.keepGoing} <b>→</b>
         </button>
       </section>
-      <button className="celebration-close" aria-label="Close celebration" onClick={onClose}>
+      <button className="celebration-close" aria-label={t.celebrate.close} onClick={onClose}>
         ×
       </button>
     </div>
@@ -84,6 +86,7 @@ export function PaperCelebration({
   onClose: () => void;
   ref?: React.Ref<HTMLElement>;
 }) {
+  const t = useT();
   return (
     <div
       ref={ref as React.Ref<HTMLDivElement>}
@@ -94,7 +97,7 @@ export function PaperCelebration({
     >
       <CelebrationSky grand />
       <section>
-        <span className="celebration-kicker">PAPER {paper.milestone.toUpperCase()}</span>
+        <span className="celebration-kicker">{t.celebrate.paperKicker(paper.milestone)}</span>
         <div
           className="celebration-languages"
           aria-label="热烈祝贺. Congratulations. Herzlichen Glückwunsch."
@@ -106,22 +109,13 @@ export function PaperCelebration({
         <p>
           <strong>{paper.title}</strong>
           <br />
-          has been {paper.milestone.toLowerCase()}
-          {paper.journal
-            ? paper.milestone === "Accepted"
-              ? ` by ${paper.journal}.`
-              : ` in ${paper.journal}.`
-            : "."}
+          {t.celebrate.paperLine(paper.milestone, paper.journal)}
         </p>
         <button onClick={onClose}>
-          Celebrate this milestone <b>→</b>
+          {t.celebrate.paperButton} <b>→</b>
         </button>
       </section>
-      <button
-        className="celebration-close"
-        aria-label="Close publication celebration"
-        onClick={onClose}
-      >
+      <button className="celebration-close" aria-label={t.celebrate.paperClose} onClick={onClose}>
         ×
       </button>
     </div>

@@ -37,6 +37,7 @@ command-line switches. Each concern it routes to has its own module:
 - `providers.mjs`, `ai-run.mjs`, `prompts.mjs` — provider protocols, and a workflow run from retrieval to audited answer.
 - `macos.mjs`, `reminders.mjs`, `reminder-rules.mjs`, `reminder-native.mjs` — Calendar, Mail, and notifications.
 - `status.mjs`, `setup.mjs`, `setup-page.mjs`, `local-settings.mjs` — connection status and the loopback setup page.
+- `i18n.mjs`, `messages.mjs` — the language each request is answered in, and every sentence in English and Chinese.
 - `http.mjs`, `config.mjs`, `atomic-file.mjs`, `activity-store.mjs` — shared plumbing.
 
 ## Running

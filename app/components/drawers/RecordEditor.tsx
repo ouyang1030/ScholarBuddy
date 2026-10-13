@@ -1,10 +1,10 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { failureText, useT, valueLabel } from "../../i18n";
 import { clampProgress, localDateKey } from "../../lib/format";
 import { CLOSED_RECORD_STATUSES } from "../../../shared/constants.mjs";
 import {
-  collectionLabels,
   manuscriptSections,
   operationTypes,
   statusDefault,
@@ -34,6 +34,13 @@ export function RecordEditor({
   onUnsavedChange?: (unsaved: boolean) => void;
   ref?: React.Ref<HTMLElement>;
 }) {
+  const t = useT();
+  // Stored values stay English; each option shows the current language.
+  const option = (labels: Record<string, string>, value: string) => (
+    <option key={value} value={value}>
+      {valueLabel(labels, value)}
+    </option>
+  );
   const isJournal = editor.collection === "journal";
   const isIdea = editor.collection === "ideas";
   const isReadingQueue = editor.collection === "reading-queue";
@@ -80,11 +87,11 @@ export function RecordEditor({
   const save = async () => {
     const feedback = String(form.description || "").trim();
     if (isPaperWorkItem && !feedback) {
-      setError("Feedback is required.");
+      setError(t.editor.feedbackRequired);
       return;
     }
     if (!isPaperWorkItem && !String(form.title || "").trim()) {
-      setError("Title is required.");
+      setError(t.editor.titleRequired);
       return;
     }
     setSaving(true);
@@ -113,7 +120,7 @@ export function RecordEditor({
       setSaved(true);
       closeTimerRef.current = window.setTimeout(onClose, 650);
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : "Could not save this record.");
+      setError(failureText(t, saveError, t.errors.saveFailed));
     } finally {
       setSaving(false);
     }
@@ -121,7 +128,7 @@ export function RecordEditor({
   const remove = async () => {
     if (!form.id || !form.version) return;
     if (!form.contentHash) {
-      setError("Reload this record before deleting it.");
+      setError(t.editor.reloadFirst);
       return;
     }
     setSaving(true);
@@ -134,9 +141,7 @@ export function RecordEditor({
       });
       onClose();
     } catch (deleteError) {
-      setError(
-        deleteError instanceof Error ? deleteError.message : "Could not delete this record.",
-      );
+      setError(failureText(t, deleteError, t.errors.deleteFailed));
       setSaving(false);
     }
   };
@@ -145,10 +150,8 @@ export function RecordEditor({
     !isJournal && (!isPaperWorkItem || existing) && !(isSubmissionAttempt && existing);
   const showDescription = !isSubmission && !isPaperWorkItem;
   const descriptionLabel =
-    editor.collection === "manuscripts"
-      ? "Manuscript text · use Markdown section headings"
-      : "Notes";
-  const editorLabel = isPaperWorkItem ? "Feedback & response" : collectionLabels[editor.collection];
+    editor.collection === "manuscripts" ? t.editor.manuscriptText : t.editor.notes;
+  const editorLabel = isPaperWorkItem ? t.editor.feedbackLabel : t.collections[editor.collection];
   const options = statusOptions(editor.collection);
   // A status the list does not offer still has to be shown and still has to be
   // changeable; left out, the select renders blank and the record looks empty.
@@ -176,7 +179,7 @@ export function RecordEditor({
   ].includes(editor.collection);
   const paperLinkField = (
     <label>
-      <span>Linked paper</span>
+      <span>{t.editor.linkedPaper}</span>
       <select
         value={form.manuscriptId || ""}
         onChange={(event) => {
@@ -185,7 +188,7 @@ export function RecordEditor({
           set("manuscriptTitle", manuscript?.title || "");
         }}
       >
-        <option value="">Not linked</option>
+        <option value="">{t.common.notLinked}</option>
         {state.manuscripts.map((manuscript) => (
           <option key={manuscript.id} value={manuscript.id}>
             {manuscript.title}
@@ -193,7 +196,7 @@ export function RecordEditor({
         ))}
         {form.manuscriptId && !state.manuscripts.some((item) => item.id === form.manuscriptId) && (
           <option value={form.manuscriptId}>
-            {form.manuscriptTitle || form.manuscriptId} · paper not found
+            {form.manuscriptTitle || form.manuscriptId} · {t.editor.paperMissing}
           </option>
         )}
       </select>
@@ -213,31 +216,30 @@ export function RecordEditor({
         aria-modal="true"
         tabIndex={-1}
         onMouseDown={(event) => event.stopPropagation()}
-        aria-label={`Edit ${editorLabel}`}
+        aria-label={t.editor.edit(editorLabel)}
       >
         <DrawerHeader
           label={`Obsidian / ${editor.collection}`}
           mark="✎"
           eyebrow={form.id}
-          title={existing ? `Edit ${editorLabel}` : `New ${editorLabel}`}
-          description="Saved as a readable Markdown record in Obsidian. Manual values remain authoritative until you change them."
+          title={existing ? t.editor.edit(editorLabel) : t.editor.new(editorLabel)}
           onClose={onClose}
         />
         <div className="record-form">
           <div className="record-form-heading">
             {isPaperWorkItem ? (
               <label className="record-title-field">
-                <span>Feedback</span>
+                <span>{t.editor.feedback}</span>
                 <textarea
                   autoFocus
                   value={form.description || ""}
                   onChange={(event) => set("description", event.target.value)}
-                  placeholder="What needs attention?"
+                  placeholder={t.editor.feedbackPlaceholder}
                 />
               </label>
             ) : (
               <label className="record-title-field">
-                <span>Title</span>
+                <span>{t.editor.title}</span>
                 <input
                   autoFocus
                   value={form.title || ""}
@@ -249,10 +251,10 @@ export function RecordEditor({
               <label>
                 <span>
                   {isSubmissionAttempt
-                    ? "Initial state"
+                    ? t.editor.initialState
                     : isPaperWorkItem
-                      ? "Workflow status"
-                      : "Status"}
+                      ? t.editor.workflowStatus
+                      : t.editor.status}
                 </span>
                 <select
                   value={form.status || statusDefault(editor.collection)}
@@ -276,15 +278,13 @@ export function RecordEditor({
                     }
                   }}
                 >
-                  {statusChoices.map((status) => (
-                    <option key={status}>{status}</option>
-                  ))}
+                  {statusChoices.map((status) => option(t.values.status, status))}
                 </select>
               </label>
             )}
             {showProgress && (
               <label>
-                <span>Progress · {clampProgress(form.progress)}%</span>
+                <span>{t.editor.progress(clampProgress(form.progress))}</span>
                 <input
                   type="range"
                   min="0"
@@ -311,7 +311,7 @@ export function RecordEditor({
           )}
           {isJournal && (
             <label>
-              <span>Entry date</span>
+              <span>{t.editor.entryDate}</span>
               <input
                 type="date"
                 value={(form.entryDate || "").slice(0, 10)}
@@ -321,26 +321,24 @@ export function RecordEditor({
           )}
           {isIdea && form.promotedTo && (
             <label>
-              <span>Promoted to</span>
+              <span>{t.editor.promotedTo}</span>
               <input value={form.promotedTo} readOnly />
             </label>
           )}
           {editor.collection === "projects" && (
             <>
               <label>
-                <span>Phase</span>
+                <span>{t.editor.phase}</span>
                 <input
                   value={form.phase || ""}
                   onChange={(event) => set("phase", event.target.value)}
-                  placeholder="Literature, analysis, writing…"
                 />
               </label>
               <label>
-                <span>Keywords</span>
+                <span>{t.editor.keywords}</span>
                 <input
                   value={form.keywords || ""}
                   onChange={(event) => set("keywords", event.target.value)}
-                  placeholder="Comma-separated retrieval terms"
                 />
               </label>
               <label className="checkbox-label">
@@ -349,19 +347,19 @@ export function RecordEditor({
                   checked={Boolean(form.active)}
                   onChange={(event) => set("active", event.target.checked)}
                 />
-                <span>Active project</span>
+                <span>{t.editor.activeProject}</span>
               </label>
             </>
           )}
           {editor.collection === "research-questions" && (
             <>
               <label>
-                <span>Linked project</span>
+                <span>{t.editor.linkedProject}</span>
                 <select
                   value={form.linkedProject || ""}
                   onChange={(event) => set("linkedProject", event.target.value)}
                 >
-                  <option value="">Not linked</option>
+                  <option value="">{t.common.notLinked}</option>
                   {state.projects.map((project) => (
                     <option key={project.id} value={project.id}>
                       {project.title}
@@ -370,7 +368,7 @@ export function RecordEditor({
                 </select>
               </label>
               <label>
-                <span>Keywords</span>
+                <span>{t.editor.keywords}</span>
                 <input
                   value={form.keywords || ""}
                   onChange={(event) => set("keywords", event.target.value)}
@@ -381,7 +379,7 @@ export function RecordEditor({
           {editor.collection === "manuscripts" && (
             <>
               <label>
-                <span>Linked project</span>
+                <span>{t.editor.linkedProject}</span>
                 <select
                   value={form.projectId || ""}
                   onChange={(event) => {
@@ -390,7 +388,7 @@ export function RecordEditor({
                     set("projectTitle", project?.title || "");
                   }}
                 >
-                  <option value="">Not linked</option>
+                  <option value="">{t.common.notLinked}</option>
                   {state.projects.map((project) => (
                     <option key={project.id} value={project.id}>
                       {project.title}
@@ -399,39 +397,41 @@ export function RecordEditor({
                 </select>
               </label>
               <label>
-                <span>Paper stage</span>
+                <span>{t.editor.stage}</span>
                 <select
                   value={form.stage || "Concept"}
                   onChange={(event) => set("stage", event.target.value)}
                 >
-                  <option>Concept</option>
-                  <option>Developing</option>
-                  <option>Internal review</option>
-                  <option>Ready to submit</option>
-                  <option>Submitted</option>
-                  <option>Revision</option>
-                  <option>Accepted</option>
-                  <option>Published</option>
-                  {form.stage === "Accepted / published" && <option>Accepted / published</option>}
+                  {[
+                    "Concept",
+                    "Developing",
+                    "Internal review",
+                    "Ready to submit",
+                    "Submitted",
+                    "Revision",
+                    "Accepted",
+                    "Published",
+                  ].map((stage) => option(t.values.stage, stage))}
+                  {form.stage === "Accepted / published" &&
+                    option(t.values.stage, "Accepted / published")}
                 </select>
               </label>
               <label className="wide">
-                <span>Next action</span>
+                <span>{t.editor.nextAction}</span>
                 <input
                   value={form.nextAction || ""}
                   onChange={(event) => set("nextAction", event.target.value)}
-                  placeholder="The one concrete move that advances this paper"
                 />
               </label>
               <label>
-                <span>Target journal</span>
+                <span>{t.editor.targetJournal}</span>
                 <input
                   value={form.journal || ""}
                   onChange={(event) => set("journal", event.target.value)}
                 />
               </label>
               <label>
-                <span>Current words</span>
+                <span>{t.editor.currentWords}</span>
                 <input
                   inputMode="numeric"
                   value={form.wordCount || ""}
@@ -441,7 +441,7 @@ export function RecordEditor({
                 />
               </label>
               <label>
-                <span>Target words</span>
+                <span>{t.editor.targetWords}</span>
                 <input
                   inputMode="numeric"
                   value={form.targetWords || ""}
@@ -451,7 +451,7 @@ export function RecordEditor({
                 />
               </label>
               <label>
-                <span>Evidence coverage · {clampProgress(form.evidenceCoverage)}%</span>
+                <span>{t.editor.evidence(clampProgress(form.evidenceCoverage))}</span>
                 <input
                   type="range"
                   min="0"
@@ -466,48 +466,46 @@ export function RecordEditor({
           {isPaperWorkItem && (
             <>
               <label className="wide">
-                <span>Solution · optional</span>
+                <span>{t.editor.solution}</span>
                 <textarea
                   value={form.actionPlan || ""}
                   onChange={(event) => set("actionPlan", event.target.value)}
-                  placeholder="What will you change, check, or explain?"
                 />
               </label>
               <details className="record-form-details wide">
-                <summary>More details</summary>
+                <summary>{t.editor.more}</summary>
                 <div className="record-form-details-grid">
                   <label>
-                    <span>Priority</span>
+                    <span>{t.editor.priority}</span>
                     <select
                       value={form.severity || ""}
                       onChange={(event) => set("severity", event.target.value)}
                     >
-                      <option value="">Not set</option>
-                      {form.severity === "Critical" && <option>Critical</option>}
-                      <option>Major</option>
-                      <option>Minor</option>
-                      <option>Suggestion</option>
+                      <option value="">{t.common.notSet}</option>
+                      {form.severity === "Critical" && option(t.values.severity, "Critical")}
+                      {["Major", "Minor", "Suggestion"].map((value) =>
+                        option(t.values.severity, value),
+                      )}
                     </select>
                   </label>
                   {paperLinkField}
                   <label>
-                    <span>Paper section</span>
+                    <span>{t.editor.section}</span>
                     <select
                       value={form.manuscriptSection || ""}
                       onChange={(event) => set("manuscriptSection", event.target.value)}
                     >
-                      <option value="">Not set</option>
-                      {manuscriptSections.slice(1).map((section) => (
-                        <option key={section}>{section}</option>
-                      ))}
+                      <option value="">{t.common.notSet}</option>
+                      {manuscriptSections
+                        .slice(1)
+                        .map((section) => option(t.values.section, section))}
                       {form.manuscriptSection &&
-                        !manuscriptSections.includes(form.manuscriptSection) && (
-                          <option>{form.manuscriptSection}</option>
-                        )}
+                        !manuscriptSections.includes(form.manuscriptSection) &&
+                        option(t.values.section, form.manuscriptSection)}
                     </select>
                   </label>
                   <label>
-                    <span>Due date</span>
+                    <span>{t.editor.dueDate}</span>
                     <input
                       type="date"
                       value={form.dueDate || ""}
@@ -515,42 +513,38 @@ export function RecordEditor({
                     />
                   </label>
                   <label>
-                    <span>Category</span>
+                    <span>{t.editor.category}</span>
                     <select
                       value={form.type || ""}
                       onChange={(event) => set("type", event.target.value)}
                     >
-                      <option value="">Not set</option>
-                      <option>Evidence</option>
-                      <option>Methods</option>
-                      <option>Statistics</option>
-                      <option>Writing</option>
-                      <option>Reproducibility</option>
+                      <option value="">{t.common.notSet}</option>
+                      {["Evidence", "Methods", "Statistics", "Writing", "Reproducibility"].map(
+                        (value) => option(t.values.category, value),
+                      )}
                     </select>
                   </label>
                   <label>
-                    <span>Review round</span>
+                    <span>{t.editor.round}</span>
                     <select
                       value={form.reviewRound || ""}
                       onChange={(event) => set("reviewRound", event.target.value)}
                     >
-                      <option value="">Not set</option>
-                      <option>Pre-submission</option>
-                      <option>R1</option>
-                      <option>R2</option>
-                      <option>R3</option>
+                      <option value="">{t.common.notSet}</option>
+                      {["Pre-submission", "R1", "R2", "R3"].map((value) =>
+                        option(t.values.round, value),
+                      )}
                       {form.reviewRound &&
-                        !["Pre-submission", "R1", "R2", "R3"].includes(form.reviewRound) && (
-                          <option>{form.reviewRound}</option>
-                        )}
+                        !["Pre-submission", "R1", "R2", "R3"].includes(form.reviewRound) &&
+                        option(t.values.round, form.reviewRound)}
                     </select>
                   </label>
                   <label>
-                    <span>Source</span>
+                    <span>{t.editor.source}</span>
                     <input
                       value={form.reviewSource || ""}
                       onChange={(event) => set("reviewSource", event.target.value)}
-                      placeholder="Reviewer 2, supervisor…"
+                      placeholder={t.editor.sourcePlaceholder}
                     />
                   </label>
                 </div>
@@ -558,23 +552,24 @@ export function RecordEditor({
               {form.status === "Resolved" && (
                 <>
                   <label>
-                    <span>Outcome</span>
+                    <span>{t.editor.outcome}</span>
                     <select
                       value={form.resolutionDecision || "Addressed"}
                       onChange={(event) => set("resolutionDecision", event.target.value)}
                     >
-                      <option>Addressed</option>
-                      <option>Partially addressed</option>
-                      <option>Accepted as limitation</option>
-                      <option>No change</option>
+                      {[
+                        "Addressed",
+                        "Partially addressed",
+                        "Accepted as limitation",
+                        "No change",
+                      ].map((value) => option(t.values.resolution, value))}
                     </select>
                   </label>
                   <label className="wide">
-                    <span>Result / response · optional</span>
+                    <span>{t.editor.response}</span>
                     <textarea
                       value={form.resolution || ""}
                       onChange={(event) => set("resolution", event.target.value)}
-                      placeholder="What changed, or why no change was needed"
                     />
                   </label>
                 </>
@@ -584,19 +579,19 @@ export function RecordEditor({
           {editor.collection === "experiments" && (
             <>
               <label>
-                <span>Method</span>
+                <span>{t.editor.method}</span>
                 <input
                   value={form.method || ""}
                   onChange={(event) => set("method", event.target.value)}
                 />
               </label>
               <label>
-                <span>Linked project</span>
+                <span>{t.editor.linkedProject}</span>
                 <select
                   value={form.linkedProject || ""}
                   onChange={(event) => set("linkedProject", event.target.value)}
                 >
-                  <option value="">Not linked</option>
+                  <option value="">{t.common.notLinked}</option>
                   {state.projects.map((project) => (
                     <option key={project.id} value={project.id}>
                       {project.title}
@@ -609,7 +604,7 @@ export function RecordEditor({
           {editor.collection === "operations" && (
             <>
               <label>
-                <span>Linked project</span>
+                <span>{t.editor.linkedProject}</span>
                 <select
                   value={form.projectId || ""}
                   onChange={(event) => {
@@ -618,7 +613,7 @@ export function RecordEditor({
                     set("projectTitle", project?.title || "");
                   }}
                 >
-                  <option value="">Not linked</option>
+                  <option value="">{t.common.notLinked}</option>
                   {state.projects.map((project) => (
                     <option key={project.id} value={project.id}>
                       {project.title}
@@ -627,19 +622,17 @@ export function RecordEditor({
                 </select>
               </label>
               <label>
-                <span>Type</span>
+                <span>{t.editor.type}</span>
                 <select
                   value={form.type || ""}
                   onChange={(event) => set("type", event.target.value)}
                 >
-                  <option value="">Unclassified</option>
-                  {typeChoices.map((type) => (
-                    <option key={type}>{type}</option>
-                  ))}
+                  <option value="">{t.editor.unclassified}</option>
+                  {typeChoices.map((type) => option(t.values.operationType, type))}
                 </select>
               </label>
               <label>
-                <span>Due date</span>
+                <span>{t.editor.dueDate}</span>
                 <input
                   type="date"
                   value={form.dueDate || ""}
@@ -651,21 +644,21 @@ export function RecordEditor({
           {editor.collection === "submission-attempts" && (
             <>
               <label>
-                <span>Journal</span>
+                <span>{t.editor.journal}</span>
                 <input
                   value={form.journal || ""}
                   onChange={(event) => set("journal", event.target.value)}
                 />
               </label>
               <label>
-                <span>Submission ID</span>
+                <span>{t.editor.submissionId}</span>
                 <input
                   value={form.submissionId || ""}
                   onChange={(event) => set("submissionId", event.target.value)}
                 />
               </label>
               <label className="wide">
-                <span>Submission portal URL</span>
+                <span>{t.editor.portal}</span>
                 <input
                   type="url"
                   value={form.portalUrl || ""}
@@ -675,7 +668,7 @@ export function RecordEditor({
               </label>
               {!existing && form.status === "Submitted" && (
                 <label>
-                  <span>Submission date</span>
+                  <span>{t.editor.submissionDate}</span>
                   <input
                     type="date"
                     value={(form.submittedAt || "").slice(0, 10)}
@@ -684,17 +677,17 @@ export function RecordEditor({
                 </label>
               )}
               <details className="record-form-details wide">
-                <summary>More details & reminders</summary>
+                <summary>{t.editor.more}</summary>
                 <div className="record-form-details-grid">
                   <label>
-                    <span>Corresponding author</span>
+                    <span>{t.editor.author}</span>
                     <input
                       value={form.correspondingAuthor || ""}
                       onChange={(event) => set("correspondingAuthor", event.target.value)}
                     />
                   </label>
                   <label>
-                    <span>Author email</span>
+                    <span>{t.editor.email}</span>
                     <input
                       type="email"
                       value={form.correspondingEmail || ""}
@@ -702,12 +695,12 @@ export function RecordEditor({
                     />
                   </label>
                   <label>
-                    <span>Round</span>
-                    <input value={form.round || "Initial"} readOnly />
+                    <span>{t.editor.roundShort}</span>
+                    <input value={valueLabel(t.values.round, form.round || "Initial")} readOnly />
                   </label>
                   {existing && (
                     <label>
-                      <span>Submitted</span>
+                      <span>{t.editor.submitted}</span>
                       <input
                         type="date"
                         value={(form.submittedAt || "").slice(0, 10)}
@@ -717,7 +710,7 @@ export function RecordEditor({
                   )}
                   {(form.status === "Revision Required" || form.dueDate) && (
                     <label>
-                      <span>Revision deadline</span>
+                      <span>{t.editor.revisionDeadline}</span>
                       <input
                         type="date"
                         value={(form.dueDate || "").slice(0, 10)}
@@ -726,7 +719,7 @@ export function RecordEditor({
                     </label>
                   )}
                   <label>
-                    <span>Follow-up due</span>
+                    <span>{t.editor.followUp}</span>
                     <input
                       type="date"
                       value={(form.followUpDue || "").slice(0, 10)}
@@ -740,14 +733,14 @@ export function RecordEditor({
           {editor.collection === "submission-events" && (
             <>
               <label>
-                <span>Submission attempt ID</span>
+                <span>{t.editor.attemptId}</span>
                 <input
                   value={form.attemptId || ""}
                   onChange={(event) => set("attemptId", event.target.value)}
                 />
               </label>
               <label>
-                <span>Event date</span>
+                <span>{t.editor.eventDate}</span>
                 <input
                   type="date"
                   value={(form.eventDate || "").slice(0, 10)}
@@ -755,18 +748,16 @@ export function RecordEditor({
                 />
               </label>
               <label>
-                <span>Source</span>
+                <span>{t.editor.source}</span>
                 <select
                   value={form.source || "Manual"}
                   onChange={(event) => set("source", event.target.value)}
                 >
-                  <option>Manual</option>
-                  <option>Email</option>
-                  <option>Portal</option>
+                  {["Manual", "Email", "Portal"].map((value) => option(t.values.source, value))}
                 </select>
               </label>
               <label className="wide">
-                <span>Original publisher status</span>
+                <span>{t.editor.rawStatus}</span>
                 <input
                   value={form.rawStatus || ""}
                   onChange={(event) => set("rawStatus", event.target.value)}
@@ -779,20 +770,20 @@ export function RecordEditor({
           <div className="workflow-error">
             <span>!</span>
             <p>{error}</p>
-            <button onClick={() => setError("")}>Dismiss</button>
+            <button onClick={() => setError("")}>{t.common.dismiss}</button>
           </div>
         )}
         <div className="record-editor-footer">
           {form.id ? (
             confirmDelete ? (
               <span className="delete-confirm">
-                <small>Removes this record and every saved history version.</small>
-                <button onClick={remove}>Delete permanently</button>
-                <button onClick={() => setConfirmDelete(false)}>Keep</button>
+                <small>{t.editor.deleteNote}</small>
+                <button onClick={remove}>{t.editor.deleteForever}</button>
+                <button onClick={() => setConfirmDelete(false)}>{t.common.keep}</button>
               </span>
             ) : (
               <button className="delete-record" onClick={() => setConfirmDelete(true)}>
-                Delete
+                {t.common.delete}
               </button>
             )
           ) : (
@@ -801,10 +792,10 @@ export function RecordEditor({
           <span>
             <SaveFeedback state={saving ? "saving" : saved ? "saved" : error ? "error" : "idle"} />
             <button className="quiet-button" onClick={onClose}>
-              Cancel
+              {t.common.cancel}
             </button>
             <button className="primary-button" disabled={saving || saved} onClick={save}>
-              {saving ? "Saving…" : "Save to Obsidian"}
+              {saving ? t.common.saving : t.editor.saveToObsidian}
             </button>
           </span>
         </div>

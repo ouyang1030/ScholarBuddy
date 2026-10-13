@@ -2,6 +2,7 @@ import { mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { writeFileAtomic } from "./atomic-file.mjs";
+import { LANGUAGES, inLanguage, t } from "./i18n.mjs";
 import {
   reminderDefaults,
   reminderCandidates,
@@ -20,7 +21,12 @@ export function createReminderService({
   let tail = Promise.resolve();
   let timer;
   let lastError = "";
+  // Kept as message keys so each viewer reads them in their own language.
   let sourceErrors = {};
+  // Notifications go out with no browser asking, in the language the workbench
+  // last used here. It is remembered across restarts with the settings.
+  let language = "en";
+  let languageChosen = false;
   // Reading permissions launches the helper app, and the settings panel polls.
   // Once everything is granted the answer is reused for a minute; while something
   // is still missing every poll asks again, so a fix in System Settings shows at once.
@@ -51,14 +57,12 @@ export function createReminderService({
         throw new Error("Invalid reminder state");
       }
       state = loaded;
+      if (!languageChosen && LANGUAGES.includes(state.language)) language = state.language;
     } catch (error) {
-      if (error.code !== "ENOENT")
-        throw new Error(
-          "Reminder settings could not be read. Your saved settings have been preserved.",
-        );
+      if (error.code !== "ENOENT") throw new Error(t("reminders.stateUnreadable"));
       state = { settings: { ...reminderDefaults }, delivered: {}, siteUrl: "" };
     }
-    if (!state.settings || !state.delivered) throw new Error("Reminder settings are invalid.");
+    if (!state.settings || !state.delivered) throw new Error(t("reminders.stateInvalid"));
   }
   async function save() {
     await mkdir(directory, { recursive: true, mode: 0o700 });
@@ -80,20 +84,26 @@ export function createReminderService({
         const read = await readOperations();
         operations = Array.isArray(read) ? read : read.records;
         const unread = Array.isArray(read) ? 0 : read.invalid.length;
-        if (unread)
-          sourceErrors.operations = `${unread === 1 ? "1 PhD Operations note" : `${unread} PhD Operations notes`} could not be read and will not be reminded. ScholarBuddy lists them at the top of the workbench.`;
+        if (unread) sourceErrors.operations = ["operationsUnread", unread];
       } catch {
-        sourceErrors.operations = "PhD Operations could not be read. Check your vault connection.";
+        sourceErrors.operations = ["operationsFailed"];
       }
     }
     if (state.settings.calendar) {
       try {
         events = (await native("calendar", { start: +now, end: +now + 3 * 86_400_000 })).events;
       } catch (error) {
-        sourceErrors.calendar = error.message;
+        process.stderr.write(`Reminders could not read Calendar: ${error.message}\n`);
+        sourceErrors.calendar = ["calendarFailed"];
       }
     }
-    const candidates = reminderCandidates({ settings: state.settings, operations, events, now });
+    const candidates = reminderCandidates({
+      settings: state.settings,
+      operations,
+      events,
+      now,
+      language,
+    });
     const due = dueReminders(candidates, state.delivered, now);
     // Persist the intended delivery before talking to macOS. On an uncertain
     // result retry the same identifier; the helper checks already delivered IDs.
@@ -106,7 +116,7 @@ export function createReminderService({
     if (!state.outbox && due.length) {
       state.outbox = {
         keys: due.map((item) => item.key),
-        notification: reminderNotification(due, state.siteUrl),
+        notification: reminderNotification(due, state.siteUrl, language),
       };
       await save();
     }
@@ -130,7 +140,7 @@ export function createReminderService({
     lastError = "";
   }
   const runTick = () =>
-    serialize(tick).catch((error) => {
+    serialize(() => inLanguage(language, tick)).catch((error) => {
       lastError = error.message;
     });
   return {
@@ -153,6 +163,23 @@ export function createReminderService({
       clearInterval(timer);
       timer = null;
     },
+    // Called on every paired request; it writes only when the language changes.
+    useLanguage(next) {
+      if (!LANGUAGES.includes(next)) return Promise.resolve();
+      if (state?.language === next && language === next) return Promise.resolve();
+      language = next;
+      languageChosen = true;
+      return serialize(async () => {
+        await load();
+        if (state.language === next) return;
+        state.language = next;
+        // Someone who never turned reminders on gets no settings file for it;
+        // the language is written with the settings when they are first saved.
+        if (state.settings.initialized) await save();
+      }).catch(() => {
+        /* the language is kept in memory; the next change tries the file again */
+      });
+    },
     status: () =>
       serialize(async () => {
         await load();
@@ -168,7 +195,17 @@ export function createReminderService({
             (!state.settings.calendar || value.calendarPermission === "granted");
           permissions = { at: settled ? +clock() : -Infinity, value };
         }
-        return { settings: state.settings, ...permissions.value, error: lastError, sourceErrors };
+        return {
+          settings: state.settings,
+          ...permissions.value,
+          error: lastError,
+          sourceErrors: Object.fromEntries(
+            Object.entries(sourceErrors).map(([source, [key, ...values]]) => [
+              source,
+              t(`reminders.${key}`, ...values),
+            ]),
+          ),
+        };
       }),
     update: (patch, siteUrl) =>
       serialize(async () => {
@@ -182,7 +219,7 @@ export function createReminderService({
               !["enabled", "calendar", "operations"].includes(key) || typeof value !== "boolean",
           )
         ) {
-          const error = new Error("Reminder settings must be boolean switches.");
+          const error = new Error(t("reminders.switchesOnly"));
           error.status = 422;
           throw error;
         }
@@ -214,14 +251,14 @@ export function createReminderService({
       serialize(async () => {
         await load();
         if (!state.settings.enabled) {
-          const error = new Error("Turn reminders on before sending a test.");
+          const error = new Error(t("reminders.turnOnFirst"));
           error.status = 422;
           throw error;
         }
         await native("send", {
           id: `test-${randomUUID()}`,
-          title: "ScholarBuddy reminders are ready",
-          body: "Calendar events and Operations will use your selected reminder settings.",
+          title: t("reminders.testTitle"),
+          body: t("reminders.testBody"),
           url: siteUrl,
         });
         return { ok: true };

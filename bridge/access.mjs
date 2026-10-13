@@ -3,6 +3,7 @@
 import { randomBytes } from "node:crypto";
 import path from "node:path";
 import { escapeHtml } from "./setup-page.mjs";
+import { HTML_LANG, translate } from "./i18n.mjs";
 import { createGrantStore } from "./grants.mjs";
 import { repoRoot, readConfigValues } from "./config.mjs";
 import { safeEqual } from "./http.mjs";
@@ -161,10 +162,11 @@ export function redeemPairingCode(code, binding, origin) {
   );
 }
 
-export function pairingPage(binding) {
+export function pairingPage(binding, language = "en") {
   const escaped = escapeHtml(issuePairingCode(binding));
+  const say = (key) => escapeHtml(translate(language, `pair.${key}`));
   return new Response(
-    `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>ScholarBuddy Bridge Pairing</title><style>body{font:18px system-ui;max-width:720px;margin:12vh auto;padding:24px;color:#243229;background:#f6f8f3}main{background:white;border:1px solid #dce4d9;border-radius:16px;padding:30px}code{display:block;overflow-wrap:anywhere;padding:16px;background:#17201d;color:#d8f4b6;border-radius:10px;font-size:16px}button{font:inherit;padding:10px 16px}</style><main><h1>Pair ScholarBuddy with this Mac</h1><p>Copy this one-time code, return to ScholarBuddy → Connections, paste it, and choose Pair bridge. It expires in five minutes.</p><code id="token">${escaped}</code><p><button onclick="navigator.clipboard.writeText(document.getElementById('token').textContent).then(()=>this.textContent='Copied')">Copy code</button></p><small>This page is available only through the loopback bridge on this computer.</small></main>`,
+    `<!doctype html><html lang="${HTML_LANG[language]}"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>${say("title")}</title><style>body{font:18px system-ui;max-width:720px;margin:12vh auto;padding:24px;color:#243229;background:#f6f8f3}main{background:white;border:1px solid #dce4d9;border-radius:16px;padding:30px}code{display:block;overflow-wrap:anywhere;padding:16px;background:#17201d;color:#d8f4b6;border-radius:10px;font-size:16px}button{font:inherit;padding:10px 16px}</style><main><h1>${say("heading")}</h1><p>${say("text")}</p><code id="token">${escaped}</code><p><button data-copied="${say("copied")}" onclick="navigator.clipboard.writeText(document.getElementById('token').textContent).then(()=>this.textContent=this.dataset.copied)">${say("copy")}</button></p><small>${say("local")}</small></main></html>`,
     {
       headers: {
         "Content-Type": "text/html; charset=utf-8",

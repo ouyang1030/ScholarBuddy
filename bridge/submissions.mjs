@@ -3,6 +3,7 @@
 import { consequentialSubmissionStages, submissionStages } from "./record-schema.mjs";
 import { runMail } from "./macos.mjs";
 import { httpError, requireText, requireIsoDate } from "./http.mjs";
+import { count, t } from "./i18n.mjs";
 import {
   serializeRecordMutation,
   safeRecordId,
@@ -268,8 +269,8 @@ export async function syncSubmissionEmails(config, suppliedEmails) {
     if (scan.limited)
       partial =
         scan.unchecked > 0
-          ? `${scan.unchecked} more inbox messages from the last ${MAIL_SCAN_DAYS} days were not checked.`
-          : `Only the first ${MAIL_SCAN_LIMIT} inbox messages were checked.`;
+          ? t("notes.mailUnchecked", count(scan.unchecked), MAIL_SCAN_DAYS)
+          : t("notes.mailFirst", count(MAIL_SCAN_LIMIT));
   }
   const events = await listRecords(config, "submission-events", { complete: true });
   const knownMessages = new Set(events.map((event) => event.emailMessageId).filter(Boolean));

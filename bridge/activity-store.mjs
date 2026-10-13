@@ -4,12 +4,18 @@ import path from "node:path";
 import { writeFileAtomic } from "./atomic-file.mjs";
 import { activitySeries, dayKey, focusDays, streaks } from "../shared/activity.mjs";
 import { repoRoot } from "./config.mjs";
+import { t } from "./i18n.mjs";
 
 function invalid(message) {
   const error = new Error(message);
   error.status = 400;
   return error;
 }
+
+// The ledger keeps the warning as a message key, so it is read in whichever
+// language asks. One written before that is shown as it was written.
+const WARNINGS = new Set(["notes.activityUnavailable", "notes.activityPartial"]);
+const warningText = (value) => (WARNINGS.has(value) ? t(value) : value || "");
 export function createActivityStore(directory, options = {}) {
   const clock = options.clock || (() => Date.now());
   let state,
@@ -54,7 +60,7 @@ export function createActivityStore(directory, options = {}) {
         return state;
       })().catch((error) => {
         loading = null;
-        warning = "Activity storage is unavailable. Totals may be incomplete.";
+        warning = "notes.activityUnavailable";
         throw error;
       });
     return loading;
@@ -99,7 +105,7 @@ export function createActivityStore(directory, options = {}) {
           /* A transient disk failure gets one bounded retry. */
         }
       }
-      warning = "Some AI activity could not be saved. Totals may be incomplete.";
+      warning = "notes.activityPartial";
     },
     async updateProfile(payload) {
       if (
@@ -108,7 +114,7 @@ export function createActivityStore(directory, options = {}) {
         payload.displayName.length > 60 ||
         /[\x00-\x1f]/.test(payload.displayName)
       )
-        throw invalid("Use a display name between 1 and 60 characters.");
+        throw invalid(t("notes.displayName"));
       await mutate((draft) => {
         draft.profile.displayName = payload.displayName.trim();
       });
@@ -206,7 +212,7 @@ export function createActivityStore(directory, options = {}) {
       return {
         ...data.profile,
         today,
-        warning: warning || data.warning || "",
+        warning: warningText(warning || data.warning),
         focus: {
           total: focus.reduce((n, d) => n + d.value, 0),
           today: focus.find((d) => d.date === today)?.value || 0,

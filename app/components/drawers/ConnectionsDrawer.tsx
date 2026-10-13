@@ -2,11 +2,12 @@
 
 import { useState } from "react";
 import {
-  bridgeBaseUrl,
+  bridgePairUrl,
   bridgeSetupUrl,
   disconnectBridge,
   exchangeBridgePairingCode,
 } from "../../lib/bridge-client";
+import { failureText, useT } from "../../i18n";
 import { aiProviders } from "../../lib/workbench";
 import type { BridgeIssue, BridgeStatus } from "../../types";
 import { BrandLogo } from "../BrandLogo";
@@ -27,19 +28,20 @@ export function ConnectionsDrawer({
   onClose: () => void;
   ref?: React.Ref<HTMLElement>;
 }) {
+  const t = useT();
   const [token, setToken] = useState("");
   const [pairingError, setPairingError] = useState("");
   const [pairing, setPairing] = useState(false);
   const [checking, setChecking] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const connection = (connected?: boolean) => (
     <b className={`connection-state ${connected ? "connected" : "missing"}`}>
-      {connected ? "Connected" : "Setup needed"}
+      {connected ? t.connections.connected : t.connections.setupNeeded}
     </b>
   );
   const pair = async () => {
     const clean = token.trim();
     if (!clean) {
-      setPairingError("Paste the temporary code from the local pairing page.");
+      setPairingError(t.connections.pasteCode);
       return;
     }
     setPairingError("");
@@ -49,11 +51,15 @@ export function ConnectionsDrawer({
       const connected = await refresh();
       if (!connected) {
         await disconnectBridge();
-        throw new Error("The bridge returned a token that could not be verified.");
+        throw new Error(t.connections.unverified);
       }
       setToken("");
     } catch (error) {
-      setPairingError(error instanceof Error ? error.message : "Pairing failed.");
+      setPairingError(
+        error instanceof TypeError
+          ? t.errors.unreachable
+          : failureText(t, error, t.connections.pairFailed),
+      );
     } finally {
       setPairing(false);
     }
@@ -66,26 +72,12 @@ export function ConnectionsDrawer({
   };
   const issueCopy =
     issue === "unreachable"
-      ? {
-          title: "This browser cannot reach the Mac Bridge",
-          detail:
-            "Open ScholarBuddy in Safari or Chrome on this Mac. Embedded browsers may not expose local Mac services.",
-        }
+      ? { title: t.connections.unreachableTitle, detail: t.connections.unreachableDetail }
       : issue === "origin"
-        ? {
-            title: "This site is not allowed by the Bridge",
-            detail:
-              "The Bridge is running, but its allowed-site list needs this ScholarBuddy address.",
-          }
+        ? { title: t.connections.originTitle, detail: t.connections.originDetail }
         : issue === "error"
-          ? {
-              title: "Bridge check failed",
-              detail: "The Bridge replied, but the health check could not be completed.",
-            }
-          : {
-              title: "Bridge pairing required",
-              detail: "The local service is reachable after this browser is paired.",
-            };
+          ? { title: t.connections.errorTitle, detail: t.connections.errorDetail }
+          : { title: t.connections.pairTitle, detail: t.connections.pairDetail };
   const aiConnections = aiProviders.map((item) => {
     const providerStatus = status?.[item.id];
     return (
@@ -109,56 +101,38 @@ export function ConnectionsDrawer({
         className="action-drawer connections-drawer"
         role="dialog"
         aria-modal="true"
-        aria-label="Connections"
+        aria-label={t.connections.label}
         tabIndex={-1}
         onMouseDown={(e) => e.stopPropagation()}
       >
         <DrawerHeader
-          label="Connections"
+          label={t.connections.label}
           mark="⌁"
-          eyebrow="LOCAL RESEARCH BRIDGE"
-          title="Real tools, private context."
-          description="A short-lived pairing code prevents other websites from using your local research systems."
+          eyebrow={t.connections.eyebrow}
+          title={t.connections.title}
           onClose={onClose}
         />
         {!status && (
           <div className="pairing-card">
-            <b>Pair this browser</b>
-            <p>
-              Use the guided Mac setup, or open the pairing page and enter its temporary code within
-              five minutes.
-            </p>
-            {issue === "unreachable" && (
-              <div className="bridge-help">
-                <strong>Mac Bridge is running</strong>
-                <span>
-                  The current browser cannot access its local address. Use Safari or Chrome on this
-                  Mac and allow Local Network access if prompted.
-                </span>
-              </div>
-            )}
+            <b>{t.connections.pairBrowser}</b>
+            <p>{t.connections.pairHint}</p>
             <button onClick={() => window.open(bridgeSetupUrl(), "_blank", "noopener,noreferrer")}>
-              Configure this Mac
+              {t.connections.configure}
             </button>
-            <button
-              onClick={() =>
-                window.open(`${bridgeBaseUrl()}/pair`, "_blank", "noopener,noreferrer")
-              }
-            >
-              Open local pairing page
+            <button onClick={() => window.open(bridgePairUrl(), "_blank", "noopener,noreferrer")}>
+              {t.connections.openPairing}
             </button>
             <label>
-              <span>Temporary pairing code</span>
+              <span>{t.connections.code}</span>
               <input
                 type="password"
                 autoComplete="off"
                 value={token}
                 onChange={(event) => setToken(event.target.value)}
-                placeholder="Paste temporary code"
               />
             </label>
             <button className="primary-button" disabled={pairing} onClick={pair}>
-              {pairing ? "Testing…" : "Pair bridge"}
+              {pairing ? t.connections.testing : t.connections.pair}
             </button>
             {pairingError && <small className="pairing-error">{pairingError}</small>}
           </div>
@@ -166,20 +140,24 @@ export function ConnectionsDrawer({
         <div className={`bridge-banner ${status ? "online" : "offline"}`}>
           <span className="bridge-status-icon">{status ? "✓" : "!"}</span>
           <div>
-            <strong>{status ? "Research bridge is paired" : issueCopy.title}</strong>
-            <small>{status ? "Listening only on this Mac" : issueCopy.detail}</small>
+            <strong>{status ? t.connections.paired : issueCopy.title}</strong>
+            <small>{status ? t.connections.localOnly : issueCopy.detail}</small>
           </div>
           <div className="connection-check">
             <SaveFeedback
               state={checking}
-              labels={{ saving: "Testing…", saved: "Connected", error: "No response" }}
+              labels={{
+                saving: t.connections.testing,
+                saved: t.connections.connected,
+                error: t.connections.noResponse,
+              }}
             />
             <button
               type="button"
               disabled={checking === "saving"}
               onClick={() => void checkConnection()}
             >
-              Test again
+              {t.connections.testAgain}
             </button>
           </div>
         </div>
@@ -190,7 +168,7 @@ export function ConnectionsDrawer({
                 className="quiet-button"
                 onClick={() => window.open(bridgeSetupUrl(), "_blank", "noopener,noreferrer")}
               >
-                Manage local connections
+                {t.connections.manage}
               </button>
               <button
                 className="quiet-button"
@@ -199,14 +177,10 @@ export function ConnectionsDrawer({
                   void disconnectBridge().then(() => window.location.reload());
                 }}
               >
-                Disconnect this browser
+                {t.connections.disconnect}
               </button>
             </div>
-            <small className="connection-note">
-              Disconnecting revokes this site’s access from this browser. Other paired browsers are
-              reviewed, limited to reading, or revoked under{" "}
-              <strong>Manage local connections</strong>.
-            </small>
+            <small className="connection-note">{t.connections.disconnectNote}</small>
           </>
         )}
         <div className="connection-list">
@@ -214,8 +188,8 @@ export function ConnectionsDrawer({
           <article>
             <BrandLogo brand="calendar" className="connection-logo" />
             <div>
-              <strong>macOS Calendar</strong>
-              <small>Today · read + write</small>
+              <strong>{t.connections.calendar}</strong>
+              <small>{t.connections.calendarScope}</small>
             </div>
             {connection(status?.calendar.connected)}
           </article>
@@ -223,15 +197,15 @@ export function ConnectionsDrawer({
             <BrandLogo brand="zotero" className="connection-logo" />
             <div>
               <strong>Zotero Desktop</strong>
-              <small>{status?.zotero.version || "Local API"}</small>
+              <small>{status?.zotero.version || t.connections.localApi}</small>
             </div>
             {connection(status?.zotero.connected)}
           </article>
           <article>
             <BrandLogo brand="obsidian" className="connection-logo" />
             <div>
-              <strong>Obsidian · {status?.obsidian.vault || "Vault"}</strong>
-              <small>Markdown records</small>
+              <strong>Obsidian · {status?.obsidian.vault || t.connections.vault}</strong>
+              <small>{t.connections.records}</small>
             </div>
             {connection(status?.obsidian.connected)}
           </article>

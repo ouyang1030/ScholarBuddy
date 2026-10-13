@@ -15,7 +15,7 @@ export async function buildReminderHelper() {
   const fingerprint = createHash("sha256")
     .update(await readFile(source))
     .update(await readFile(iconSource))
-    .update("v4")
+    .update("v5")
     .digest("hex");
   const marker = path.join(helperApp, "Contents/Resources/source-hash");
   const binary = path.join(helperApp, "Contents/MacOS/ScholarBuddyReminders");
@@ -43,10 +43,21 @@ export async function buildReminderHelper() {
 <key>CFBundleExecutable</key><string>ScholarBuddyReminders</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleVersion</key><string>1</string>
+<key>CFBundleDevelopmentRegion</key><string>en</string>
+<key>CFBundleLocalizations</key><array><string>en</string><string>zh-Hans</string></array>
 <key>LSUIElement</key><true/>
 <key>NSCalendarsUsageDescription</key><string>Remind you 24 hours before calendar events, even when ScholarBuddy is closed.</string>
 <key>NSCalendarsFullAccessUsageDescription</key><string>Read upcoming calendar events for reminders. ScholarBuddy Reminders does not change your calendar.</string>
 </dict></plist>`,
+  );
+  // macOS shows the permission prompt in the Mac's own language.
+  const chinese = path.join(helperApp, "Contents/Resources/zh-Hans.lproj");
+  await mkdir(chinese, { recursive: true });
+  await writeFile(
+    path.join(chinese, "InfoPlist.strings"),
+    `"NSCalendarsUsageDescription" = "在日历事件开始前 24 小时提醒你，即使 ScholarBuddy 未打开。";
+"NSCalendarsFullAccessUsageDescription" = "读取即将到来的日历事件以发送提醒。ScholarBuddy Reminders 不会更改你的日历。";
+`,
   );
   await exec(
     "/usr/bin/xcrun",

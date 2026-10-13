@@ -1,9 +1,18 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
-import { bridgeFetch } from "../../lib/bridge-client";
 import {
-  focusStorageError,
+  BridgeFailure,
+  bridgeFailure,
+  failureText,
+  useLocale,
+  useT,
+  type Messages,
+} from "../../i18n";
+import { bridgeFetch } from "../../lib/bridge-client";
+import { compactNumber } from "../../lib/format";
+import {
+  focusStorageFailed,
   focusBridgeId,
   readFocusSegments,
   syncFocus,
@@ -48,26 +57,14 @@ type Profile = {
     days: Day[];
   };
 };
-function duration(seconds: number) {
-  if (seconds > 0 && seconds < 60) return "<1m";
+function durationLabel(t: Messages, seconds: number) {
+  if (seconds > 0 && seconds < 60) return t.profile.underMinute;
   const minutes = Math.floor(seconds / 60);
-  return minutes >= 60 ? `${Math.floor(minutes / 60)}h ${minutes % 60}m` : `${minutes}m`;
+  return minutes >= 60
+    ? t.profile.hours(Math.floor(minutes / 60), minutes % 60)
+    : t.profile.minutes(minutes);
 }
-function tokens(value: number) {
-  if (value >= 1e9) return `${Number((value / 1e9).toFixed(1))}bn`;
-  if (value >= 1e6) return `${Number((value / 1e6).toFixed(1))}m`;
-  if (value >= 1e3) return `${Number((value / 1e3).toFixed(1))}k`;
-  return value.toLocaleString();
-}
-const daysLabel = (value: number) => `${value} ${value === 1 ? "day" : "days"}`;
-const monthLabel = (date: string) =>
-  new Date(`${date}T12:00:00Z`).toLocaleDateString("en", { month: "short", timeZone: "UTC" });
-const dateLabel = (date: string) =>
-  new Date(`${date}T12:00:00Z`).toLocaleDateString("en", {
-    month: "short",
-    day: "numeric",
-    timeZone: "UTC",
-  });
+const DATE_TAGS = { en: "en", zh: "zh-CN" } as const;
 
 export function ProfileModule({
   openConnections,
@@ -76,14 +73,29 @@ export function ProfileModule({
   openConnections: () => void;
   startFocus: () => void;
 }) {
+  const t = useT();
+  const { locale } = useLocale();
+  const duration = (seconds: number) => durationLabel(t, seconds);
+  const tokens = (value: number) => compactNumber(value, locale);
+  const monthLabel = (date: string) =>
+    new Date(`${date}T12:00:00Z`).toLocaleDateString(DATE_TAGS[locale], {
+      month: "short",
+      timeZone: "UTC",
+    });
+  const dateLabel = (date: string) =>
+    new Date(`${date}T12:00:00Z`).toLocaleDateString(DATE_TAGS[locale], {
+      month: "short",
+      day: "numeric",
+      timeZone: "UTC",
+    });
   const [tab, setTab] = useState<"focus" | "tokens">("focus");
   const [view, setView] = useState<"daily" | "weekly" | "cumulative">("daily");
   const [ranges, setRanges] = useState({ focus: "1y", tokens: "1y" });
   const [profile, setProfile] = useState<Profile | null>(null);
-  const [error, setError] = useState("");
+  const [error, setError] = useState<unknown>(null);
   const [loading, setLoading] = useState(true);
   const [local, setLocal] = useState<FocusSegment[]>([]);
-  const [storageWarning, setStorageWarning] = useState("");
+  const [storageWarning, setStorageWarning] = useState<"" | "read" | "save">("");
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState("");
   const [saving, setSaving] = useState(false);
@@ -95,18 +107,19 @@ export function ProfileModule({
     try {
       const response = await bridgeFetch("/profile");
       if (!response.ok)
-        throw new Error(
+        throw new BridgeFailure(
+          "",
           response.status === 404
-            ? "Restart your local Bridge to enable Profile."
+            ? "profile_restart"
             : response.status === 401
-              ? "Pair this browser to see your saved activity."
-              : "Your activity could not be loaded.",
+              ? "pairing_required"
+              : "profile_failed",
         );
       const body = (await response.json()) as Profile;
       setProfile(body);
-      setError("");
+      setError(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Local Bridge is unavailable.");
+      setError(e instanceof TypeError ? new BridgeFailure("", "unreachable") : e);
     } finally {
       setLoading(false);
     }
@@ -119,9 +132,9 @@ export function ProfileModule({
           if (!cancelled) setLocal(items);
         })
         .catch(() => {
-          if (!cancelled) setStorageWarning("Local Focus history is unavailable.");
+          if (!cancelled) setStorageWarning("read");
         });
-      setStorageWarning(focusStorageError());
+      setStorageWarning(focusStorageFailed() ? "save" : "");
     };
     const refresh = () => {
       void load();
@@ -164,7 +177,7 @@ export function ProfileModule({
   const recoveries = allSegments.filter((s) => ["gap", "confirmed"].includes(s.status));
   const dailyFocus = focusDays(allSegments, zone) as Day[];
   const segmentTime = (value: string) =>
-    new Date(value).toLocaleString("en", {
+    new Date(value).toLocaleString(DATE_TAGS[locale], {
       timeZone: zone,
       month: "short",
       day: "numeric",
@@ -204,58 +217,53 @@ export function ProfileModule({
     tab === "focus"
       ? [
           {
-            label: "Total focus",
+            label: t.profile.totalFocus,
             value: profile ? duration(profile.focus.total) : "—",
-            note: "Saved on this Mac",
           },
           {
-            label: "Daily average",
+            label: t.profile.dailyAverage,
             value: known ? duration(series.average) : "—",
-            note: "Selected range · includes today",
+            note: t.profile.selectedRange,
           },
           {
-            label: "Best focus day",
+            label: t.profile.bestDay,
             value: profile?.focus.peak.date ? duration(profile.focus.peak.value) : "—",
-            note: profile?.focus.peak.date
-              ? dateLabel(profile.focus.peak.date)
-              : "Your personal best awaits",
+            note: profile?.focus.peak.date ? dateLabel(profile.focus.peak.date) : "",
           },
           {
-            label: "Current focus streak",
-            value: profile ? daysLabel(profile.focus.current) : "—",
-            note: "At least 1 minute each day",
+            label: t.profile.currentFocusStreak,
+            value: profile ? t.profile.days(profile.focus.current) : "—",
           },
           {
-            label: "Longest focus streak",
-            value: profile ? daysLabel(profile.focus.longest) : "—",
-            note: "Your longest run",
+            label: t.profile.longestFocusStreak,
+            value: profile ? t.profile.days(profile.focus.longest) : "—",
           },
         ]
       : [
           {
-            label: "Peak tokens",
+            label: t.profile.peakDay,
             value: tokenValue(profile?.ai.peak.value || 0),
-            note: profile?.ai.peak.date
-              ? `In one day · ${dateLabel(profile.ai.peak.date)}`
-              : "In one day",
+            note: profile?.ai.peak.date ? dateLabel(profile.ai.peak.date) : "",
           },
           {
-            label: "Longest chat",
+            label: t.profile.longestChat,
             value: profile?.ai.longestChat ? duration(profile.ai.longestChat) : "—",
-            note: "First request to last reply",
           },
           {
-            label: "Current streak",
-            value: profile ? daysLabel(profile.ai.current) : "—",
-            note: "Days with a successful reply",
+            label: t.profile.currentStreak,
+            value: profile ? t.profile.days(profile.ai.current) : "—",
           },
           {
-            label: "Longest streak",
-            value: profile ? daysLabel(profile.ai.longest) : "—",
-            note: "Your longest AI activity run",
+            label: t.profile.longestStreak,
+            value: profile ? t.profile.days(profile.ai.longest) : "—",
           },
         ];
-  const displayName = profile?.displayName || "Researcher";
+  // The Bridge seeds every profile with the English placeholder; until it is
+  // renamed it is shown in the interface language like any other default.
+  const displayName =
+    !profile?.displayName || profile.displayName === "Researcher"
+      ? t.profile.researcher
+      : profile.displayName;
   async function saveName(e: React.FormEvent) {
     e.preventDefault();
     setSaving(true);
@@ -266,11 +274,11 @@ export function ProfileModule({
         body: JSON.stringify({ displayName: name }),
       });
       const body = await response.json();
-      if (!response.ok) throw new Error(body.error || "Name could not be saved.");
+      if (!response.ok) throw bridgeFailure(body, "");
       setProfile(body);
       setEditing(false);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Name could not be saved.");
+      setError(e instanceof Error && e.message ? e : new BridgeFailure("", "saveFailed"));
     } finally {
       setSaving(false);
     }
@@ -319,23 +327,24 @@ export function ProfileModule({
     lastMonth = month;
   }
   const level = (value: number) => (value > 0 ? Math.max(1, Math.ceil((value / max) * 4)) : 0);
+  const unknownLabel = tab === "focus" ? t.profile.timeUnconfirmed : t.profile.usageIncomplete;
   const bucketLabel = (bucket: Day) =>
-    `${bucket.start || bucket.date}${bucket.end ? ` to ${bucket.end}` : ""}: ${format(bucket.value)}${bucket.unknown ? (tab === "focus" ? ", time unconfirmed" : ", usage incomplete") : ""}`;
+    `${bucket.end ? t.profile.between(bucket.start || bucket.date, bucket.end) : bucket.start || bucket.date}: ${format(bucket.value)}${bucket.unknown ? ` · ${unknownLabel}` : ""}`;
   const bucketTitle = (bucket: Day) =>
-    `${bucket.start || bucket.date}: ${tab === "focus" ? Math.floor(bucket.value) + " seconds" : bucket.value.toLocaleString() + " tokens"}`;
+    `${bucket.start || bucket.date}: ${tab === "focus" ? t.profile.seconds(Math.floor(bucket.value)) : t.profile.tokens(bucket.value.toLocaleString(DATE_TAGS[locale]))}`;
   return (
-    <section className="profile-page" aria-label="Personal activity profile">
+    <section className="profile-page" aria-label={t.profile.aria}>
       <section className="page-intro compact">
         <div>
-          <p className="eyebrow">YOUR RESEARCH, OVER TIME</p>
+          <p className="eyebrow">{t.profile.eyebrow}</p>
           <h1>
-            Small steps. <em>Lasting progress.</em>
+            {t.profile.titleLead}
+            <em>{t.profile.titleEm}</em>
           </h1>
-          <p>A little perspective on the work you put in.</p>
         </div>
         <span className="status-pill mint">
           <i />
-          This Mac
+          {t.profile.thisMac}
         </span>
       </section>
       <div className="profile-identity">
@@ -349,22 +358,22 @@ export function ProfileModule({
         </span>
         <div>
           <h2>{displayName}</h2>
-          {!profile && loading && <p>Connecting to your local history…</p>}
+          {!profile && loading && <p>{t.profile.connecting}</p>}
         </div>
         {editing ? (
           <form className="profile-name-form" onSubmit={saveName}>
             <input
-              aria-label="Display name"
+              aria-label={t.profile.displayName}
               value={name}
               maxLength={60}
               required
               onChange={(e) => setName(e.target.value)}
             />
             <button className="primary-button small" disabled={saving} type="submit">
-              Save
+              {t.common.save}
             </button>
             <button className="quiet-button" type="button" onClick={() => setEditing(false)}>
-              Cancel
+              {t.common.cancel}
             </button>
           </form>
         ) : (
@@ -376,11 +385,11 @@ export function ProfileModule({
               setEditing(true);
             }}
           >
-            Edit name
+            {t.profile.editName}
           </button>
         )}
       </div>
-      <div className="profile-tabs" role="tablist" aria-label="Activity type">
+      <div className="profile-tabs" role="tablist" aria-label={t.profile.activityType}>
         <button
           role="tab"
           aria-selected={tab === "focus"}
@@ -389,7 +398,7 @@ export function ProfileModule({
             setSelected(null);
           }}
         >
-          Focus
+          {t.profile.focus}
         </button>
         <button
           role="tab"
@@ -399,48 +408,46 @@ export function ProfileModule({
             setSelected(null);
           }}
         >
-          AI activity
+          {t.profile.ai}
         </button>
       </div>
-      {error && (
+      {Boolean(error) && (
         <div className="data-banner compact-banner" role="status">
           <span>!</span>
           <p>
-            {error}
-            {profile
-              ? " Showing the last loaded history."
-              : " Focus can still be recorded locally."}
+            {failureText(t, error, t.errors.profile_failed)}{" "}
+            {profile ? t.profile.showingLast : t.profile.recordsLocally}
           </p>
           <div>
-            <button onClick={() => void load()}>Retry</button>
-            <button onClick={openConnections}>Connections</button>
+            <button onClick={() => void load()}>{t.common.retry}</button>
+            <button onClick={openConnections}>{t.connections.label}</button>
           </div>
         </div>
       )}
       {(profile?.warning || storageWarning) && (
         <div className="data-banner compact-banner" role="status">
           <span>!</span>
-          <p>{profile?.warning || storageWarning}</p>
+          <p>
+            {profile?.warning ||
+              (storageWarning === "read" ? t.profile.storageRead : t.profile.storageSave)}
+          </p>
         </div>
       )}
-      {tab === "focus" && (pending.length > 0 || focus?.recoveryMessage) && (
+      {tab === "focus" && (pending.length > 0 || focus?.recoveryText) && (
         <div className="data-banner compact-banner profile-note">
           <span>◷</span>
-          <p>
-            {focus?.recoveryMessage ||
-              `${pending.length} focus segment${pending.length === 1 ? "" : "s"} pending sync. Local time is included below.`}
-          </p>
+          <p>{focus?.recoveryText || t.profile.pending(pending.length)}</p>
           {pending.length > 0 && (
-            <button onClick={() => void syncFocus(true).then(load)}>Sync local focus</button>
+            <button onClick={() => void syncFocus(true).then(load)}>{t.profile.syncNow}</button>
           )}
         </div>
       )}
       {tab === "focus" && recoveries.length > 0 && (
-        <section className="profile-recovery-list card" aria-label="Interrupted focus time">
+        <section className="profile-recovery-list card" aria-label={t.profile.interruptedAria}>
           <div className="section-heading">
             <div>
-              <span className="label">INTERRUPTED TIME</span>
-              <p>Only add a gap if you were focusing during that time.</p>
+              <span className="label">{t.profile.interrupted}</span>
+              <p>{t.profile.interruptedHint}</p>
             </div>
           </div>
           {recoveries.map((segment) => (
@@ -449,7 +456,7 @@ export function ProfileModule({
                 {segmentTime(segment.startedAt)} – {segmentTime(segment.endedAt)}{" "}
                 <small>
                   {duration((Date.parse(segment.endedAt) - Date.parse(segment.startedAt)) / 1000)} ·{" "}
-                  {segment.status === "confirmed" ? "Added by you" : "Not counted"}
+                  {segment.status === "confirmed" ? t.profile.addedByYou : t.profile.notCounted}
                 </small>
               </span>
               {segment.status === "gap" ? (
@@ -458,13 +465,13 @@ export function ProfileModule({
                     className="quiet-button"
                     onClick={() => void updateRecovery(segment, "confirmed")}
                   >
-                    Count this time
+                    {t.profile.count}
                   </button>
                   <button
                     className="quiet-button"
                     onClick={() => void updateRecovery(segment, "dismissed")}
                   >
-                    Treat as break
+                    {t.profile.asBreak}
                   </button>
                 </>
               ) : (
@@ -472,7 +479,7 @@ export function ProfileModule({
                   className="quiet-button"
                   onClick={() => void updateRecovery(segment, "gap")}
                 >
-                  Undo addition
+                  {t.profile.undo}
                 </button>
               )}
             </div>
@@ -481,12 +488,14 @@ export function ProfileModule({
       )}
       <div className="profile-overview card">
         <article className="profile-hero">
-          <span className="label">{tab === "focus" ? "TODAY’S FOCUS" : "LIFETIME TOKENS"}</span>
+          <span className="label">
+            {tab === "focus" ? t.profile.todayFocus : t.profile.lifetimeTokens}
+          </span>
           <strong
             title={
               tab === "focus"
-                ? `${Math.floor(todaySeconds)} seconds`
-                : `${profile?.ai.total ?? 0} tokens`
+                ? t.profile.seconds(Math.floor(todaySeconds))
+                : t.profile.tokens(String(profile?.ai.total ?? 0))
             }
           >
             {tab === "focus"
@@ -495,21 +504,15 @@ export function ProfileModule({
                 : "—"
               : tokenValue(profile?.ai.total || 0)}
           </strong>
-          <p>
-            {tab === "focus"
-              ? focus?.running
-                ? "Recording · one step at a time"
-                : "Time made for what matters."
-              : unknownAI
-                ? "Known usage · some requests did not report tokens"
-                : "Across your Workbench AI workflows."}
-          </p>
+          {tab === "focus"
+            ? focus?.running && <p>{t.profile.recording}</p>
+            : unknownAI && <p>{t.profile.knownUsage}</p>}
           {tab === "focus" && (
             <button
               className="primary-button"
               onClick={() => (focus?.running ? focus.toggle() : startFocus())}
             >
-              {focus?.running ? "Pause focus" : "Start a focus session"}
+              {focus?.running ? t.profile.pause : t.profile.start}
             </button>
           )}
         </article>
@@ -518,7 +521,7 @@ export function ProfileModule({
             <article key={card.label}>
               <span>{card.label}</span>
               <strong>{card.value}</strong>
-              <small>{card.note}</small>
+              {card.note && <small>{card.note}</small>}
             </article>
           ))}
         </div>
@@ -526,11 +529,12 @@ export function ProfileModule({
       <section className="profile-chart-card card">
         <div className="section-heading">
           <div>
-            <span className="label">THE BIGGER PICTURE</span>
-            <p>{tab === "focus" ? "Focus activity" : "Token activity"}</p>
+            <span className="label">
+              {tab === "focus" ? t.profile.focusActivity : t.profile.tokenActivity}
+            </span>
           </div>
           <div className="profile-chart-controls">
-            <div className="profile-segmented" aria-label="Chart grouping">
+            <div className="profile-segmented" aria-label={t.profile.grouping}>
               {(["daily", "weekly", "cumulative"] as const).map((item) => (
                 <button
                   key={item}
@@ -540,38 +544,37 @@ export function ProfileModule({
                     setSelected(null);
                   }}
                 >
-                  {item[0].toUpperCase() + item.slice(1)}
+                  {t.profile.views[item]}
                 </button>
               ))}
             </div>
             <select
-              aria-label="Activity date range"
+              aria-label={t.profile.range}
               value={ranges[tab]}
               onChange={(e) => {
                 setRanges({ ...ranges, [tab]: e.target.value });
                 setSelected(null);
               }}
             >
-              <option value="30d">Last 30 days</option>
-              <option value="90d">Last 90 days</option>
-              <option value="1y">Last year</option>
-              <option value="all">All time</option>
+              {(["30d", "90d", "1y", "all"] as const).map((range) => (
+                <option key={range} value={range}>
+                  {t.profile.ranges[range]}
+                </option>
+              ))}
             </select>
           </div>
         </div>
         <div className="profile-chart-summary">
           <strong>{known ? format(series.total) : "—"}</strong>
-          <span>{tab === "focus" ? "of focus" : "tokens"} in this range</span>
+          <span>{tab === "focus" ? t.profile.inRangeFocus : t.profile.inRangeTokens}</span>
           <span className="profile-chart-readout" aria-live="polite">
             {selected
-              ? `${dateLabel(selected.start || selected.date)}${selected.end ? ` – ${dateLabel(selected.end)}${selected.start !== selected.date || selected.end !== nextDay(selected.date, 6) ? " (partial week)" : ""}` : ""} · ${format(selected.value)} · ${selected.count} ${tab === "focus" ? "segments" : "requests"}${selected.unknown ? (tab === "focus" ? " · time unconfirmed" : " · incomplete usage") : ""}`
+              ? `${dateLabel(selected.start || selected.date)}${selected.end ? ` – ${dateLabel(selected.end)}${selected.start !== selected.date || selected.end !== nextDay(selected.date, 6) ? t.profile.partialWeek : ""}` : ""} · ${format(selected.value)} · ${tab === "focus" ? t.profile.segments(selected.count) : t.profile.requests(selected.count)}${selected.unknown ? ` · ${unknownLabel}` : ""}`
               : allZero
                 ? tab === "focus"
-                  ? "Start a focus session and watch your days take shape."
-                  : "Your next AI workflow will start your activity."
-                : tab === "focus"
-                  ? "Every focused minute adds up."
-                  : "Usage reported by your models."}
+                  ? t.profile.noFocus
+                  : t.profile.noAi
+                : ""}
           </span>
         </div>
         {view === "cumulative" ? (
@@ -593,7 +596,7 @@ export function ProfileModule({
                   viewBox={`0 0 ${chartWidth} ${chartHeight}`}
                   preserveAspectRatio="none"
                   role="img"
-                  aria-label="Cumulative activity"
+                  aria-label={t.profile.cumulativeAria}
                 >
                   <polygon
                     className="profile-line-fill"
@@ -634,16 +637,18 @@ export function ProfileModule({
               }
             >
               {view === "daily" &&
-                ["", "Mon", "", "Wed", "", "Fri", "", ""].map((day, index) => (
-                  <span key={index} aria-hidden="true">
-                    {day}
-                  </span>
-                ))}
+                ["", t.profile.mon, "", t.profile.wed, "", t.profile.fri, "", ""].map(
+                  (day, index) => (
+                    <span key={index} aria-hidden="true">
+                      {day}
+                    </span>
+                  ),
+                )}
               {columns.map((column, index) => (
                 <Fragment key={index}>
                   {column.cells.map((bucket, row) =>
                     typeof bucket === "string" ? (
-                      <i key={row} className="untracked" title={`${bucket}: not tracked yet`} />
+                      <i key={row} className="untracked" title={t.profile.untracked(bucket)} />
                     ) : bucket ? (
                       <button
                         key={row}
@@ -668,17 +673,17 @@ export function ProfileModule({
           <span>
             {dateLabel(series.start)} – {dateLabel(series.end)} ·{" "}
             {tab === "tokens" && profile
-              ? `Usage coverage: ${profile.ai.reported}/${profile.ai.requests} requests`
-              : `${series.calendarDays} tracked ${series.calendarDays === 1 ? "day" : "days"}`}
-            {pending.length > 0 && tab === "focus" ? " · includes local records" : ""}
+              ? t.profile.coverage(profile.ai.reported, profile.ai.requests)
+              : t.profile.trackedDays(series.calendarDays)}
+            {pending.length > 0 && tab === "focus" ? t.profile.includesLocal : ""}
           </span>
           {view !== "cumulative" && (
             <span className="profile-heat-legend" aria-hidden="true">
-              Less
+              {t.profile.less}
               {[0, 1, 2, 3, 4].map((step) => (
                 <i key={step} className={`level-${step}`} />
               ))}
-              More
+              {t.profile.more}
             </span>
           )}
         </footer>
@@ -686,19 +691,14 @@ export function ProfileModule({
       <section className="profile-details">
         <div className="section-heading">
           <div>
-            <p>{tab === "focus" ? "Your days, in detail" : "Activity details"}</p>
-            <small>
-              {tab === "focus"
-                ? "Time recorded, one day at a time. Today is still in progress."
-                : "Missing usage stays unknown. Historical usage before tracking is not estimated."}
-            </small>
+            <p>{tab === "focus" ? t.profile.focusDetails : t.profile.aiDetails}</p>
           </div>
           <button
             className="quiet-button"
             aria-expanded={details}
             onClick={() => setDetails(!details)}
           >
-            {details ? "Hide details" : "View details"}
+            {details ? t.profile.hideDetails : t.profile.viewDetails}
           </button>
         </div>
         {details && (
@@ -706,10 +706,14 @@ export function ProfileModule({
             <table>
               <thead>
                 <tr>
-                  <th scope="col">Date</th>
-                  <th scope="col">{tab === "focus" ? "Focus time" : "Tokens"}</th>
-                  <th scope="col">{tab === "focus" ? "Segments" : "Requests"}</th>
-                  <th scope="col">Status</th>
+                  <th scope="col">{t.profile.date}</th>
+                  <th scope="col">
+                    {tab === "focus" ? t.profile.focusTime : t.profile.tokenColumn}
+                  </th>
+                  <th scope="col">
+                    {tab === "focus" ? t.profile.segmentColumn : t.profile.requestColumn}
+                  </th>
+                  <th scope="col">{t.profile.status}</th>
                 </tr>
               </thead>
               <tbody>
@@ -720,13 +724,13 @@ export function ProfileModule({
                     <tr key={row.date}>
                       <th scope="row">
                         {row.date}
-                        {row.date === today ? " · Today" : ""}
+                        {row.date === today ? t.profile.todaySuffix : ""}
                       </th>
                       <td>
                         {format(row.value)}
                         {tab === "focus" && row.count > 0 && (
                           <details className="profile-intervals">
-                            <summary>View intervals</summary>
+                            <summary>{t.profile.intervals}</summary>
                             {allSegments
                               .filter(
                                 (s) =>
@@ -738,7 +742,7 @@ export function ProfileModule({
                               .map((s) => (
                                 <p key={s.segmentId}>
                                   {segmentTime(s.startedAt)} – {segmentTime(s.endedAt)}
-                                  {s.status === "confirmed" ? " · added by you" : ""}
+                                  {s.status === "confirmed" ? t.profile.addedSuffix : ""}
                                 </p>
                               ))}
                           </details>
@@ -747,19 +751,17 @@ export function ProfileModule({
                       <td>{row.count}</td>
                       <td>
                         {row.unknown
-                          ? tab === "focus"
-                            ? "Time unconfirmed"
-                            : "Usage incomplete"
+                          ? unknownLabel
                           : tab === "focus" &&
                               pending.some(
                                 (s) =>
                                   dayKey(s.startedAt, zone) <= row.date &&
                                   dayKey(s.endedAt, zone) >= row.date,
                               )
-                            ? "Pending sync"
+                            ? t.profile.pendingSync
                             : row.date === today
-                              ? "In progress"
-                              : "Recorded"}
+                              ? t.profile.inProgress
+                              : t.profile.recorded}
                       </td>
                     </tr>
                   ))}
@@ -769,10 +771,7 @@ export function ProfileModule({
         )}
       </section>
       <p className="profile-footnote">
-        Private by design. Activity stays on this Mac.{" "}
-        {tab === "focus"
-          ? "Focus measures timer time; one minute makes an active day."
-          : "AI streaks count days with a successful reply."}
+        {tab === "focus" ? t.profile.footnoteFocus : t.profile.footnoteAi}
       </p>
     </section>
   );

@@ -1,6 +1,7 @@
 "use client";
 
-import { clampProgress } from "../../lib/format";
+import { useLocale, useT, valueLabel, type Messages } from "../../i18n";
+import { clampProgress, formatNumber } from "../../lib/format";
 import { isOpen, quickActions } from "../../lib/workbench";
 import type { DataProps, SubmissionAlert } from "../../lib/workbench";
 import type { RecordItem } from "../../types";
@@ -14,6 +15,21 @@ import { JournalPanel } from "../panels/JournalPanel";
 import { LiteraturePanel } from "../panels/LiteraturePanel";
 import { TaskPanel } from "../panels/TaskPanel";
 
+function alertText(t: Messages, alert: SubmissionAlert) {
+  const { attempt, kind, days } = alert;
+  if (kind === "revision-deadline")
+    return {
+      title: days < 0 ? t.watch.revisionPassed : t.watch.revisionDue(days),
+      detail: `${attempt.journal || t.watch.journal} · ${valueLabel(t.values.round, attempt.round || "Initial")}`,
+    };
+  if (kind === "follow-up")
+    return {
+      title: t.watch.followUp,
+      detail: `${valueLabel(t.values.status, attempt.status || "Submitted")} · ${t.watch.inStage(days)}`,
+    };
+  return { title: t.watch.stale, detail: t.watch.sinceCheck(days) };
+}
+
 export function SubmissionWatch({
   alerts,
   onOpen,
@@ -21,32 +37,34 @@ export function SubmissionWatch({
   alerts: SubmissionAlert[];
   onOpen: (alert: SubmissionAlert) => void;
 }) {
+  const t = useT();
   if (!alerts.length) return null;
   return (
     <section className="submission-watch card">
       <div>
-        <span className="label">SUBMISSION WATCH</span>
-        <strong>
-          {alerts.length} item{alerts.length === 1 ? "" : "s"} need attention
-        </strong>
+        <span className="label">{t.watch.label}</span>
+        <strong>{t.watch.count(alerts.length)}</strong>
       </div>
       <div className="submission-watch-list">
-        {alerts.map((alert) => (
-          <button
-            key={`${alert.attempt.id}-${alert.title}`}
-            className={alert.tone}
-            onClick={() => onOpen(alert)}
-          >
-            <span>!</span>
-            <span>
-              <strong>{alert.title}</strong>
-              <small>
-                {alert.attempt.manuscriptTitle || alert.attempt.title} · {alert.detail}
-              </small>
-            </span>
-            <b>Review →</b>
-          </button>
-        ))}
+        {alerts.map((alert) => {
+          const text = alertText(t, alert);
+          return (
+            <button
+              key={`${alert.attempt.id}-${alert.kind}`}
+              className={alert.tone}
+              onClick={() => onOpen(alert)}
+            >
+              <span>!</span>
+              <span>
+                <strong>{text.title}</strong>
+                <small>
+                  {alert.attempt.manuscriptTitle || alert.attempt.title} · {text.detail}
+                </small>
+              </span>
+              <b>{t.watch.review}</b>
+            </button>
+          );
+        })}
       </div>
     </section>
   );
@@ -57,18 +75,18 @@ export function Dashboard({
   openEditor,
   saveRecord,
   runAction,
-  openContext,
   openManuscripts,
   submissionAlerts,
   openSubmissionAlert,
   paper,
 }: DataProps & {
-  openContext: () => void;
   openManuscripts: () => void;
   submissionAlerts: SubmissionAlert[];
   openSubmissionAlert: (alert: SubmissionAlert) => void;
   paper?: RecordItem;
 }) {
+  const t = useT();
+  const { locale } = useLocale();
   const project = state.projects.find((item) => item.active) || state.projects[0];
   const manuscript = paper || state.manuscripts[0];
   const issues = [
@@ -81,37 +99,34 @@ export function Dashboard({
   return (
     <>
       <PageHeader
-        eyebrow="TODAY"
-        title="Move one thing forward."
+        eyebrow={t.today.eyebrow}
+        title={t.today.title}
         description={<LiveTimestamp />}
         compact
         actions={
           <div className="daily-intro-actions">
-            <button className="quiet-button" onClick={openContext}>
-              ◇ View real context
-            </button>
             <button className="primary-button" onClick={() => runAction(quickActions[4])}>
-              Plan today with AI <b>✦</b>
+              {t.today.plan} <b>✦</b>
             </button>
           </div>
         }
       />
       <SubmissionWatch alerts={submissionAlerts} onOpen={openSubmissionAlert} />
       <section className="daily-command-grid">
-        <PanelBoundary label="Primary focus">
+        <PanelBoundary label={t.today.panels.tasks}>
           <TaskPanel />
         </PanelBoundary>
-        <PanelBoundary label="Today’s schedule">
+        <PanelBoundary label={t.today.panels.schedule}>
           <CalendarPanel />
         </PanelBoundary>
-        <PanelBoundary label="Focus session">
+        <PanelBoundary label={t.today.panels.focus}>
           <FocusPanel />
         </PanelBoundary>
       </section>
       {/* Capture sits directly under the working panels: a log entry or an idea
           is worth nothing if it has to be looked for. */}
       <section className="daily-capture-grid">
-        <PanelBoundary label="Research log">
+        <PanelBoundary label={t.today.panels.log}>
           <JournalPanel
             state={state}
             saveRecord={saveRecord}
@@ -120,7 +135,7 @@ export function Dashboard({
             paper={manuscript}
           />
         </PanelBoundary>
-        <PanelBoundary label="Idea inbox">
+        <PanelBoundary label={t.today.panels.ideas}>
           <IdeaInboxPanel
             state={state}
             saveRecord={saveRecord}
@@ -133,20 +148,20 @@ export function Dashboard({
         <article className="card real-summary">
           <div className="section-heading">
             <div>
-              <span className="label">ACTIVE PROJECT / OBSIDIAN</span>
+              <span className="label">{t.today.activeProject}</span>
             </div>
             {project && (
               <button className="quiet-button" onClick={() => openEditor("projects", project)}>
-                Edit
+                {t.common.edit}
               </button>
             )}
           </div>
           {project ? (
             <>
               <h2>{project.title}</h2>
-              <p>{project.description || "No project description yet."}</p>
+              {project.description && <p>{project.description}</p>}
               <div className="manual-progress">
-                <span>Progress</span>
+                <span>{t.today.progress}</span>
                 <b>{clampProgress(project.progress)}%</b>
                 <i>
                   <em style={{ width: `${clampProgress(project.progress)}%` }} />
@@ -155,8 +170,8 @@ export function Dashboard({
             </>
           ) : (
             <EmptyState
-              title="No active project"
-              action="Create project"
+              title={t.today.noProject}
+              action={t.today.createProject}
               onAction={() => openEditor("projects")}
             />
           )}
@@ -164,11 +179,11 @@ export function Dashboard({
         <article className="card real-summary">
           <div className="section-heading">
             <div>
-              <span className="label">CURRENT PAPER / OBSIDIAN</span>
+              <span className="label">{t.today.currentPaper}</span>
             </div>
             {manuscript && (
               <button className="quiet-button" onClick={openManuscripts}>
-                Open paper
+                {t.today.openPaper}
               </button>
             )}
           </div>
@@ -177,10 +192,10 @@ export function Dashboard({
               <h2>{manuscript.title}</h2>
               <p>
                 {manuscript.nextAction ||
-                  `${manuscript.journal || "No target journal set"} · ${(manuscript.wordCount || 0).toLocaleString()} / ${(manuscript.targetWords || 0).toLocaleString()} words`}
+                  `${manuscript.journal || t.today.noJournal} · ${t.today.words(formatNumber(manuscript.wordCount || 0, locale), formatNumber(manuscript.targetWords || 0, locale))}`}
               </p>
               <div className="manual-progress">
-                <span>Writing progress</span>
+                <span>{t.today.progress}</span>
                 <b>{clampProgress(manuscript.progress)}%</b>
                 <i>
                   <em style={{ width: `${clampProgress(manuscript.progress)}%` }} />
@@ -189,21 +204,21 @@ export function Dashboard({
             </>
           ) : (
             <EmptyState
-              title="No paper context"
-              action="Create paper"
+              title={t.today.noPaper}
+              action={t.today.createPaper}
               onAction={() => openEditor("manuscripts", { stage: "Concept" })}
             />
           )}
         </article>
       </section>
       <section className="daily-lower-grid">
-        <PanelBoundary label="Zotero library">
+        <PanelBoundary label={t.today.panels.library}>
           <LiteraturePanel state={state} saveRecord={saveRecord} compact />
         </PanelBoundary>
         <article className="research-debt card real-panel">
           <div className="section-heading">
             <div>
-              <span className="label">PAPER FEEDBACK / OBSIDIAN</span>
+              <span className="label">{t.today.feedback}</span>
             </div>
             <button
               className="mini-add"
@@ -217,14 +232,11 @@ export function Dashboard({
                 })
               }
             >
-              ＋ Feedback
+              {t.today.addFeedback}
             </button>
           </div>
           {!issues.length ? (
-            <EmptyState
-              title="No open feedback"
-              detail="Feedback appears here beside its planned solution."
-            />
+            <EmptyState title={t.today.noFeedback} />
           ) : (
             <div className="real-record-list paper-issue-list">
               {issues.slice(0, 6).map(({ item, collection }) => (
@@ -239,12 +251,12 @@ export function Dashboard({
                   </span>
                   <span>
                     <strong>{item.description || item.title}</strong>
-                    <small>{item.manuscriptTitle || "No linked paper"}</small>
+                    <small>{item.manuscriptTitle || t.today.noLinkedPaper}</small>
                     {item.actionPlan && (
-                      <small className="issue-response">Plan: {item.actionPlan}</small>
+                      <small className="issue-response">{t.today.plan_(item.actionPlan)}</small>
                     )}
                   </span>
-                  <b>{item.status || "Open"}</b>
+                  <b>{valueLabel(t.values.status, item.status || "Open")}</b>
                 </button>
               ))}
             </div>

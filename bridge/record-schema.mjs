@@ -1,4 +1,5 @@
 import { CONSEQUENTIAL_SUBMISSION_STAGES, SUBMISSION_STAGES } from "../shared/constants.mjs";
+import { t } from "./i18n.mjs";
 
 export const submissionStages = new Set(SUBMISSION_STAGES);
 export const consequentialSubmissionStages = new Set(CONSEQUENTIAL_SUBMISSION_STAGES);
@@ -115,7 +116,7 @@ function invalid(message) {
 }
 
 function validateReference(value) {
-  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(value)) invalid("A linked record id is invalid.");
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(value)) invalid(t("records.reference"));
 }
 
 // A stored note is also edited by hand and by Obsidian itself, which writes
@@ -151,8 +152,7 @@ export function coerceStoredRecord(value) {
 // preserved so Obsidian plugins and future features can extend a record without
 // requiring a schema release first.
 export function decodeRecord(collection, value) {
-  if (!value || typeof value !== "object" || Array.isArray(value))
-    invalid("Record must be an object.");
+  if (!value || typeof value !== "object" || Array.isArray(value)) invalid(t("records.object"));
   const source = { ...value };
   // These v0 transport fields are not part of the record model.
   delete source.zoteroUrl;
@@ -165,49 +165,48 @@ export function decodeRecord(collection, value) {
       continue;
     }
     if (stringFields.has(field) && typeof fieldValue !== "string")
-      invalid(`${field} must be a string.`);
+      invalid(t("records.string", field));
     if (numberFields.has(field) && typeof fieldValue !== "number")
-      invalid(`${field} must be a number.`);
+      invalid(t("records.number", field));
     if (booleanFields.has(field) && typeof fieldValue !== "boolean")
-      invalid(`${field} must be true or false.`);
+      invalid(t("records.boolean", field));
     if (
       stringArrayFields.has(field) &&
       (!Array.isArray(fieldValue) || fieldValue.some((item) => typeof item !== "string"))
     )
-      invalid(`${field} must be an array of strings.`);
+      invalid(t("records.strings", field));
     record[field] = fieldValue;
   }
   if (record.version !== undefined && (!Number.isInteger(record.version) || record.version < 1))
-    invalid("version must be a positive integer.");
-  if (record.collection && record.collection !== collection)
-    invalid("Record collection does not match its vault folder.");
+    invalid(t("records.version"));
+  if (record.collection && record.collection !== collection) invalid(t("records.collection"));
   for (const field of ["progress", "evidenceCoverage"]) {
     if (
       record[field] !== undefined &&
       (!Number.isFinite(record[field]) || record[field] < 0 || record[field] > 100)
     )
-      invalid(`${field} must be between 0 and 100.`);
+      invalid(t("records.percent", field));
   }
   for (const field of ["wordCount", "targetWords"]) {
     if (record[field] !== undefined && (!Number.isInteger(record[field]) || record[field] < 0))
-      invalid(`${field} must be a non-negative integer.`);
+      invalid(t("records.count", field));
   }
   for (const field of dateFields)
     if (record[field] && Number.isNaN(new Date(record[field]).getTime()))
-      invalid(`${field} must be a valid date.`);
+      invalid(t("records.date", field));
   for (const field of referenceFields) if (record[field]) validateReference(record[field]);
   if (record.portalUrl) {
     const portal = URL.parse(record.portalUrl);
     if (!portal || !new Set(["http:", "https:"]).has(portal.protocol))
-      invalid("portalUrl must use http or https.");
+      invalid(t("records.portalUrl"));
   }
   if (collection !== "projects" && record.active !== undefined)
-    invalid("active is only supported for projects.");
+    invalid(t("records.activeProjectsOnly"));
   if (
     ["submission-attempts", "submission-events"].includes(collection) &&
     record.status &&
     !submissionStages.has(record.status)
   )
-    invalid("Unsupported submission status.");
+    invalid(t("records.submissionStatus"));
   return record;
 }

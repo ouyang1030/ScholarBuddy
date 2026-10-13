@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { CLOSED_RECORD_STATUSES } from "../shared/constants.mjs";
+import { HTML_LANG, translate } from "./i18n.mjs";
 
 export const reminderDefaults = {
   enabled: false,
@@ -35,8 +36,15 @@ export function reminderId(keys) {
 
 // Rebuilt from current source data every tick: deleted, completed and rescheduled
 // records therefore cannot leave behind a stale future notification.
-export function reminderCandidates({ settings, operations = [], events = [], now = new Date() }) {
+export function reminderCandidates({
+  settings,
+  operations = [],
+  events = [],
+  now = new Date(),
+  language = "en",
+}) {
   if (!settings.enabled) return [];
+  const say = (key, ...values) => translate(language, `reminders.${key}`, ...values);
   const result = [];
   if (settings.operations)
     for (const record of operations) {
@@ -56,7 +64,7 @@ export function reminderCandidates({ settings, operations = [], events = [], now
           category: "operations",
           id: record.id,
           title: record.title,
-          detail: `Due ${record.dueDate}`,
+          detail: say("due", record.dueDate),
           when: +when,
           expires: +expires,
         });
@@ -73,7 +81,9 @@ export function reminderCandidates({ settings, operations = [], events = [], now
         id: event.id,
         date: dateKey(start),
         title: event.title,
-        detail: event.allDay ? `${dateKey(start)} · All day` : start.toLocaleString("en-GB"),
+        detail: event.allDay
+          ? say("allDay", dateKey(start))
+          : start.toLocaleString(language === "en" ? "en-GB" : HTML_LANG[language]),
         when,
         expires: +start,
       });
@@ -85,7 +95,8 @@ export function dueReminders(candidates, delivered, now = new Date()) {
     (item) => item.when <= +now && item.expires > +now && !delivered[item.key],
   );
 }
-export function reminderNotification(due, siteUrl) {
+export function reminderNotification(due, siteUrl, language = "en") {
+  const say = (key, ...values) => translate(language, `reminders.${key}`, ...values);
   const unique = [
     ...new Map(due.map((item) => [`${item.category}:${item.id}:${item.expires}`, item])).values(),
   ];
@@ -110,14 +121,14 @@ export function reminderNotification(due, siteUrl) {
     title:
       unique.length === 1
         ? first.category === "calendar"
-          ? "Upcoming calendar event"
-          : "PhD Operation deadline"
-        : `${unique.length} upcoming reminders`,
+          ? say("calendarTitle")
+          : say("operationTitle")
+        : say("manyTitle", unique.length),
     body:
       unique
         .slice(0, 3)
         .map((item) => `${item.title} — ${item.detail}`)
-        .join("\n") + (unique.length > 3 ? `\n+${unique.length - 3} more` : ""),
+        .join("\n") + (unique.length > 3 ? `\n${say("more", unique.length - 3)}` : ""),
     url: `${url.origin}/#${params}`,
   };
 }

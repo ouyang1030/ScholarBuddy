@@ -1,16 +1,19 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { bridgeFailure, failureText, useLocale, useT } from "../../i18n";
 import { bridgeFetch } from "../../lib/bridge-client";
 import { calendarDisplayName, durationMinutes, localDateKey, timeLabel } from "../../lib/format";
 import type { CalendarEvent } from "../../types";
 import { EmptyState } from "../primitives";
 
 export function CalendarPanel() {
+  const t = useT();
+  const { locale } = useLocale();
   const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [calendars, setCalendars] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const [error, setError] = useState<unknown>(null);
   const [now, setNow] = useState(() => new Date());
   const [edit, setEdit] = useState<CalendarEvent | "new" | null>(null);
   const [draft, setDraft] = useState({ title: "", time: "09:00", minutes: "60", calendar: "" });
@@ -18,19 +21,19 @@ export function CalendarPanel() {
   const failuresRef = useRef(0);
   const refresh = async () => {
     setLoading(true);
-    setError("");
+    setError(null);
     try {
       const response = await bridgeFetch(`/calendar/today?date=${localDateKey(new Date())}`, {
         signal: AbortSignal.timeout(20000),
       });
       const body = await response.json();
-      if (!response.ok) throw new Error(body.error || "Calendar could not be loaded.");
+      if (!response.ok) throw bridgeFailure(body, "");
       setEvents(body.events || []);
       setCalendars(body.calendars || []);
       failuresRef.current = 0;
     } catch (e) {
       failuresRef.current += 1;
-      setError(e instanceof Error ? e.message : "Calendar could not be loaded.");
+      setError(e);
     } finally {
       setLoading(false);
     }
@@ -60,13 +63,13 @@ export function CalendarPanel() {
       event
         ? {
             title: event.title,
-            time: timeLabel(event.start),
+            time: timeLabel(event.start, locale),
             minutes: String(durationMinutes(event.start, event.end)),
             calendar: event.calendar,
           }
         : {
             title: "",
-            time: timeLabel(new Date().toISOString()),
+            time: timeLabel(new Date().toISOString(), locale),
             minutes: "60",
             calendar: calendars[0] || "",
           },
@@ -91,11 +94,11 @@ export function CalendarPanel() {
         }),
       });
       const body = await response.json();
-      if (!response.ok) throw new Error(body.error);
+      if (!response.ok) throw bridgeFailure(body, "");
       setEdit(null);
       await refresh();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Calendar event could not be saved.");
+      setError(e);
       setLoading(false);
     }
   };
@@ -108,11 +111,11 @@ export function CalendarPanel() {
         body: JSON.stringify({ id }),
       });
       const body = await response.json();
-      if (!response.ok) throw new Error(body.error);
+      if (!response.ok) throw bridgeFailure(body, "");
       setDeleteId("");
       await refresh();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Calendar event could not be deleted.");
+      setError(e);
       setLoading(false);
     }
   };
@@ -120,41 +123,38 @@ export function CalendarPanel() {
     <article className="today-schedule card real-panel">
       <div className="section-heading">
         <div>
-          <span className="label">MACOS CALENDAR / LIVE</span>
-          <p>Today’s schedule</p>
+          <span className="label">{t.calendar.label}</span>
         </div>
         <button className="mini-add" onClick={() => openEditor()}>
-          ＋ Event
+          {t.calendar.add}
         </button>
       </div>
       {edit && (
         <section
           className="time-editor"
-          aria-label={typeof edit === "object" ? "Edit calendar event" : "New calendar event"}
+          aria-label={typeof edit === "object" ? t.calendar.editTitle : t.calendar.newTitle}
         >
           <header>
             <span>
-              <small>{typeof edit === "object" ? "EDIT EVENT" : "NEW EVENT"}</small>
               <strong>
-                {typeof edit === "object" ? "Update this calendar block" : "Add time to today"}
+                {typeof edit === "object" ? t.calendar.editTitle : t.calendar.newTitle}
               </strong>
             </span>
-            <button aria-label="Close calendar editor" onClick={() => setEdit(null)}>
+            <button aria-label={t.calendar.closeEditor} onClick={() => setEdit(null)}>
               ×
             </button>
           </header>
           <label className="time-title">
-            <span>Event name</span>
+            <span>{t.calendar.name}</span>
             <input
               autoFocus
               value={draft.title}
               onChange={(e) => setDraft({ ...draft, title: e.target.value })}
-              placeholder="What is this time for?"
             />
           </label>
           <div className="time-editor-fields">
             <label>
-              <span>Starts</span>
+              <span>{t.calendar.starts}</span>
               <input
                 type="time"
                 value={draft.time}
@@ -162,7 +162,7 @@ export function CalendarPanel() {
               />
             </label>
             <label>
-              <span>Duration</span>
+              <span>{t.calendar.duration}</span>
               <span className="duration-input">
                 <input
                   inputMode="numeric"
@@ -171,11 +171,11 @@ export function CalendarPanel() {
                     setDraft({ ...draft, minutes: e.target.value.replace(/\D/g, "") })
                   }
                 />
-                <b>min</b>
+                <b>{t.tasks.minuteUnit}</b>
               </span>
             </label>
             <label>
-              <span>Calendar</span>
+              <span>{t.calendar.calendar}</span>
               <select
                 disabled={typeof edit === "object"}
                 value={draft.calendar}
@@ -183,42 +183,38 @@ export function CalendarPanel() {
               >
                 {calendars.map((name) => (
                   <option key={name} value={name}>
-                    {calendarDisplayName(name)}
+                    {calendarDisplayName(name, locale)}
                   </option>
                 ))}
               </select>
             </label>
           </div>
           <footer>
-            <span>
-              {typeof edit === "object"
-                ? `Saved in ${calendarDisplayName(draft.calendar)}`
-                : "Saved directly to macOS Calendar"}
-            </span>
+            <span />
             <div>
-              <button onClick={() => setEdit(null)}>Cancel</button>
+              <button onClick={() => setEdit(null)}>{t.common.cancel}</button>
               <button className="save-edit" disabled={!draft.title.trim()} onClick={save}>
-                {typeof edit === "object" ? "Save changes" : "Add event"}
+                {typeof edit === "object" ? t.calendar.saveChanges : t.calendar.addEvent}
               </button>
             </div>
           </footer>
         </section>
       )}
-      {error && (
+      {Boolean(error) && (
         <div className="calendar-error">
           <span>!</span>
-          <p>{error}</p>
-          <button onClick={refresh}>Retry</button>
+          <p>{failureText(t, error, t.calendar.loadFailed)}</p>
+          <button onClick={refresh}>{t.common.retry}</button>
         </div>
       )}
       <div className="schedule-list">
         {loading && !events.length ? (
           <div className="schedule-loading">
             <span />
-            Reading Calendar…
+            {t.calendar.loading}
           </div>
         ) : !events.length && !error ? (
-          <EmptyState title="No events today" detail="Add an event here or in macOS Calendar." />
+          <EmptyState title={t.calendar.empty} />
         ) : (
           events.map((event, index) => {
             const active =
@@ -228,38 +224,38 @@ export function CalendarPanel() {
                 className={`${active ? "now" : ""} ${deleteId === event.id ? "confirming-delete" : ""}`}
                 key={event.id}
               >
-                <time>{event.allDay ? "ALL DAY" : timeLabel(event.start)}</time>
+                <time>{event.allDay ? t.calendar.allDay : timeLabel(event.start, locale)}</time>
                 <i
                   className={["mint", "blue", "violet", "neutral"][index % 4]}
                   style={event.color ? { background: event.color } : undefined}
                 />
                 <span>
                   <strong>{event.title}</strong>
-                  <small>{calendarDisplayName(event.calendar)}</small>
+                  <small>{calendarDisplayName(event.calendar, locale)}</small>
                 </span>
                 {deleteId === event.id ? (
                   <span
                     className="schedule-confirm"
-                    aria-label={`Confirm deletion of ${event.title}`}
+                    aria-label={t.calendar.confirmDelete(event.title)}
                   >
-                    <button onClick={() => setDeleteId("")}>Keep</button>
+                    <button onClick={() => setDeleteId("")}>{t.common.keep}</button>
                     <button className="danger" disabled={loading} onClick={() => remove(event.id)}>
-                      Delete
+                      {t.common.delete}
                     </button>
                   </span>
                 ) : (
                   <span className="schedule-actions">
-                    {active && <b>NOW</b>}
+                    {active && <b>{t.calendar.now}</b>}
                     <button
-                      aria-label={`Edit ${event.title}`}
-                      title="Edit event"
+                      aria-label={t.calendar.editFor(event.title)}
+                      title={t.calendar.edit}
                       onClick={() => openEditor(event)}
                     >
                       <span aria-hidden="true">✎</span>
                     </button>
                     <button
-                      aria-label={`Delete ${event.title}`}
-                      title="Delete event"
+                      aria-label={t.calendar.deleteFor(event.title)}
+                      title={t.calendar.delete}
                       onClick={() => setDeleteId(event.id)}
                     >
                       <span aria-hidden="true">×</span>
@@ -271,9 +267,16 @@ export function CalendarPanel() {
           })
         )}
       </div>
-      <button className="wide-button" disabled={loading} onClick={refresh}>
-        {loading ? "Syncing…" : "Refresh Calendar"}
-        <span>↻</span>
+      <button
+        className="wide-button icon-only"
+        disabled={loading}
+        aria-label={loading ? t.calendar.syncing : t.calendar.refresh}
+        title={t.calendar.refresh}
+        onClick={refresh}
+      >
+        <span className={loading ? "spinning" : ""} aria-hidden="true">
+          ↻
+        </span>
       </button>
     </article>
   );

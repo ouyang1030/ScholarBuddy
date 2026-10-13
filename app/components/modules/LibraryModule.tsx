@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useT, valueLabel } from "../../i18n";
 import { readingStatusClass, type DataProps } from "../../lib/workbench";
 import type { RecordItem } from "../../types";
 import { EmptyState } from "../primitives";
@@ -14,18 +15,9 @@ export function LibraryModule({
   openEditor,
   paper,
 }: Pick<DataProps, "state" | "saveRecord" | "openEditor"> & { paper?: RecordItem }) {
+  const t = useT();
   const [tab, setTab] = useState<"literature" | "queue" | "passages">("literature");
   const queued = state["reading-queue"];
-  const description =
-    tab === "passages"
-      ? paper
-        ? `Turn Zotero highlights into evidence for ${paper.title}.`
-        : "Search and organize highlighted passages before placing them in a manuscript."
-      : tab === "queue"
-        ? "Keep the papers worth reading next in one deliberate queue."
-        : paper
-          ? `Attach evidence to ${paper.title} while you build its argument.`
-          : "Find relevant evidence in your live Zotero library.";
   return (
     <>
       <div className="module-tabs library-tabs">
@@ -33,22 +25,22 @@ export function LibraryModule({
           className={tab === "literature" ? "active" : ""}
           onClick={() => setTab("literature")}
         >
-          Literature
+          {t.libraryPage.literature}
         </button>
         <button className={tab === "queue" ? "active" : ""} onClick={() => setTab("queue")}>
-          Reading queue
+          {t.libraryPage.queue}
         </button>
         <button className={tab === "passages" ? "active" : ""} onClick={() => setTab("passages")}>
-          Passage Library
+          {t.libraryPage.passages}
         </button>
       </div>
       <section className="page-intro compact">
         <div>
-          <p className="eyebrow">ZOTERO + OBSIDIAN</p>
+          <p className="eyebrow">{t.libraryPage.eyebrow}</p>
           <h1>
-            Research <em>library.</em>
+            {t.libraryPage.titleLead}
+            <em>{t.libraryPage.titleEm}</em>
           </h1>
-          <p>{description}</p>
         </div>
         {tab === "queue" && (
           <button
@@ -60,17 +52,17 @@ export function LibraryModule({
               )
             }
           >
-            Add reading item <b>+</b>
+            {t.libraryPage.addItem} <b>+</b>
           </button>
         )}
       </section>
       {tab === "literature" && (
-        <PanelBoundary label="Zotero library">
+        <PanelBoundary label={t.today.panels.library}>
           <LiteraturePanel state={state} saveRecord={saveRecord} paper={paper} />
         </PanelBoundary>
       )}
       {tab === "passages" && (
-        <PanelBoundary label="Passage Library">
+        <PanelBoundary label={t.libraryPage.passages}>
           <PassageLibrary state={state} saveRecord={saveRecord} paper={paper} />
         </PanelBoundary>
       )}
@@ -78,16 +70,11 @@ export function LibraryModule({
         <section className="editable-section card reading-queue-section">
           <div className="section-heading">
             <div>
-              <span className="label">READING QUEUE</span>
-              <p>
-                {queued.length
-                  ? `${queued.length} saved paper${queued.length === 1 ? "" : "s"}`
-                  : "Saved papers"}
-              </p>
+              <span className="label">{t.libraryPage.queueLabel}</span>
             </div>
           </div>
           {!queued.length ? (
-            <EmptyState title="No saved papers yet" />
+            <EmptyState title={t.libraryPage.noQueue} />
           ) : (
             <div className="reading-queue-list">
               {queued.map((item) => {
@@ -101,12 +88,14 @@ export function LibraryModule({
                     <span className="reading-queue-year">{item.year || "—"}</span>
                     <span className="reading-queue-body">
                       <strong>{item.title}</strong>
-                      <small>{item.creators?.join(", ") || item.doi || "Saved literature"}</small>
+                      <small>
+                        {item.creators?.join(", ") || item.doi || t.libraryPage.savedLiterature}
+                      </small>
                       {item.manuscriptTitle && (
                         <em className="reading-queue-paper">↳ {item.manuscriptTitle}</em>
                       )}
                     </span>
-                    <span className="reading-status">{status}</span>
+                    <span className="reading-status">{valueLabel(t.values.status, status)}</span>
                   </button>
                 );
               })}

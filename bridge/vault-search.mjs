@@ -3,6 +3,7 @@ import { access, readFile, readdir, stat } from "node:fs/promises";
 import { constants } from "node:fs";
 import path from "node:path";
 import { expandTerms, queryTerms } from "./search-terms.mjs";
+import { count, t } from "./i18n.mjs";
 
 async function walkMarkdown(root, current = root, files = [], ceiling = 2500, signal) {
   if (signal?.aborted) throw signal.reason;
@@ -55,7 +56,7 @@ let vaultList = { root: "", at: 0, files: [], truncated: false };
 // An answer "from the vault" that only saw part of it has to say so.
 export function vaultCoverageNote(root) {
   return vaultList.root === root && vaultList.truncated
-    ? `Only the first ${VAULT_FILE_LIMIT.toLocaleString("en-US")} notes in the vault were searched.`
+    ? t("notes.vaultTruncated", count(VAULT_FILE_LIMIT))
     : "";
 }
 

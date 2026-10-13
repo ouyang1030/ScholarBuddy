@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { failureText, useT } from "../../i18n";
 import type { DataProps } from "../../lib/workbench";
 import type { RecordItem } from "../../types";
 
@@ -12,6 +13,7 @@ export function IdeaInboxPanel({
   openEditor,
   project,
 }: Pick<DataProps, "state" | "saveRecord" | "openEditor"> & { project?: RecordItem }) {
+  const t = useT();
   const [text, setText] = useState("");
   const [ready, setReady] = useState(false);
   const [busy, setBusy] = useState("");
@@ -42,7 +44,7 @@ export function IdeaInboxPanel({
     try {
       await work();
     } catch (actionError) {
-      setError(actionError instanceof Error ? actionError.message : "That could not be saved yet.");
+      setError(failureText(t, actionError, t.errors.saveFailed));
     } finally {
       setBusy("");
     }
@@ -79,12 +81,9 @@ export function IdeaInboxPanel({
     <article className="idea-inbox card real-panel">
       <div className="section-heading">
         <div>
-          <span className="label">IDEA INBOX / OBSIDIAN</span>
-          <p>Catch it now, judge it later</p>
+          <span className="label">{t.ideas.label}</span>
         </div>
-        <span className="completion-count">
-          <b>{inbox.length}</b> waiting
-        </span>
+        <span className="completion-count">{t.ideas.waiting(inbox.length)}</span>
       </div>
       <div className="task-capture">
         <input
@@ -92,10 +91,14 @@ export function IdeaInboxPanel({
           value={text}
           onChange={(event) => setText(event.target.value)}
           onKeyDown={(event) => event.key === "Enter" && capture()}
-          placeholder="One line — ⌘ I from anywhere…"
-          aria-label="Capture an idea"
+          placeholder={t.ideas.placeholder}
+          aria-label={t.ideas.capture}
         />
-        <button disabled={Boolean(busy) || !text.trim()} onClick={capture} aria-label="Save idea">
+        <button
+          disabled={Boolean(busy) || !text.trim()}
+          onClick={capture}
+          aria-label={t.ideas.save}
+        >
           +
         </button>
       </div>
@@ -103,14 +106,11 @@ export function IdeaInboxPanel({
         <div className="capture-error">
           <span>!</span>
           <p>{error}</p>
-          <button onClick={() => setError("")}>Dismiss</button>
+          <button onClick={() => setError("")}>{t.common.dismiss}</button>
         </div>
       )}
       {!inbox.length ? (
-        <p className="capture-empty">
-          Nothing waiting. Anything you capture stays here until you promote it to a research
-          question or drop it.
-        </p>
+        <p className="capture-empty">{t.ideas.empty}</p>
       ) : (
         <div className="idea-inbox-list">
           {inbox.slice(0, 6).map((idea) => (
@@ -118,12 +118,12 @@ export function IdeaInboxPanel({
               <button onClick={() => openEditor("ideas", idea)}>{idea.title}</button>
               <span className="idea-row-actions">
                 <button disabled={Boolean(busy)} onClick={() => promote(idea)}>
-                  {busy === idea.id ? "…" : "↑ Question"}
+                  {busy === idea.id ? "…" : t.ideas.promote}
                 </button>
                 <button
                   disabled={Boolean(busy)}
                   onClick={() => dismiss(idea)}
-                  aria-label={`Drop ${idea.title}`}
+                  aria-label={t.ideas.drop(idea.title)}
                 >
                   ×
                 </button>

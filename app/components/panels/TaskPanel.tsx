@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useT, type Messages } from "../../i18n";
 import { localDateKey } from "../../lib/format";
 import { nextTaskId } from "../../lib/workbench";
 
@@ -24,8 +25,8 @@ type FocusState = {
 const TASKS_KEY = "scholarbuddy-daily-tasks-en-v3";
 const standardFocusLengths = new Set([25, 50]);
 
-function focusLengthLabel(minutes?: number | null) {
-  return minutes ? `${minutes} min` : "No time limit";
+function focusLengthLabel(t: Messages, minutes?: number | null) {
+  return minutes ? t.tasks.minutes(minutes) : t.tasks.noLimit;
 }
 
 function compactTimer(value: number) {
@@ -35,6 +36,7 @@ function compactTimer(value: number) {
 }
 
 export function TaskPanel() {
+  const t = useT();
   const today = localDateKey(new Date());
   const [tasks, setTasks] = useState<DailyTask[]>([]);
   const [newTask, setNewTask] = useState("");
@@ -190,7 +192,7 @@ export function TaskPanel() {
       >
         <button
           className="task-check"
-          aria-label={task.done ? `Mark ${task.title} incomplete` : `Mark ${task.title} complete`}
+          aria-label={task.done ? t.tasks.markOpen(task.title) : t.tasks.markDone(task.title)}
           onClick={() => toggleTask(task.id)}
         >
           {task.done ? "✓" : ""}
@@ -208,16 +210,20 @@ export function TaskPanel() {
               }}
             />
           ) : (
-            <span className="task-title">{task.title || "Untitled output"}</span>
+            <span className="task-title">{task.title || t.tasks.untitled}</span>
           )}
           <small className="task-row-meta">
-            {isPrimary && <b>PRIMARY</b>}
-            {!task.done && <span>{focusLengthLabel(task.focusMinutes)}</span>}
+            {isPrimary && <b>{t.tasks.primary}</b>}
+            {!task.done && <span>{focusLengthLabel(t, task.focusMinutes)}</span>}
           </small>
         </div>
         {isDeletePending ? (
-          <span className="task-delete-confirm" role="group" aria-label={`Delete ${task.title}?`}>
-            <button onClick={() => setConfirmDeleteId(null)}>Cancel</button>
+          <span
+            className="task-delete-confirm"
+            role="group"
+            aria-label={t.tasks.deleteQuestion(task.title)}
+          >
+            <button onClick={() => setConfirmDeleteId(null)}>{t.common.cancel}</button>
             <button
               className="danger"
               onClick={() => {
@@ -225,30 +231,30 @@ export function TaskPanel() {
                 setConfirmDeleteId(null);
               }}
             >
-              Delete
+              {t.common.delete}
             </button>
           </span>
         ) : (
           <span className="task-actions">
             {!task.done && !isPrimary && (
               <button
-                aria-label={`Set ${task.title} as primary`}
-                title="Set as Primary"
+                aria-label={t.tasks.setPrimaryFor(task.title)}
+                title={t.tasks.setPrimary}
                 onClick={() => setPrimary(task.id)}
               >
                 ◎
               </button>
             )}
             <button
-              aria-label={`Edit ${task.title}`}
-              title="Edit task"
+              aria-label={t.tasks.editFor(task.title)}
+              title={t.tasks.edit}
               onClick={() => setEditingTaskId(task.id)}
             >
               ✎
             </button>
             <button
-              aria-label={`Delete ${task.title}`}
-              title="Delete task"
+              aria-label={t.tasks.deleteFor(task.title)}
+              title={t.tasks.delete}
               onClick={() => setConfirmDeleteId(task.id)}
             >
               ×
@@ -281,8 +287,7 @@ export function TaskPanel() {
     <article className="today-tasks card real-panel">
       <div className="section-heading">
         <div>
-          <span className="label">PRIMARY FOCUS</span>
-          <p>Your next concrete research move</p>
+          <span className="label">{t.tasks.label}</span>
         </div>
         <span className="completion-count">
           <b>{completedTasks.length}</b> / {visibleTasks.length}
@@ -291,31 +296,29 @@ export function TaskPanel() {
       {primary ? (
         <section className={`primary-task ${primaryIsRunning ? "running" : ""}`}>
           <div className="primary-task-topline">
-            <span>{primaryIsRunning ? "FOCUS IN PROGRESS" : "NEXT OUTPUT"}</span>
+            <span>{primaryIsRunning ? t.tasks.running : t.tasks.next}</span>
           </div>
           <h2>{primary.title}</h2>
-          <p>
-            {primaryIsRunning
-              ? `${focusLengthLabel(focusState?.plannedMinutes)} · focus time is being recorded.`
-              : "Finish one visible research output, then record what changed before moving on."}
-          </p>
+          {primaryIsRunning && (
+            <p>{t.tasks.recording(focusLengthLabel(t, focusState?.plannedMinutes))}</p>
+          )}
           <div className="primary-task-actions">
             {primaryReachedGoal ? (
               <button className="focus-start-button" onClick={() => toggleTask(primary.id)}>
-                Mark output complete <b>✓</b>
+                {t.tasks.complete} <b>✓</b>
               </button>
             ) : primaryIsRunning ? (
               <button className="focus-start-button" onClick={viewFocus}>
-                View focus · {compactTimer(focusState?.seconds || 0)} <b>→</b>
+                {t.tasks.viewFocus(compactTimer(focusState?.seconds || 0))} <b>→</b>
               </button>
             ) : (
               <button className="focus-start-button" onClick={() => startFocus(primary)}>
-                Start focused work <b>▶</b>
+                {t.tasks.start} <b>▶</b>
               </button>
             )}
             <label className="focus-length-control">
               <select
-                aria-label="Focus session length"
+                aria-label={t.tasks.length}
                 value={focusLengthValue}
                 disabled={primaryIsRunning}
                 onChange={(event) => {
@@ -325,15 +328,15 @@ export function TaskPanel() {
                   });
                 }}
               >
-                <option value="none">No limit</option>
-                <option value="25">25 min</option>
-                <option value="50">50 min</option>
-                <option value="custom">Custom</option>
+                <option value="none">{t.tasks.noLimit}</option>
+                <option value="25">{t.tasks.minutes(25)}</option>
+                <option value="50">{t.tasks.minutes(50)}</option>
+                <option value="custom">{t.tasks.custom}</option>
               </select>
               {focusLengthValue === "custom" && (
                 <span className="custom-focus-length">
                   <input
-                    aria-label="Custom focus minutes"
+                    aria-label={t.tasks.customMinutes}
                     type="number"
                     min="1"
                     max="480"
@@ -345,7 +348,7 @@ export function TaskPanel() {
                       })
                     }
                   />
-                  min
+                  {t.tasks.minuteUnit}
                 </span>
               )}
             </label>
@@ -353,22 +356,19 @@ export function TaskPanel() {
         </section>
       ) : (
         <section className="primary-task empty">
-          <span>START HERE</span>
-          <h2>Define one result worth finishing today.</h2>
-          <p>
-            Keep it concrete: a revised paragraph, an analysed model, a figure, or a reviewed paper.
-          </p>
+          <span>{t.tasks.startHere}</span>
+          <h2>{t.tasks.empty}</h2>
         </section>
       )}
       <div className="task-capture">
         <input
-          aria-label="Add the next concrete output"
+          aria-label={t.tasks.add}
           value={newTask}
           onChange={(event) => setNewTask(event.target.value)}
           onKeyDown={(event) => event.key === "Enter" && add()}
-          placeholder="Add the next concrete output…"
+          placeholder={t.tasks.add}
         />
-        <button aria-label="Add output" disabled={!newTask.trim()} onClick={add}>
+        <button aria-label={t.tasks.addButton} disabled={!newTask.trim()} onClick={add}>
           +
         </button>
       </div>
@@ -380,7 +380,7 @@ export function TaskPanel() {
             aria-expanded={showCompleted}
             onClick={() => setShowCompleted((shown) => !shown)}
           >
-            <span>Completed ({completedTasks.length})</span>
+            <span>{t.tasks.completed(completedTasks.length)}</span>
             <b>{showCompleted ? "−" : "+"}</b>
           </button>
           {showCompleted && (

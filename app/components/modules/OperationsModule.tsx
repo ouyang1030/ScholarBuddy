@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useLocale, useT, valueLabel, type Messages } from "../../i18n";
 import { clampProgress, shortDate } from "../../lib/format";
 import { isOpen, statusDefault, type DataProps } from "../../lib/workbench";
 import type { RecordItem } from "../../types";
@@ -33,8 +34,8 @@ function sortOperations(operations: RecordItem[]): RecordItem[] {
   });
 }
 
-function deadlineState(dueDate?: string) {
-  if (!dueDate) return { label: "No deadline", tone: "neutral", days: null };
+function deadlineState(t: Messages, dueDate?: string) {
+  if (!dueDate) return { label: t.operations.noDeadline, tone: "neutral", days: null };
   const [year, month, day] = dueDate.split("-").map(Number);
   const today = new Date();
   const start = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate());
@@ -42,12 +43,13 @@ function deadlineState(dueDate?: string) {
   const days = Math.round((target - start) / 86_400_000);
   // Records are hand-editable Markdown, so a malformed date reads as no deadline
   // rather than "NaNd left" — the same call the bridge makes when it validates.
-  if (!Number.isFinite(days)) return { label: "No deadline", tone: "neutral", days: null };
-  if (days < 0) return { label: `${Math.abs(days)}d overdue`, tone: "overdue", days };
-  if (days === 0) return { label: "Due today", tone: "overdue", days };
-  if (days <= 7) return { label: `${days}d left`, tone: "urgent", days };
-  if (days <= 30) return { label: `${days}d left`, tone: "soon", days };
-  return { label: `${days}d left`, tone: "neutral", days };
+  if (!Number.isFinite(days))
+    return { label: t.operations.noDeadline, tone: "neutral", days: null };
+  if (days < 0) return { label: t.operations.overdue(Math.abs(days)), tone: "overdue", days };
+  if (days === 0) return { label: t.operations.dueToday, tone: "overdue", days };
+  if (days <= 7) return { label: t.operations.left(days), tone: "urgent", days };
+  if (days <= 30) return { label: t.operations.left(days), tone: "soon", days };
+  return { label: t.operations.left(days), tone: "neutral", days };
 }
 
 function OperationsBoard({
@@ -55,6 +57,8 @@ function OperationsBoard({
   openEditor,
   paper,
 }: Pick<DataProps, "state" | "openEditor"> & { paper?: RecordItem }) {
+  const t = useT();
+  const { locale } = useLocale();
   const [typeFilter, setTypeFilter] = useState("");
   // Only the kinds of work actually on the board, so the filter never offers a
   // row that leads to an empty screen.
@@ -71,13 +75,9 @@ function OperationsBoard({
   return (
     <>
       <PageHeader
-        eyebrow="DEADLINES + COMMITMENTS"
-        title={
-          <>
-            PhD <em>operations.</em>
-          </>
-        }
-        description="Supervision, teaching, ethics, funding, and administration — ordered by deadline."
+        eyebrow={t.operations.eyebrow}
+        title={t.nav.operations}
+        hideTitle
         compact
         actions={
           <button
@@ -96,14 +96,14 @@ function OperationsBoard({
               )
             }
           >
-            New operation <b>+</b>
+            {t.operations.new} <b>+</b>
           </button>
         }
       />
       {types.length > 1 && (
-        <div className="record-filters" aria-label="Filter operations by type">
+        <div className="record-filters" aria-label={t.operations.filter}>
           <button className={active ? "" : "active"} onClick={() => setTypeFilter("")}>
-            All
+            {t.operations.all}
           </button>
           {types.map((type) => (
             <button
@@ -111,19 +111,19 @@ function OperationsBoard({
               className={active === type ? "active" : ""}
               onClick={() => setTypeFilter(type)}
             >
-              {type}
+              {valueLabel(t.values.operationType, type)}
             </button>
           ))}
         </div>
       )}
       <section className="record-board operations-board">
         {!operations.length ? (
-          <EmptyState title="No operations yet" />
+          <EmptyState title={t.operations.none} />
         ) : (
           operations.map((item) => {
             const isCompleted = isFinished(item);
             const hasProgress = !isCompleted && item.progress !== undefined;
-            const deadline = deadlineState(item.dueDate);
+            const deadline = deadlineState(t, item.dueDate);
 
             return (
               <article
@@ -131,7 +131,9 @@ function OperationsBoard({
                 key={item.id}
               >
                 <div className="operation-main">
-                  <span className="object-id">{item.type || item.id}</span>
+                  <span className="object-id">
+                    {item.type ? valueLabel(t.values.operationType, item.type) : item.id}
+                  </span>
                   <h2>{item.title}</h2>
                   <div className="operation-status">
                     <MetaPill
@@ -147,7 +149,7 @@ function OperationsBoard({
                               : "blue"
                       }
                     >
-                      {item.status || OPEN_STATUS}
+                      {valueLabel(t.values.status, item.status || OPEN_STATUS)}
                     </MetaPill>
                     {hasProgress && (
                       <span className="record-card-progress">{clampProgress(item.progress)}%</span>
@@ -156,29 +158,31 @@ function OperationsBoard({
                 </div>
 
                 <div className={`operation-deadline ${isCompleted ? "complete" : deadline.tone}`}>
-                  <span>{item.dueDate ? shortDate(item.dueDate) : "Not scheduled"}</span>
-                  <strong>{isCompleted ? "Completed" : deadline.label}</strong>
+                  <span>
+                    {item.dueDate ? shortDate(item.dueDate, locale) : t.operations.notScheduled}
+                  </span>
+                  <strong>{isCompleted ? t.operations.completed : deadline.label}</strong>
                 </div>
 
                 <div className="record-card-footer">
                   <button className="quiet-button" onClick={() => openEditor("operations", item)}>
-                    Edit operation
+                    {t.operations.edit}
                   </button>
                 </div>
 
                 {(item.description || item.manuscriptTitle || item.projectTitle) && (
                   <details className="operation-details">
-                    <summary>Details</summary>
+                    <summary>{t.operations.details}</summary>
                     {item.description && <p>{item.description}</p>}
                     {item.manuscriptTitle && (
                       <div className="record-meta-item">
-                        <span className="meta-tag">Paper</span>
+                        <span className="meta-tag">{t.operations.paper}</span>
                         <strong title={item.manuscriptTitle}>{item.manuscriptTitle}</strong>
                       </div>
                     )}
                     {item.projectTitle && (
                       <div className="record-meta-item">
-                        <span className="meta-tag">Project</span>
+                        <span className="meta-tag">{t.operations.project}</span>
                         <strong title={item.projectTitle}>{item.projectTitle}</strong>
                       </div>
                     )}
@@ -198,16 +202,17 @@ export function OperationsModule({
   openEditor,
   paper,
 }: Pick<DataProps, "state" | "openEditor"> & { paper?: RecordItem }) {
+  const t = useT();
   const [tab, setTab] = useState<"operations" | "journal">("operations");
   return (
     <>
       <ModuleTabs
-        label="PhD Operations views"
+        label={t.operations.views}
         active={tab}
         onSelect={setTab}
         tabs={[
-          { key: "operations", label: "Operations" },
-          { key: "journal", label: "Research log" },
+          { key: "operations", label: t.operations.tabOperations },
+          { key: "journal", label: t.operations.tabLog },
         ]}
       />
       <div role="tabpanel" id={`tabpanel-${tab}`} aria-labelledby={`tab-${tab}`}>
@@ -218,11 +223,11 @@ export function OperationsModule({
             collection="journal"
             title={
               <>
-                Research <em>log.</em>
+                {t.operations.logLead}
+                <em>{t.operations.logEm}</em>
               </>
             }
-            eyebrow="DAILY RECORD"
-            description="Every entry captured on Today, newest first. Nothing here is a task — it is what actually happened."
+            eyebrow={t.operations.logEyebrow}
             state={state}
             openEditor={openEditor}
             showProgress={false}

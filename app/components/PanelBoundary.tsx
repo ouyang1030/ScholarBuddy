@@ -1,9 +1,23 @@
 "use client";
 
 import { Component, type ReactNode } from "react";
+import { useT } from "../i18n";
 
 type Props = { label: string; children: ReactNode };
 type State = { failed: boolean };
+
+function PanelFailure({ label, onRetry }: { label: string; onRetry: () => void }) {
+  const t = useT();
+  return (
+    <article className="card panel-boundary" role="alert">
+      <span aria-hidden="true">!</span>
+      <div>
+        <strong>{t.shell.panelFailed(label)}</strong>
+      </div>
+      <button onClick={onRetry}>{t.shell.retryPanel}</button>
+    </article>
+  );
+}
 
 /**
  * A failing panel must not take the whole workbench down: Today's local focus
@@ -23,17 +37,7 @@ export class PanelBoundary extends Component<Props, State> {
   render() {
     if (!this.state.failed) return this.props.children;
     return (
-      <article className="card panel-boundary" role="alert">
-        <span aria-hidden="true">!</span>
-        <div>
-          <strong>{this.props.label} could not be displayed</strong>
-          <p>
-            The rest of the workbench keeps working. Retry once the underlying record or source
-            looks right.
-          </p>
-        </div>
-        <button onClick={() => this.setState({ failed: false })}>Retry panel</button>
-      </article>
+      <PanelFailure label={this.props.label} onRetry={() => this.setState({ failed: false })} />
     );
   }
 }

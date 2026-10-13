@@ -2,6 +2,7 @@
 
 import { createContext, memo, useContext, useCallback, useEffect, useRef, useState } from "react";
 import { bridgeFetch } from "../../lib/bridge-client";
+import { useLocale, useT } from "../../i18n";
 import { localDateKey, timeLabel } from "../../lib/format";
 import type { FocusCalendarBlock } from "../../types";
 import { FocusCelebration } from "../Celebrations";
@@ -108,7 +109,12 @@ function writeFocusCelebration(state: FocusCelebrationState) {
   window.localStorage.setItem(FOCUS_CELEBRATION_KEY, JSON.stringify(state));
 }
 
+type CalendarNote = "" | "switching" | "syncPending" | "synced" | "goalSaving" | "saving";
+type RecoveryNote = "" | "restored" | "interrupted";
+
 function useFocusController() {
+  const t = useT();
+  const { locale } = useLocale();
   const [now, setNow] = useState(() => new Date());
   const [elapsed, setElapsed] = useState(0);
   const [startedAt, setStartedAt] = useState<number | null>(null);
@@ -119,9 +125,9 @@ function useFocusController() {
   const [pending, setPending] = useState<FocusCalendarBlock[]>([]);
   const [ready, setReady] = useState(false);
   const [syncing, setSyncing] = useState(false);
-  const [calendarMessage, setCalendarMessage] = useState("");
+  const [calendarMessage, setCalendarMessage] = useState<CalendarNote>("");
   const [celebrating, setCelebrating] = useState(false);
-  const [recoveryMessage, setRecoveryMessage] = useState("");
+  const [recoveryMessage, setRecoveryMessage] = useState<RecoveryNote>("");
   // Sessions reach Calendar only once the researcher has named the calendar in
   // Connections. The ref is what the timer callbacks read; the state is what the
   // status line renders.
@@ -182,10 +188,7 @@ function useFocusController() {
             saved.plannedMinutes ? Math.min(restored, Number(saved.plannedMinutes) * 60) : restored,
           );
           setStartedAt(null);
-          if (saved.startedAt)
-            setRecoveryMessage(
-              "Timer restored paused. Only time through the last checkpoint was kept.",
-            );
+          if (saved.startedAt) setRecoveryMessage("restored");
           setTarget(String(saved.target || ""));
           setActiveTaskId(Number(saved.activeTaskId) || null);
           setPlannedMinutes(Number(saved.plannedMinutes) || null);
@@ -193,8 +196,7 @@ function useFocusController() {
           setPending(calendarRef.current ? savedPending : []);
         } else {
           const pendingItems = calendarRef.current ? [...savedPending] : [];
-          if (saved.startedAt)
-            setRecoveryMessage("Previous timer restored paused; unobserved time was not added.");
+          if (saved.startedAt) setRecoveryMessage("restored");
           setElapsed(0);
           setStartedAt(null);
           setTarget(String(saved.target || ""));
@@ -291,11 +293,7 @@ function useFocusController() {
         (activeTaskId && nextTaskId && activeTaskId !== nextTaskId) ||
         (!activeTaskId && target.trim() && target.trim() !== detail.target.trim());
 
-      if (
-        (startedAt || elapsed) &&
-        changingTarget &&
-        !window.confirm("Switch focus target? The current session will be paused and saved first.")
-      ) {
+      if ((startedAt || elapsed) && changingTarget && !window.confirm(t.focus.switchConfirm)) {
         event.preventDefault();
         return;
       }
@@ -311,7 +309,7 @@ function useFocusController() {
           end: new Date(Math.max(trustedEnd, startedAt + 1000)).toISOString(),
           target: target.trim(),
         });
-        setCalendarMessage("Switched target · saving previous focus block…");
+        setCalendarMessage("switching");
       }
 
       if (changingTarget) setElapsed(0);
@@ -329,7 +327,7 @@ function useFocusController() {
     };
     window.addEventListener("scholarbuddy-start-focus", start);
     return () => window.removeEventListener("scholarbuddy-start-focus", start);
-  }, [activeTaskId, elapsed, queueCalendarBlock, startedAt, target]);
+  }, [activeTaskId, elapsed, queueCalendarBlock, startedAt, t, target]);
   const syncPending = useCallback(async (blocks: FocusCalendarBlock[]) => {
     if (!blocks.length || syncingRef.current) return;
     syncingRef.current = true;
@@ -368,12 +366,12 @@ function useFocusController() {
           setPending((items) => items.filter((item) => item.id !== block.id));
           synced += 1;
         } catch {
-          setCalendarMessage("Paused · Calendar sync pending");
+          setCalendarMessage("syncPending");
           break;
         }
       }
       if (synced) {
-        setCalendarMessage("Paused · saved to Calendar");
+        setCalendarMessage("synced");
         window.dispatchEvent(new Event("scholarbuddy-calendar-refresh"));
       }
     } finally {
@@ -472,9 +470,7 @@ function useFocusController() {
           });
         setElapsed((value) => value + Math.max(0, (end - startedAt) / 1000));
         setStartedAt(null);
-        setRecoveryMessage(
-          "Timer paused after an interruption. Time after the last checkpoint was not added.",
-        );
+        setRecoveryMessage("interrupted");
         return;
       }
       checkpointRef.current = Math.min(current, ledgerLimit.current ?? Infinity);
@@ -602,7 +598,7 @@ function useFocusController() {
       });
       setElapsed(plannedSeconds);
       setStartedAt(null);
-      setCalendarMessage("Goal reached · saving to Calendar…");
+      setCalendarMessage("goalSaving");
       window.dispatchEvent(
         new CustomEvent("scholarbuddy-focus-completed", {
           detail: { taskId: activeTaskId, target, plannedMinutes },
@@ -636,13 +632,10 @@ function useFocusController() {
         target: target.trim(),
       };
       setElapsed(interrupted ? elapsed + Math.max(0, (endedAt - startedAt) / 1000) : seconds);
-      if (interrupted)
-        setRecoveryMessage(
-          "Timer paused after an interruption. Time after the last checkpoint was not added.",
-        );
+      if (interrupted) setRecoveryMessage("interrupted");
       setStartedAt(null);
       queueCalendarBlock(block);
-      setCalendarMessage("Paused · saving to Calendar…");
+      setCalendarMessage("saving");
     } else {
       if (goalReached) {
         setElapsed(0);
@@ -660,24 +653,35 @@ function useFocusController() {
       setCalendarMessage("");
     }
   };
+  const started = t.focus.startedAt(
+    timeLabel(new Date(startedAt || now.getTime()).toISOString(), locale),
+  );
+  const notes = {
+    switching: t.focus.switching,
+    syncPending: t.focus.syncPending,
+    synced: t.focus.synced,
+    goalSaving: t.focus.goalSaving,
+    saving: t.focus.saving,
+  };
   const statusText = running
     ? plannedMinutes
-      ? `Started at ${timeLabel(new Date(startedAt || now.getTime()).toISOString())} · ${plannedMinutes} min goal`
-      : `Started at ${timeLabel(new Date(startedAt || now.getTime()).toISOString())}`
+      ? `${started} · ${t.focus.goal(plannedMinutes)}`
+      : started
     : goalReached
       ? syncing || pending.length
-        ? "Goal reached · saving to Calendar…"
-        : "Goal reached · choose what to do next"
+        ? t.focus.goalSaving
+        : t.focus.goalReached
       : syncing
-        ? "Paused · saving to Calendar…"
+        ? t.focus.saving
         : pending.length
-          ? `Paused · ${pending.length} Calendar sync pending`
+          ? t.focus.pending(pending.length)
           : !savesToCalendar
             ? seconds
-              ? "Paused"
-              : "Ready for a new focus session"
-            : calendarMessage ||
-              (seconds ? "Paused · saved to Calendar" : "Ready for a new focus session");
+              ? t.focus.paused
+              : t.focus.ready
+            : (calendarMessage && notes[calendarMessage]) ||
+              (seconds ? t.focus.synced : t.focus.ready);
+  const recoveryText = recoveryMessage ? t.focus[recoveryMessage] : "";
   return {
     now,
     elapsed,
@@ -702,21 +706,18 @@ function useFocusController() {
     celebrating,
     finishCelebration,
     ledgerRef,
-    recoveryMessage,
+    recoveryText,
   };
 }
 
 export function FocusPanel() {
+  const t = useT();
   const focus = useFocus();
   const elsewhere = useContext(FocusElsewhereContext);
   if (!focus)
     return (
       <article className="focus-session card">
-        <p>
-          {elsewhere
-            ? "Focus timer is active in another tab. Your saved history is available in Profile."
-            : "Preparing focus timer…"}
-        </p>
+        <p>{elsewhere ? t.focus.elsewhere : t.focus.preparing}</p>
       </article>
     );
   const {
@@ -739,33 +740,33 @@ export function FocusPanel() {
     setCalendarMessage,
     celebrating,
     finishCelebration,
-    recoveryMessage,
+    recoveryText,
   } = focus;
   return (
     <>
       <article className="focus-session card">
         <div className="focus-top">
-          <span className="label">FOCUS SESSION</span>
+          <span className="label">{t.focus.label}</span>
           <span className={running ? "live" : "paused"}>
             <i />
-            {running ? "Recording" : "Paused"}
+            {running ? t.focus.recording : t.focus.paused}
           </span>
         </div>
         <label className="focus-object">
-          <span>FOCUS TARGET</span>
+          <span>{t.focus.target}</span>
           <input
             value={target}
             onChange={(e) => setTarget(e.target.value)}
-            placeholder="What are you focusing on?"
+            placeholder={t.focus.targetPlaceholder}
           />
-          <small>
-            {plannedMinutes ? `${plannedMinutes}-minute countdown` : "Open-ended session"}
-          </small>
+          <small>{plannedMinutes ? t.focus.countdown(plannedMinutes) : t.focus.openEnded}</small>
         </label>
-        <h2 aria-label={plannedMinutes ? `${label} remaining` : `${label} elapsed`}>{label}</h2>
+        <h2 aria-label={plannedMinutes ? t.focus.remaining(label) : t.focus.elapsed(label)}>
+          {label}
+        </h2>
         <p>
           {statusText}
-          {recoveryMessage && <small className="focus-recovery">{recoveryMessage}</small>}
+          {recoveryText && <small className="focus-recovery">{recoveryText}</small>}
         </p>
         <div className={`focus-wave ${running ? "active" : ""}`} aria-hidden="true">
           {[
@@ -779,14 +780,16 @@ export function FocusPanel() {
           <button
             aria-label={
               running
-                ? "Pause focus session"
+                ? t.focus.pause
                 : goalReached
-                  ? "Continue focus session without a time limit"
+                  ? t.focus.continue
                   : seconds
-                    ? "Resume focus session"
-                    : "Start focus session"
+                    ? t.focus.resume
+                    : t.focus.start
             }
-            title={running ? "Pause session" : seconds ? "Resume session" : "Start session"}
+            title={
+              running ? t.focus.pauseShort : seconds ? t.focus.resumeShort : t.focus.startShort
+            }
             aria-pressed={running}
             onClick={toggle}
           >
@@ -797,8 +800,8 @@ export function FocusPanel() {
           </button>
           {pending.length ? (
             <button
-              aria-label="Retry Calendar sync"
-              title="Retry Calendar"
+              aria-label={t.focus.retrySync}
+              title={t.focus.retrySync}
               disabled={syncing}
               onClick={() => void syncPending(pending)}
             >
@@ -808,8 +811,8 @@ export function FocusPanel() {
             </button>
           ) : (
             <button
-              aria-label="Reset focus timer"
-              title="Reset"
+              aria-label={t.focus.reset}
+              title={t.focus.resetShort}
               disabled={!seconds || running}
               onClick={() => {
                 setElapsed(0);

@@ -1,5 +1,6 @@
 "use client";
 
+import { useT } from "../../i18n";
 import { BrandLogo } from "../BrandLogo";
 
 export function LandingModule({
@@ -13,149 +14,138 @@ export function LandingModule({
   openConnections: () => void;
   openGuide: () => void;
 }) {
+  const t = useT();
   return (
     <article className="landing-page">
       <section className="landing-hero">
         <div className="landing-hero-copy">
-          <span className="eyebrow">SCHOLARBUDDY · SPORTS RESEARCH OS</span>
-          <h1>Keep today’s work connected to the paper it moves forward.</h1>
-          <p>
-            Plan the next concrete output, work with your research context, and keep deadlines,
-            evidence, and decisions in one local-first workspace.
-          </p>
+          <span className="eyebrow">{t.landing.eyebrow}</span>
+          <h1>{t.landing.title}</h1>
+          <p>{t.landing.lead}</p>
           <div className="landing-actions">
-            <button className="primary-button" onClick={enterWorkbench}>
-              Enter workbench <b>→</b>
+            <button className="quiet-button" onClick={enterWorkbench}>
+              {t.landing.enter}
             </button>
             <button className="quiet-button" onClick={openConnections}>
-              Review connections
+              {t.landing.connections}
             </button>
-            <button className="quiet-button" onClick={openGuide}>
-              User Guide
+            <button className="primary-button" onClick={openGuide}>
+              {t.landing.guide} <b>→</b>
             </button>
           </div>
         </div>
-        <div className="landing-demo card" aria-label="Demonstration of the Today workspace">
+        <div className="landing-demo card" aria-label={t.landing.demoAria}>
           <header>
-            <span>DEMO WORKSPACE</span>
-            <b>Today</b>
+            <span>{t.landing.demo}</span>
+            <b>{t.landing.today}</b>
           </header>
           <section>
-            <span>NEXT OUTPUT</span>
-            <h2>Revise the discussion around match-load uncertainty</h2>
-            <p>Flexible focus block · linked to Paper 02</p>
+            <span>{t.landing.nextOutput}</span>
+            <h2>{t.landing.demoTask}</h2>
+            <p>{t.landing.demoMeta}</p>
             <i>
               <em />
             </i>
           </section>
           <div>
             <span>
-              <i /> 09:30 Supervisor meeting
+              <i /> {t.landing.demoMeeting}
             </span>
             <span>
-              <i /> 14:00 Analysis review
+              <i /> {t.landing.demoReview}
             </span>
           </div>
         </div>
       </section>
 
       <section className="landing-section" aria-labelledby="landing-scenarios">
-        <span className="eyebrow">THREE WORKING SURFACES</span>
-        <h2 id="landing-scenarios">Move from intention to a recorded result.</h2>
+        <span className="eyebrow">{t.landing.surfaces}</span>
+        <h2 id="landing-scenarios">{t.landing.surfacesTitle}</h2>
         <div className="landing-scenarios">
           <button onClick={() => openModule("dashboard")}>
             <span>01</span>
-            <strong>Arrange today</strong>
-            <p>Put the next output beside real calendar commitments and start a focus block.</p>
-            <b>Open Today →</b>
+            <strong>{t.landing.arrange}</strong>
+            <p>{t.landing.arrangeText}</p>
+            <b>{t.landing.openToday}</b>
           </button>
           <button onClick={() => openModule("manuscript")}>
             <span>02</span>
-            <strong>Advance a paper</strong>
-            <p>Keep evidence, reviewer feedback, revisions, and submission history together.</p>
-            <b>Open Manuscripts →</b>
+            <strong>{t.landing.advance}</strong>
+            <p>{t.landing.advanceText}</p>
+            <b>{t.landing.openManuscripts}</b>
           </button>
           <button onClick={() => openModule("operations")}>
             <span>03</span>
-            <strong>See deadline pressure</strong>
-            <p>Scan PhD commitments by due date, remaining time, and current status.</p>
-            <b>Open Operations →</b>
+            <strong>{t.landing.deadlines}</strong>
+            <p>{t.landing.deadlinesText}</p>
+            <b>{t.landing.openOperations}</b>
           </button>
         </div>
       </section>
 
       <section className="landing-process card" aria-labelledby="landing-process">
         <div>
-          <span className="eyebrow">ONE RESEARCH LOOP</span>
-          <h2 id="landing-process">A clear handoff for your future self.</h2>
+          <span className="eyebrow">{t.landing.loop}</span>
+          <h2 id="landing-process">{t.landing.loopTitle}</h2>
         </div>
         <ol>
           <li>
             <span>1</span>
-            <strong>Choose one output</strong>
-            <small>Concrete enough to finish.</small>
+            <strong>{t.landing.choose}</strong>
+            <small>{t.landing.chooseText}</small>
           </li>
           <li>
             <span>2</span>
-            <strong>Work in context</strong>
-            <small>Paper, evidence, and calendar stay visible.</small>
+            <strong>{t.landing.context}</strong>
+            <small>{t.landing.contextText}</small>
           </li>
           <li>
             <span>3</span>
-            <strong>Record what changed</strong>
-            <small>Save the decision, result, or next step.</small>
+            <strong>{t.landing.record}</strong>
+            <small>{t.landing.recordText}</small>
           </li>
         </ol>
       </section>
 
       <section className="landing-section" aria-labelledby="landing-connections">
-        <span className="eyebrow">LOCAL RESEARCH SYSTEMS</span>
-        <h2 id="landing-connections">Your tools remain the sources of truth.</h2>
+        <span className="eyebrow">{t.landing.systems}</span>
+        <h2 id="landing-connections">{t.landing.systemsTitle}</h2>
         <div className="landing-integrations">
           <article>
             <BrandLogo brand="obsidian" />
             <strong>Obsidian</strong>
-            <p>Readable project, paper, deadline, and research-log records.</p>
+            <p>{t.landing.obsidian}</p>
           </article>
           <article>
             <BrandLogo brand="zotero" />
             <strong>Zotero</strong>
-            <p>Live literature search, saved readings, and citable highlighted passages.</p>
+            <p>{t.landing.zotero}</p>
           </article>
           <article>
             <BrandLogo brand="calendar" />
-            <strong>Calendar</strong>
-            <p>Today’s commitments and optional local reminders without copying event notes.</p>
+            <strong>{t.landing.calendar}</strong>
+            <p>{t.landing.calendarText}</p>
           </article>
         </div>
       </section>
 
       <section className="landing-faq card" aria-labelledby="landing-faq">
         <div>
-          <span className="eyebrow">START USING IT</span>
-          <h2 id="landing-faq">What to know first.</h2>
+          <span className="eyebrow">{t.landing.start}</span>
+          <h2 id="landing-faq">{t.landing.faqTitle}</h2>
         </div>
         <div>
           <details>
-            <summary>Where is research data saved?</summary>
-            <p>
-              ScholarBuddy keeps its research records as readable Markdown in your configured
-              Obsidian vault. Daily focus preferences remain on this device.
-            </p>
+            <summary>{t.landing.q1}</summary>
+            <p>{t.landing.a1}</p>
           </details>
           <details>
-            <summary>Do connections leave this Mac?</summary>
-            <p>
-              The local Bridge connects the workbench to Obsidian, Zotero, Calendar, and your
-              configured AI providers. Pairing controls which browser may use it.
-            </p>
+            <summary>{t.landing.q2}</summary>
+            <p>{t.landing.a2}</p>
           </details>
           <details>
-            <summary>Are reminders required?</summary>
-            <p>
-              No. Calendar and PhD deadline reminders are optional and off by default. Each category
-              can be controlled separately.
-            </p>
+            <summary>{t.landing.q3}</summary>
+            <p>{t.landing.a3}</p>
           </details>
         </div>
       </section>

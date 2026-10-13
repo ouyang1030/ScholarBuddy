@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { bridgeFetch, bridgeHealthFetch, exchangeBridgePairingCode } from "./lib/bridge-client";
 import { compareRecords } from "../shared/records.mjs";
 import {
-  collectionLabels,
   emptyState,
   isOpen,
   navItems,
@@ -26,6 +25,8 @@ import type {
 } from "./types";
 import { PaperCelebration, type PaperMilestone } from "./components/Celebrations";
 import { confirmDiscard, SourceDot } from "./components/primitives";
+import { LanguageSwitch } from "./components/LanguageSwitch";
+import { bridgeFailure, failureText, useT } from "./i18n";
 import { useOverlayFocus } from "./components/useOverlayFocus";
 import { RecordEditor, type EditorState } from "./components/drawers/RecordEditor";
 import { ActionDrawer } from "./components/drawers/ActionDrawer";
@@ -84,7 +85,14 @@ function Workbench() {
   const [state, setState] = useState<WorkbenchState>(emptyState);
   const [invalidRecords, setInvalidRecords] = useState<InvalidRecord[]>([]);
   const [loading, setLoading] = useState(true);
-  const [dataError, setDataError] = useState("");
+  const t = useT();
+  // For the few handlers registered once at mount: they must speak the language
+  // the page is in when they fire, not the one it was in when they were set up.
+  const tRef = useRef(t);
+  useEffect(() => {
+    tRef.current = t;
+  }, [t]);
+  const [dataError, setDataError] = useState<unknown>(null);
   const bridgeIssueRef = useRef<BridgeIssue>(null);
   const offlineTicksRef = useRef(0);
   const [editor, setEditor] = useState<EditorState>(null);
@@ -126,11 +134,11 @@ function Workbench() {
     const controller = new AbortController();
     stateRequestRef.current = controller;
     setLoading(true);
-    setDataError("");
+    setDataError(null);
     try {
       const response = await bridgeFetch(`/workbench/state`, { signal: controller.signal });
       const body = await response.json();
-      if (!response.ok) throw new Error(body.error);
+      if (!response.ok) throw bridgeFailure(body, "");
       // Notes the Bridge could not load travel beside the collections, not in them.
       const { invalid, ...collections } = body as Partial<WorkbenchState> & {
         invalid?: InvalidRecord[];
@@ -149,7 +157,7 @@ function Workbench() {
       });
     } catch (e) {
       if (controller.signal.aborted) return;
-      setDataError(e instanceof Error ? e.message : "Obsidian data could not be loaded.");
+      setDataError(e);
     } finally {
       if (stateRequestRef.current === controller) {
         stateRequestRef.current = null;
@@ -216,14 +224,14 @@ function Workbench() {
     void exchangeBridgePairingCode(code)
       .then(async () => {
         const connected = await loadStatus();
-        if (!connected) throw new Error("Pairing could not be verified.");
+        if (!connected) throw new Error("unverified");
         await loadState();
         setConnectionsOpen(false);
-        setToast("This browser is connected to your Mac Bridge");
+        setToast(tRef.current.shell.paired);
       })
       .catch(() => {
         setConnectionsOpen(true);
-        setToast("Automatic pairing failed — open Connections to try again");
+        setToast(tRef.current.shell.pairingFailed);
       });
   }, []);
   // Records change with every save, but /status probes each provider and spawns
@@ -280,8 +288,8 @@ function Workbench() {
         // something stacked above one, it leaves that work where it is.
         const top = topOverlayRef.current;
         const unsaved = unsavedRef.current;
-        if (top === "editor" && unsaved.editor && !confirmDiscard("record")) return;
-        if (top === "action" && unsaved.action && !confirmDiscard("answer")) return;
+        if (top === "editor" && unsaved.editor && !confirmDiscard(tRef.current, "record")) return;
+        if (top === "action" && unsaved.action && !confirmDiscard(tRef.current, "answer")) return;
         setCommandOpen(false);
         if (top === "editor" || !unsaved.editor) setEditor(null);
         if (top === "action" || !unsaved.action) setAction(null);
@@ -303,11 +311,10 @@ function Workbench() {
     [],
   );
   useEffect(() => {
-    const requirePairing = () =>
-      setToast("Local research sources are offline — Today remains available.");
+    const requirePairing = () => setToast(t.shell.offline);
     window.addEventListener("scholarbuddy-pairing-required", requirePairing);
     return () => window.removeEventListener("scholarbuddy-pairing-required", requirePairing);
-  }, []);
+  }, [t]);
   // Overlays may stack (the AI drawer opens Connections without closing itself),
   // so the topmost one is chosen by stacking order and gets the ref.
   const overlayRef = useRef<HTMLElement | null>(null);
@@ -387,7 +394,7 @@ function Workbench() {
     milestone: "Accepted" | "Published",
   ) => {
     const id = String(paper.id || "").trim();
-    const title = String(paper.title || "Untitled manuscript").trim();
+    const title = String(paper.title || t.shell.untitledPaper).trim();
     const journal = String(paper.journal || "").trim();
     if (!id) return;
     let celebrated: string[] = [];
@@ -423,7 +430,7 @@ function Workbench() {
         body: JSON.stringify({ collection, record }),
       });
       const body = await response.json();
-      if (!response.ok) throw new Error(body.error || "Record could not be saved.");
+      if (!response.ok) throw bridgeFailure(body, t.errors.saveFailed);
       const saved = body.record as RecordItem;
       setState((current) => {
         // Sorted the way the Bridge sorts it, so a saved record takes its place
@@ -441,7 +448,7 @@ function Workbench() {
               : records,
         };
       });
-      setToast(`${collectionLabels[collection]} saved to Obsidian`);
+      setToast(t.shell.savedRecord(t.collections[collection]));
       if (
         collection === "manuscripts" &&
         (saved.stage === "Accepted" || saved.stage === "Published") &&
@@ -486,12 +493,12 @@ function Workbench() {
         }),
       });
       const body = await response.json();
-      if (!response.ok) throw new Error(body.error || "Record could not be deleted.");
+      if (!response.ok) throw bridgeFailure(body, t.errors.deleteFailed);
       setState((current) => ({
         ...current,
         [collection]: current[collection].filter((item) => item.id !== record.id),
       }));
-      setToast(`${collectionLabels[collection]} permanently deleted`);
+      setToast(t.shell.deletedRecord(t.collections[collection]));
     } finally {
       recordMutationsRef.current -= 1;
     }
@@ -507,19 +514,19 @@ function Workbench() {
         body: JSON.stringify(record),
       });
       const body = await response.json();
-      if (!response.ok) throw new Error(body.error || "Submission event could not be saved.");
+      if (!response.ok) throw bridgeFailure(body, t.errors.saveFailed);
       event = body.event as RecordItem & { verificationOnly?: boolean };
     } finally {
       recordMutationsRef.current -= 1;
     }
     await loadState();
-    setToast(event.verificationOnly ? "Submission check saved" : "Submission timeline updated");
+    setToast(event.verificationOnly ? t.shell.checkSaved : t.shell.timelineUpdated);
     if (!event.verificationOnly && (event.status === "Accepted" || event.status === "Published")) {
       const manuscript = state.manuscripts.find((item) => item.id === event.manuscriptId);
       showPaperCelebration(
         manuscript || {
           id: event.manuscriptId || record.manuscriptId,
-          title: record.manuscriptTitle || "Paper milestone",
+          title: record.manuscriptTitle || t.shell.milestone,
         },
         event.status,
       );
@@ -535,12 +542,12 @@ function Workbench() {
         body: JSON.stringify({ attemptId }),
       });
       const body = await response.json();
-      if (!response.ok) throw new Error(body.error || "Submission check could not be saved.");
+      if (!response.ok) throw bridgeFailure(body, t.errors.saveFailed);
     } finally {
       recordMutationsRef.current -= 1;
     }
     await loadState();
-    setToast("Submission check saved");
+    setToast(t.shell.checkSaved);
   };
   const syncSubmissionEmail = async () => {
     recordMutationsRef.current += 1;
@@ -554,7 +561,7 @@ function Workbench() {
         signal: AbortSignal.timeout(40000),
       });
       const body = await response.json();
-      if (!response.ok) throw new Error(body.error || "Mail could not be checked.");
+      if (!response.ok) throw bridgeFailure(body, t.manuscript.mailFailed);
       result = body as SubmissionSyncResult;
     } finally {
       recordMutationsRef.current -= 1;
@@ -564,7 +571,7 @@ function Workbench() {
       if (event.status !== "Accepted" && event.status !== "Published") continue;
       const manuscript = state.manuscripts.find((item) => item.id === event.manuscriptId);
       showPaperCelebration(
-        manuscript || { id: event.manuscriptId, title: event.manuscriptTitle || "Paper milestone" },
+        manuscript || { id: event.manuscriptId, title: event.manuscriptTitle || t.shell.milestone },
         event.status,
       );
     }
@@ -572,12 +579,7 @@ function Workbench() {
   };
   const openEditor = (collection: CollectionKey, record?: Partial<RecordItem>) =>
     setEditor({ collection, record });
-  const activeLabel =
-    active === "profile"
-      ? "Profile"
-      : active === "about"
-        ? "About ScholarBuddy"
-        : navItems.find((item) => item.key === active)?.label || "Today";
+  const activeLabel = t.nav[active];
   const activePaper =
     state.manuscripts.find((item) => item.id === paperContextId) || state.manuscripts[0];
   const openPaper = (
@@ -615,9 +617,11 @@ function Workbench() {
   const commands = useMemo(
     () =>
       quickActions.filter((item) =>
-        `${item.label} ${item.meta} ${item.command}`.toLowerCase().includes(query.toLowerCase()),
+        `${t.actions[item.command as keyof typeof t.actions].label} ${t.actions[item.command as keyof typeof t.actions].meta} ${item.command}`
+          .toLowerCase()
+          .includes(query.toLowerCase()),
       ),
-    [query],
+    [query, t],
   );
   const props: DataProps = { state, openEditor, saveRecord, runAction: setAction };
   return (
@@ -648,7 +652,6 @@ function Workbench() {
           </button>
         </div>
         <nav>
-          <span className="nav-label">RESEARCH WORKBENCH</span>
           {navItems.map((item) => (
             <button
               key={item.key}
@@ -661,7 +664,7 @@ function Workbench() {
               }}
             >
               <span className="nav-icon">{item.icon}</span>
-              <span>{item.label}</span>
+              <span>{t.nav[item.key]}</span>
               {Boolean(badges[item.key]) && <b>{badges[item.key]}</b>}
             </button>
           ))}
@@ -676,11 +679,11 @@ function Workbench() {
             }}
           >
             <span className="nav-icon">◇</span>
-            <span>About ScholarBuddy</span>
+            <span>{t.nav.about}</span>
           </button>
           <button onClick={() => setConnectionsOpen(true)}>
             <span className="nav-icon">⚙</span>
-            <span>Connections</span>
+            <span>{t.nav.connections}</span>
           </button>
           <button
             className={`sync-status ${status ? "" : "offline"} ${active === "profile" ? "active" : ""}`}
@@ -695,18 +698,18 @@ function Workbench() {
               <b />
             </span>
             <span>
-              <strong>Profile</strong>
+              <strong>{t.nav.profile}</strong>
               <small>
                 <SourceDot tone={status ? "green" : "orange"} />
                 {status
-                  ? "Local bridge connected"
+                  ? t.shell.bridgeConnected
                   : bridgeIssue === "unreachable"
-                    ? "Bridge unreachable · open in a Mac browser"
+                    ? t.shell.bridgeUnreachable
                     : bridgeIssue === "pairing"
-                      ? "Bridge pairing required"
+                      ? t.shell.bridgePairing
                       : bridgeIssue === "origin"
-                        ? "Bridge origin blocked"
-                        : "Bridge offline · Today still works"}
+                        ? t.shell.bridgeOrigin
+                        : t.shell.bridgeOffline}
               </small>
             </span>
           </button>
@@ -718,21 +721,22 @@ function Workbench() {
             <button className="mobile-menu" onClick={() => setMobileNav(true)}>
               ☰
             </button>
-            <span>Research Workbench</span>
+            <span>{t.shell.workbench}</span>
             <b>/</b>
             <strong>{activeLabel}</strong>
           </div>
           <button className="command-trigger" onClick={() => setCommandOpen(true)}>
             <span>⌕</span>
-            <span>Search commands or AI assists…</span>
+            <span>{t.shell.search}</span>
             <kbd>⌘ K</kbd>
           </button>
           <div className="top-actions">
             <button
               className="icon-button"
+              aria-label={t.shell.refreshData}
               onClick={() => {
                 void loadStatus(true).then(() => loadState());
-                setToast("Refreshing real data");
+                setToast(t.shell.refreshing);
               }}
             >
               ↻
@@ -740,36 +744,25 @@ function Workbench() {
             <button className="context-button" onClick={() => setContextOpen(true)}>
               <span className="context-diamond">◇</span>
               <span>
-                <small>CONTEXT</small>
-                <strong>{Object.values(state).flat().length} records</strong>
+                <small>{t.shell.context}</small>
+                <strong>{t.shell.records(Object.values(state).flat().length)}</strong>
               </span>
             </button>
-            <button
-              className="profile-button"
-              aria-label="Open Profile"
-              onClick={() => setActive("profile")}
-            >
-              DR
-            </button>
+            <LanguageSwitch />
           </div>
         </header>
         <main className="content">
           <div className="module-view" key={active}>
-            {active !== "profile" && dataError && (
+            {active !== "profile" && Boolean(dataError) && (
               <div className="data-banner compact-banner">
                 <span>!</span>
-                <p>{dataError} Today’s local focus tools remain available.</p>
-                <button onClick={loadState}>Retry</button>
+                <p>{failureText(t, dataError, t.shell.loadFailed)}</p>
+                <button onClick={loadState}>{t.common.retry}</button>
               </div>
             )}
             {active !== "profile" && invalidRecords.length > 0 && (
               <details className="data-banner compact-banner invalid-records">
-                <summary>
-                  {invalidRecords.length === 1
-                    ? "1 note in your vault could not be loaded."
-                    : `${invalidRecords.length} notes in your vault could not be loaded.`}{" "}
-                  Everything else is shown as usual.
-                </summary>
+                <summary>{t.shell.invalidNotes(invalidRecords.length)}</summary>
                 <ul>
                   {invalidRecords.map((item) => (
                     <li key={`${item.collection}/${item.file}`}>
@@ -785,7 +778,7 @@ function Workbench() {
             {active !== "profile" && loading && !Object.values(state).flat().length && (
               <div className="loading-bar">
                 <i />
-                Loading Obsidian records…
+                {t.shell.loading}
               </div>
             )}
             {active === "profile" && (
@@ -797,7 +790,6 @@ function Workbench() {
             {active === "dashboard" && (
               <Dashboard
                 {...props}
-                openContext={() => setContextOpen(true)}
                 openManuscripts={() => openPaper()}
                 submissionAlerts={visibleSubmissionAlerts}
                 openSubmissionAlert={openSubmissionAlert}
@@ -907,7 +899,7 @@ function Workbench() {
             className="command-palette"
             role="dialog"
             aria-modal="true"
-            aria-label="Commands and AI assists"
+            aria-label={t.shell.assists}
             tabIndex={-1}
             onMouseDown={(e) => e.stopPropagation()}
           >
@@ -917,12 +909,12 @@ function Workbench() {
                 autoFocus
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search commands or AI assists…"
+                placeholder={t.shell.search}
               />
               <kbd>ESC</kbd>
             </div>
             <div className="command-results">
-              <span className="label">CONTEXTUAL AI ASSISTS</span>
+              <span className="label">{t.shell.assists}</span>
               {commands.map((item) => (
                 <button
                   key={item.command}
@@ -934,10 +926,10 @@ function Workbench() {
                 >
                   <span className={`action-mark ${item.tone}`}>✦</span>
                   <span>
-                    <strong>{item.label}</strong>
+                    <strong>{t.actions[item.command as keyof typeof t.actions].label}</strong>
                     <small>{item.command}</small>
                   </span>
-                  <b>{item.meta}</b>
+                  <b>{t.actions[item.command as keyof typeof t.actions].meta}</b>
                 </button>
               ))}
             </div>

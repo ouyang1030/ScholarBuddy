@@ -1,3 +1,5 @@
+import { bridgeFailure } from "../i18n";
+
 const configuredPort = Number(process.env.NEXT_PUBLIC_SCHOLARBUDDY_BRIDGE_PORT || 32145);
 const port =
   Number.isInteger(configuredPort) && configuredPort >= 1024 && configuredPort <= 65535
@@ -21,13 +23,27 @@ export function bridgeBaseUrl() {
   return saved && bridgeUrls.includes(saved) ? saved : bridgeUrls[0];
 }
 
+// The Bridge answers in the interface language, which the page keeps on <html lang>.
+// Accept-Language needs no CORS permission, so a Bridge that predates this still
+// accepts the request and simply answers in English.
+function interfaceLanguage() {
+  return typeof document !== "undefined" && document.documentElement.lang.startsWith("zh")
+    ? "zh"
+    : "en";
+}
+
 export function bridgeSetupUrl() {
   if (typeof window === "undefined") return `${bridgeUrls[0]}/setup`;
-  return `${bridgeBaseUrl()}/setup?return=${encodeURIComponent(window.location.origin)}`;
+  return `${bridgeBaseUrl()}/setup?lang=${interfaceLanguage()}&return=${encodeURIComponent(window.location.origin)}`;
+}
+
+export function bridgePairUrl() {
+  return `${bridgeBaseUrl()}/pair?lang=${interfaceLanguage()}`;
 }
 
 function authorizedHeaders(init?: HeadersInit) {
   const headers = new Headers(init);
+  headers.set("Accept-Language", interfaceLanguage() === "zh" ? "zh-CN" : "en");
   const token = bridgeToken();
   if (token) headers.set("Authorization", `Bearer ${token}`);
   return headers;
@@ -91,9 +107,9 @@ export async function exchangeBridgePairingCode(code: string) {
         body: JSON.stringify({ code: clean }),
         signal: AbortSignal.timeout(5_000),
       });
-      const body = (await response.json()) as { token?: string; error?: string };
+      const body = (await response.json()) as { token?: string; error?: string; code?: string };
       if (!response.ok || !body.token)
-        throw new Error(body.error || "That pairing code is invalid or expired.");
+        throw bridgeFailure(body, "That pairing code is invalid or expired.");
       window.localStorage.setItem("scholarbuddy-bridge-url", base);
       window.localStorage.setItem("scholarbuddy-bridge-token", body.token);
       return body.token;
