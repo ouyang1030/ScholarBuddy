@@ -9,6 +9,7 @@ All notable changes will be documented here. This project follows semantic versi
 - The interface is available in English and Simplified Chinese. Switch with **EN | 中文** in the top bar; the choice is kept in a `scholarbuddy-locale` cookie, and without one the browser's language decides. The page is rendered in that language from the first frame.
 - AI answers follow the interface language. Drafting and reviewing a manuscript section (`@write-section`, `@reviewer-critique`) stay in English; citation markers and the action block are unchanged in either language.
 - The Bridge speaks the same language. The setup and pairing pages open in the interface language and have their own **EN | 中文** switch. Unreadable-note reasons, vault and mail coverage notes, activity warnings, and Bridge errors follow the language of each request. Reminder notifications use the language the workbench last used with this Bridge, and the helper's macOS permission prompt has a Chinese version.
+- Profile has an **Operations** tab between Focus and AI activity. It shows the focus time spent on operations, by day, by type, and by operation, and as a share of all focus. Time is counted from sessions started with **Focus** on an operation card; typing a new focus target ends the link. The activity ledger keeps only the operation's id and type with each session.
 
 ### Changed
 

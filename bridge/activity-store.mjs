@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { writeFileAtomic } from "./atomic-file.mjs";
 import { activitySeries, dayKey, focusDays, streaks } from "../shared/activity.mjs";
+import { RECORD_ID } from "./record-schema.mjs";
 import { repoRoot } from "./config.mjs";
 import { t } from "./i18n.mjs";
 
@@ -163,6 +164,16 @@ export function createActivityStore(directory, options = {}) {
           status: ["running", "saved", "gap", "confirmed", "dismissed"].includes(event.status)
             ? event.status
             : "saved",
+          // Which operation the time went to. A malformed link is dropped, not
+          // the time: it still counts as focus. The type is kept as written, as
+          // the editor keeps a type typed by hand in Obsidian.
+          ...(typeof event.operationId === "string" && RECORD_ID.test(event.operationId)
+            ? { operationId: event.operationId }
+            : {}),
+          ...(typeof event.operationType === "string" &&
+          /^[^\x00-\x1f\x7f]{1,60}$/.test(event.operationType)
+            ? { operationType: event.operationType }
+            : {}),
         });
       }
       await mutate((draft) => {

@@ -3,7 +3,7 @@
 import { copyFile, mkdir, readFile, readdir, rm, unlink } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
-import { coerceStoredRecord, decodeRecord } from "./record-schema.mjs";
+import { RECORD_ID, coerceStoredRecord, decodeRecord } from "./record-schema.mjs";
 import { RECORD_COLLECTIONS, RECORD_ID_PREFIXES } from "../shared/constants.mjs";
 import { compareRecords } from "../shared/records.mjs";
 import { writeFileAtomic } from "./atomic-file.mjs";
@@ -38,7 +38,7 @@ function safeCollection(value) {
 
 export function safeRecordId(value) {
   const id = String(value || "").trim();
-  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(id)) {
+  if (!RECORD_ID.test(id)) {
     throw httpError(422, "Invalid ScholarBuddy record id.");
   }
   return id;

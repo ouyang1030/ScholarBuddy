@@ -21,6 +21,7 @@ type FocusController = ReturnType<typeof useFocusController>;
 const FocusContext = createContext<FocusController | null>(null);
 const FocusElsewhereContext = createContext(false);
 export const useFocus = () => useContext(FocusContext);
+export const useFocusElsewhere = () => useContext(FocusElsewhereContext);
 // Throttled background tabs wake about once a minute, so a missed checkpoint only
 // counts as an interruption well beyond that.
 const FOCUS_INTERRUPTION_MS = 150_000;
@@ -109,6 +110,16 @@ function writeFocusCelebration(state: FocusCelebrationState) {
   window.localStorage.setItem(FOCUS_CELEBRATION_KEY, JSON.stringify(state));
 }
 
+// The operation a session is filed under, so its time shows up as that
+// operation's effort in Profile.
+type FocusOperation = { id: string; type: string };
+function readOperation(value: unknown): FocusOperation | null {
+  const item = value as Partial<FocusOperation> | null;
+  return item && typeof item.id === "string" && item.id
+    ? { id: item.id, type: typeof item.type === "string" ? item.type : "" }
+    : null;
+}
+
 type CalendarNote = "" | "switching" | "syncPending" | "synced" | "goalSaving" | "saving";
 type RecoveryNote = "" | "restored" | "interrupted";
 
@@ -120,6 +131,7 @@ function useFocusController() {
   const [startedAt, setStartedAt] = useState<number | null>(null);
   const [target, setTarget] = useState("");
   const [activeTaskId, setActiveTaskId] = useState<number | null>(null);
+  const [operation, setOperation] = useState<FocusOperation | null>(null);
   const [plannedMinutes, setPlannedMinutes] = useState<number | null>(null);
   const [focusDate, setFocusDate] = useState(() => localDateKey(new Date()));
   const [pending, setPending] = useState<FocusCalendarBlock[]>([]);
@@ -137,6 +149,8 @@ function useFocusController() {
     if (calendarRef.current) setPending((items) => [...items, block]);
   }, []);
   const ledgerRef = useRef<FocusSegment | null>(null);
+  // The run (its startedAt) the open ledger segment belongs to.
+  const ledgerRunRef = useRef<number | null>(null);
   const ledgerLimit = useRef<number | null>(null);
   const checkpointRef = useRef(0);
   const [checkpointTick, setCheckpointTick] = useState(0);
@@ -191,6 +205,7 @@ function useFocusController() {
           if (saved.startedAt) setRecoveryMessage("restored");
           setTarget(String(saved.target || ""));
           setActiveTaskId(Number(saved.activeTaskId) || null);
+          setOperation(readOperation(saved.operation));
           setPlannedMinutes(Number(saved.plannedMinutes) || null);
           setFocusDate(today);
           setPending(calendarRef.current ? savedPending : []);
@@ -201,6 +216,8 @@ function useFocusController() {
           setStartedAt(null);
           setTarget(String(saved.target || ""));
           setActiveTaskId(null);
+          // Daily tasks end with their day; an operation runs until it is done.
+          setOperation(readOperation(saved.operation));
           setPlannedMinutes(null);
           setFocusDate(today);
           setPending(pendingItems);
@@ -248,6 +265,7 @@ function useFocusController() {
           checkpointAt: startedAt ? checkpointRef.current : null,
           target,
           activeTaskId,
+          operation,
           plannedMinutes,
           pending,
         }),
@@ -256,6 +274,7 @@ function useFocusController() {
     activeTaskId,
     elapsed,
     focusDate,
+    operation,
     pending,
     plannedMinutes,
     ready,
@@ -281,6 +300,8 @@ function useFocusController() {
         event as CustomEvent<{
           target?: string;
           taskId?: number | null;
+          operationId?: string;
+          operationType?: string;
           plannedMinutes?: number | null;
         }>
       ).detail;
@@ -288,10 +309,17 @@ function useFocusController() {
       const currentTime = Date.now();
       const currentDay = localDateKey(new Date(currentTime));
       const nextTaskId = Number(detail.taskId) || null;
+      const nextOperation = readOperation({ id: detail.operationId, type: detail.operationType });
       const nextMinutes = Number(detail.plannedMinutes) || null;
+      // Like a task, an operation is the same target under a new title.
+      const sameOperation = Boolean(operation && operation.id === nextOperation?.id);
       const changingTarget =
         (activeTaskId && nextTaskId && activeTaskId !== nextTaskId) ||
-        (!activeTaskId && target.trim() && target.trim() !== detail.target.trim());
+        (operation?.id || "") !== (nextOperation?.id || "") ||
+        (!activeTaskId &&
+          !sameOperation &&
+          target.trim() &&
+          target.trim() !== detail.target.trim());
 
       if ((startedAt || elapsed) && changingTarget && !window.confirm(t.focus.switchConfirm)) {
         event.preventDefault();
@@ -315,6 +343,7 @@ function useFocusController() {
       if (changingTarget) setElapsed(0);
       setTarget(detail.target);
       setActiveTaskId(nextTaskId);
+      setOperation(nextOperation);
       setPlannedMinutes(nextMinutes ? Math.max(1, Math.min(480, Math.round(nextMinutes))) : null);
       setFocusDate((prevDate) => {
         if (prevDate !== currentDay) {
@@ -327,7 +356,7 @@ function useFocusController() {
     };
     window.addEventListener("scholarbuddy-start-focus", start);
     return () => window.removeEventListener("scholarbuddy-start-focus", start);
-  }, [activeTaskId, elapsed, queueCalendarBlock, startedAt, t, target]);
+  }, [activeTaskId, elapsed, operation, queueCalendarBlock, startedAt, t, target]);
   const syncPending = useCallback(async (blocks: FocusCalendarBlock[]) => {
     if (!blocks.length || syncingRef.current) return;
     syncingRef.current = true;
@@ -411,7 +440,10 @@ function useFocusController() {
   useEffect(() => {
     if (!ready) return;
     const previous = ledgerRef.current;
-    if (previous && (!startedAt || Date.parse(previous.startedAt) !== startedAt)) {
+    // A segment belongs to one run and one operation, so unlinking the operation
+    // mid-run closes it and the rest of the run continues as a new segment.
+    const sameRun = Boolean(previous && startedAt && ledgerRunRef.current === startedAt);
+    if (previous && (!sameRun || (previous.operationId || "") !== (operation?.id || ""))) {
       const interrupted = Date.now() - checkpointRef.current > FOCUS_INTERRUPTION_MS;
       const end = Math.min(
         interrupted ? checkpointRef.current : Date.now(),
@@ -432,19 +464,23 @@ function useFocusController() {
         : null;
     if (startedAt && !ledgerRef.current) {
       checkpointRef.current = Date.now();
+      const segmentStart = sameRun ? checkpointRef.current : startedAt;
+      ledgerRunRef.current = startedAt;
       const segment: FocusSegment = {
         segmentId: `focus-${crypto.randomUUID()}`,
         revision: 1,
-        startedAt: new Date(startedAt).toISOString(),
-        endedAt: new Date(startedAt).toISOString(),
+        startedAt: new Date(segmentStart).toISOString(),
+        endedAt: new Date(segmentStart).toISOString(),
         status: "running",
         bridgeId: focusBridgeId(),
         limitAt: ledgerLimit.current ?? undefined,
+        operationId: operation?.id,
+        operationType: operation?.type || undefined,
       };
       ledgerRef.current = segment;
       void saveFocusSegment(segment);
     }
-  }, [startedAt, ready, plannedMinutes, elapsed]);
+  }, [startedAt, ready, plannedMinutes, elapsed, operation]);
   useEffect(() => {
     if (!startedAt) return;
     const checkpoint = () => {
@@ -573,6 +609,7 @@ function useFocusController() {
       seconds,
       target,
       taskId: activeTaskId,
+      operationId: operation?.id || "",
       plannedMinutes,
     };
     const emit = () =>
@@ -580,7 +617,7 @@ function useFocusController() {
     emit();
     window.addEventListener("scholarbuddy-request-focus-state", emit);
     return () => window.removeEventListener("scholarbuddy-request-focus-state", emit);
-  }, [activeTaskId, plannedMinutes, running, seconds, target]);
+  }, [activeTaskId, operation, plannedMinutes, running, seconds, target]);
 
   useEffect(() => {
     if (!running || !plannedSeconds || seconds < plannedSeconds || !startedAt) return;
@@ -701,6 +738,8 @@ function useFocusController() {
     setElapsed,
     setStartedAt,
     setActiveTaskId,
+    operation,
+    setOperation,
     setPlannedMinutes,
     setCalendarMessage,
     celebrating,
@@ -736,6 +775,8 @@ export function FocusPanel() {
     setElapsed,
     setStartedAt,
     setActiveTaskId,
+    operation,
+    setOperation,
     setPlannedMinutes,
     setCalendarMessage,
     celebrating,
@@ -756,10 +797,17 @@ export function FocusPanel() {
           <span>{t.focus.target}</span>
           <input
             value={target}
-            onChange={(e) => setTarget(e.target.value)}
+            onChange={(e) => {
+              setTarget(e.target.value);
+              // A target typed by hand is no longer the operation it was started from.
+              setOperation(null);
+            }}
             placeholder={t.focus.targetPlaceholder}
           />
-          <small>{plannedMinutes ? t.focus.countdown(plannedMinutes) : t.focus.openEnded}</small>
+          <small>
+            {plannedMinutes ? t.focus.countdown(plannedMinutes) : t.focus.openEnded}
+            {operation ? ` · ${t.focus.forOperation}` : ""}
+          </small>
         </label>
         <h2 aria-label={plannedMinutes ? t.focus.remaining(label) : t.focus.elapsed(label)}>
           {label}
@@ -818,6 +866,7 @@ export function FocusPanel() {
                 setElapsed(0);
                 setStartedAt(null);
                 setActiveTaskId(null);
+                setOperation(null);
                 setPlannedMinutes(null);
                 setCalendarMessage("");
               }}

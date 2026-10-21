@@ -8,6 +8,10 @@ export type FocusSegment = {
   status: "running" | "saved" | "gap" | "confirmed" | "dismissed";
   limitAt?: number;
   bridgeId: string;
+  // Set when the session was started from an operation; the type is what it was
+  // filed as then, kept for when the record itself is gone.
+  operationId?: string;
+  operationType?: string;
   syncedRevision?: number;
   rejectedRevision?: number;
 };
@@ -176,6 +180,9 @@ export async function saveFocusGap(segment: FocusSegment, until = Date.now()) {
       endedAt: new Date(boundary).toISOString(),
       status: "gap",
       bridgeId: segment.bridgeId,
+      // Time confirmed later belongs to the same operation as the session it followed.
+      operationId: segment.operationId,
+      operationType: segment.operationType,
     });
     start = boundary;
   }

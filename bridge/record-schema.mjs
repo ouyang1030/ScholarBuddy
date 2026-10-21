@@ -115,8 +115,12 @@ function invalid(message) {
   throw error;
 }
 
+// The grammar of a record id, wherever one is accepted: a file name, a reference
+// between records, or a focus session's link to an operation.
+export const RECORD_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
+
 function validateReference(value) {
-  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(value)) invalid(t("records.reference"));
+  if (!RECORD_ID.test(value)) invalid(t("records.reference"));
 }
 
 // A stored note is also edited by hand and by Obsidian itself, which writes

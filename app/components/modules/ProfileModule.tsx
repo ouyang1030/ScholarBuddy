@@ -7,6 +7,7 @@ import {
   failureText,
   useLocale,
   useT,
+  valueLabel,
   type Messages,
 } from "../../i18n";
 import { bridgeFetch } from "../../lib/bridge-client";
@@ -19,8 +20,16 @@ import {
   saveFocusSegment,
   type FocusSegment,
 } from "../../lib/focus-store";
+import type { RecordItem } from "../../types";
 import { useFocus } from "../panels/FocusPanel";
-import { activitySeries, dayKey, focusDays, nextDay } from "../../../shared/activity.mjs";
+import {
+  activitySeries,
+  dayKey,
+  effortInRange,
+  focusDays,
+  nextDay,
+  operationEffort,
+} from "../../../shared/activity.mjs";
 
 type Day = {
   date: string;
@@ -57,6 +66,19 @@ type Profile = {
     days: Day[];
   };
 };
+type Effort = {
+  operationId: string;
+  operationType: string;
+  days: Day[];
+  sessions: [string, string][];
+};
+type EffortTotal = {
+  operationId: string;
+  operationType: string;
+  value: number;
+  count: number;
+  lastDate: string;
+};
 function durationLabel(t: Messages, seconds: number) {
   if (seconds > 0 && seconds < 60) return t.profile.underMinute;
   const minutes = Math.floor(seconds / 60);
@@ -69,9 +91,15 @@ const DATE_TAGS = { en: "en", zh: "zh-CN" } as const;
 export function ProfileModule({
   openConnections,
   startFocus,
+  operations,
+  openOperation,
 }: {
   openConnections: () => void;
   startFocus: () => void;
+  // Null until the vault's records have loaded, so an operation that is merely
+  // not loaded yet is never reported as deleted.
+  operations: RecordItem[] | null;
+  openOperation: (record?: RecordItem) => void;
 }) {
   const t = useT();
   const { locale } = useLocale();
@@ -88,9 +116,10 @@ export function ProfileModule({
       day: "numeric",
       timeZone: "UTC",
     });
-  const [tab, setTab] = useState<"focus" | "tokens">("focus");
+  const [tab, setTab] = useState<"focus" | "operations" | "tokens">("focus");
   const [view, setView] = useState<"daily" | "weekly" | "cumulative">("daily");
-  const [ranges, setRanges] = useState({ focus: "1y", tokens: "1y" });
+  const [ranges, setRanges] = useState({ focus: "1y", operations: "1y", tokens: "1y" });
+  const operationsTab = tab === "operations";
   const [profile, setProfile] = useState<Profile | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [loading, setLoading] = useState(true);
@@ -157,24 +186,77 @@ export function ProfileModule({
     () => local.filter((s) => !s.bridgeId || s.bridgeId === (profile?.bridgeId || focusBridgeId())),
     [local, profile?.bridgeId],
   );
-  const pending = visibleLocal.filter((s) => s.syncedRevision !== s.revision);
-  const merged = new Map((profile?.focus.segments || []).map((s) => [s.segmentId, s]));
-  for (const segment of visibleLocal) {
-    const old = merged.get(segment.segmentId);
-    if (!old || segment.revision >= old.revision) merged.set(segment.segmentId, segment);
-  }
-  const live = focus?.ledgerRef.current;
-  if (live && focus?.running) {
+  // The Operations tab speaks only for operation time, so what it says is waiting
+  // or interrupted is limited to that.
+  const pending = visibleLocal.filter(
+    (s) => s.syncedRevision !== s.revision && (!operationsTab || s.operationId),
+  );
+  const stored = useMemo(() => {
+    const merged = new Map((profile?.focus.segments || []).map((s) => [s.segmentId, s]));
+    for (const segment of visibleLocal) {
+      const old = merged.get(segment.segmentId);
+      if (!old || segment.revision >= old.revision) merged.set(segment.segmentId, segment);
+    }
+    return merged;
+  }, [profile?.focus.segments, visibleLocal]);
+  const merged = new Map(stored);
+  const live = focus?.running ? focus.ledgerRef.current : null;
+  let liveEnd = 0;
+  if (live && focus) {
     const cap = focus.plannedMinutes
       ? Date.parse(live.startedAt) + Math.max(0, focus.plannedMinutes * 60 - focus.elapsed) * 1000
       : Infinity;
-    merged.set(live.segmentId, {
-      ...live,
-      endedAt: new Date(Math.min(focus.now.getTime(), cap)).toISOString(),
-    });
+    liveEnd = Math.min(focus.now.getTime(), cap);
+    merged.set(live.segmentId, { ...live, endedAt: new Date(liveEnd).toISOString() });
   }
   const allSegments = [...merged.values()];
-  const recoveries = allSegments.filter((s) => ["gap", "confirmed"].includes(s.status));
+  const recoveries = allSegments.filter(
+    (s) => ["gap", "confirmed"].includes(s.status) && (!operationsTab || s.operationId),
+  );
+  // Operation effort is read in minutes, so a running session moves it once a
+  // minute rather than on every tick of the timer.
+  const liveFiled = live?.operationId ? live : null;
+  const liveId = liveFiled?.segmentId || "";
+  const liveStart = liveFiled?.startedAt || "";
+  const liveOperationId = liveFiled?.operationId || "";
+  const liveOperationType = liveFiled?.operationType || "";
+  const liveMinutes = liveFiled ? Math.floor((liveEnd - Date.parse(liveStart)) / 60000) : 0;
+  const operationSegments = useMemo(() => {
+    if (!operationsTab) return [];
+    const list = [...stored.values()].filter((s) => s.operationId && s.segmentId !== liveId);
+    if (liveId)
+      list.push({
+        segmentId: liveId,
+        revision: 0,
+        startedAt: liveStart,
+        endedAt: new Date(Date.parse(liveStart) + liveMinutes * 60000).toISOString(),
+        status: "running",
+        bridgeId: "",
+        operationId: liveOperationId,
+        operationType: liveOperationType || undefined,
+      });
+    return list;
+  }, [operationsTab, stored, liveId, liveStart, liveMinutes, liveOperationId, liveOperationType]);
+  const operationDays = useMemo(
+    () => focusDays(operationSegments, zone) as Day[],
+    [operationSegments, zone],
+  );
+  const effort = useMemo(
+    () => operationEffort(operationSegments, zone) as Effort[],
+    [operationSegments, zone],
+  );
+  // Each day's operations, for the details table.
+  const operationsByDay = useMemo(() => {
+    const days = new Map<string, { id: string; value: number }[]>();
+    for (const item of effort)
+      for (const day of item.days) {
+        if (day.value <= 0) continue;
+        if (!days.has(day.date)) days.set(day.date, []);
+        days.get(day.date)!.push({ id: item.operationId, value: day.value });
+      }
+    for (const list of days.values()) list.sort((a, b) => b.value - a.value);
+    return days;
+  }, [effort]);
   const dailyFocus = focusDays(allSegments, zone) as Day[];
   const segmentTime = (value: string) =>
     new Date(value).toLocaleString(DATE_TAGS[locale], {
@@ -194,10 +276,16 @@ export function ProfileModule({
     await syncFocus();
     await load();
   };
-  const rows = tab === "focus" ? dailyFocus : profile?.ai.days || [];
+  // Operations effort is the part of focus filed under an operation, so it shares
+  // focus's tracking start and its shares are of the same range of focus.
+  const rows = operationsTab
+    ? operationDays
+    : tab === "focus"
+      ? dailyFocus
+      : profile?.ai.days || [];
   const since = [
     profile ? dayKey(profile.trackingSince, zone) : today,
-    ...rows.map((d) => d.date),
+    ...(tab === "tokens" ? rows : dailyFocus).map((d) => d.date),
   ].sort()[0];
   const series = activitySeries(rows, since, today, view, ranges[tab]) as {
     buckets: Day[];
@@ -207,13 +295,38 @@ export function ProfileModule({
     start: string;
     end: string;
   };
-  const format = tab === "focus" ? duration : tokens;
-  const known = !!profile || (tab === "focus" && dailyFocus.length > 0);
+  const format = tab === "tokens" ? tokens : duration;
+  const known = !!profile || (tab !== "tokens" && dailyFocus.length > 0);
+  const records = new Map((operations || []).map((item) => [item.id, item]));
+  const ranked = effortInRange(effort, series.start, series.end) as EffortTotal[];
+  const rankedTotal = ranked.reduce((n, item) => n + item.value, 0);
+  const focusInRange = operationsTab
+    ? activitySeries(dailyFocus, since, today, "daily", ranges.operations).total
+    : 0;
+  // A record that still exists says what it is filed as now; a deleted one keeps
+  // the type it had when the time was spent.
+  const typeOf = (item: EffortTotal) => {
+    const record = records.get(item.operationId);
+    return record ? record.type || "" : item.operationType;
+  };
+  const typeLabel = (type: string) =>
+    type ? valueLabel(t.values.operationType, type) : t.editor.unclassified;
+  const operationTitle = (id: string) => {
+    const record = records.get(id);
+    return record ? record.title || id : operations ? t.profile.deletedOperation(id) : id;
+  };
+  const byType = [
+    ...ranked.reduce(
+      (totals, item) => totals.set(typeOf(item), (totals.get(typeOf(item)) || 0) + item.value),
+      new Map<string, number>(),
+    ),
+  ].sort(([a, x], [b, y]) => Number(!a) - Number(!b) || y - x);
+  const topType = [...byType].sort(([, x], [, y]) => y - x)[0];
   const todaySeconds = dailyFocus.find((d) => d.date === today)?.value || 0;
   const unknownAI = !!profile && profile.ai.reported < profile.ai.requests;
   const tokenValue = (value: number) =>
     profile && (profile.ai.reported > 0 || !profile.ai.requests) ? tokens(value) : "—";
-  const cards =
+  const cards: { label: string; value: string; note?: string; text?: boolean }[] =
     tab === "focus"
       ? [
           {
@@ -239,25 +352,50 @@ export function ProfileModule({
             value: profile ? t.profile.days(profile.focus.longest) : "—",
           },
         ]
-      : [
-          {
-            label: t.profile.peakDay,
-            value: tokenValue(profile?.ai.peak.value || 0),
-            note: profile?.ai.peak.date ? dateLabel(profile.ai.peak.date) : "",
-          },
-          {
-            label: t.profile.longestChat,
-            value: profile?.ai.longestChat ? duration(profile.ai.longestChat) : "—",
-          },
-          {
-            label: t.profile.currentStreak,
-            value: profile ? t.profile.days(profile.ai.current) : "—",
-          },
-          {
-            label: t.profile.longestStreak,
-            value: profile ? t.profile.days(profile.ai.longest) : "—",
-          },
-        ];
+      : operationsTab
+        ? [
+            {
+              label: t.profile.shareOfFocus,
+              value: focusInRange ? `${Math.round((series.total / focusInRange) * 100)}%` : "—",
+              note: t.profile.selectedRange,
+            },
+            {
+              label: t.profile.operationsWorked,
+              value: known ? t.profile.operationCount(ranked.length) : "—",
+              note: t.profile.selectedRange,
+            },
+            {
+              label: t.profile.topType,
+              value: topType ? typeLabel(topType[0]) : "—",
+              note: topType ? duration(topType[1]) : "",
+              text: true,
+            },
+            {
+              label: t.profile.topOperation,
+              value: ranked[0] ? operationTitle(ranked[0].operationId) : "—",
+              note: ranked[0] ? duration(ranked[0].value) : "",
+              text: true,
+            },
+          ]
+        : [
+            {
+              label: t.profile.peakDay,
+              value: tokenValue(profile?.ai.peak.value || 0),
+              note: profile?.ai.peak.date ? dateLabel(profile.ai.peak.date) : "",
+            },
+            {
+              label: t.profile.longestChat,
+              value: profile?.ai.longestChat ? duration(profile.ai.longestChat) : "—",
+            },
+            {
+              label: t.profile.currentStreak,
+              value: profile ? t.profile.days(profile.ai.current) : "—",
+            },
+            {
+              label: t.profile.longestStreak,
+              value: profile ? t.profile.days(profile.ai.longest) : "—",
+            },
+          ];
   // The Bridge seeds every profile with the English placeholder; until it is
   // renamed it is shown in the interface language like any other default.
   const displayName =
@@ -327,11 +465,32 @@ export function ProfileModule({
     lastMonth = month;
   }
   const level = (value: number) => (value > 0 ? Math.max(1, Math.ceil((value / max) * 4)) : 0);
-  const unknownLabel = tab === "focus" ? t.profile.timeUnconfirmed : t.profile.usageIncomplete;
+  const unknownLabel = tab === "tokens" ? t.profile.usageIncomplete : t.profile.timeUnconfirmed;
   const bucketLabel = (bucket: Day) =>
     `${bucket.end ? t.profile.between(bucket.start || bucket.date, bucket.end) : bucket.start || bucket.date}: ${format(bucket.value)}${bucket.unknown ? ` · ${unknownLabel}` : ""}`;
   const bucketTitle = (bucket: Day) =>
-    `${bucket.start || bucket.date}: ${tab === "focus" ? t.profile.seconds(Math.floor(bucket.value)) : t.profile.tokens(bucket.value.toLocaleString(DATE_TAGS[locale]))}`;
+    `${bucket.start || bucket.date}: ${tab === "tokens" ? t.profile.tokens(bucket.value.toLocaleString(DATE_TAGS[locale])) : t.profile.seconds(Math.floor(bucket.value))}`;
+  const hero =
+    tab === "focus"
+      ? {
+          label: t.profile.todayFocus,
+          title: t.profile.seconds(Math.floor(todaySeconds)),
+          value: known ? duration(todaySeconds) : "—",
+          note: focus?.running ? t.profile.recording : "",
+        }
+      : operationsTab
+        ? {
+            label: t.profile.operationTime,
+            title: t.profile.seconds(Math.floor(series.total)),
+            value: known ? duration(series.total) : "—",
+            note: t.profile.ranges[ranges.operations as keyof Messages["profile"]["ranges"]],
+          }
+        : {
+            label: t.profile.lifetimeTokens,
+            title: t.profile.tokens(String(profile?.ai.total ?? 0)),
+            value: tokenValue(profile?.ai.total || 0),
+            note: unknownAI ? t.profile.knownUsage : "",
+          };
   return (
     <section className="profile-page" aria-label={t.profile.aria}>
       <section className="page-intro compact">
@@ -390,26 +549,25 @@ export function ProfileModule({
         )}
       </div>
       <div className="profile-tabs" role="tablist" aria-label={t.profile.activityType}>
-        <button
-          role="tab"
-          aria-selected={tab === "focus"}
-          onClick={() => {
-            setTab("focus");
-            setSelected(null);
-          }}
-        >
-          {t.profile.focus}
-        </button>
-        <button
-          role="tab"
-          aria-selected={tab === "tokens"}
-          onClick={() => {
-            setTab("tokens");
-            setSelected(null);
-          }}
-        >
-          {t.profile.ai}
-        </button>
+        {(
+          [
+            ["focus", t.profile.focus],
+            ["operations", t.profile.operations],
+            ["tokens", t.profile.ai],
+          ] as const
+        ).map(([key, label]) => (
+          <button
+            key={key}
+            role="tab"
+            aria-selected={tab === key}
+            onClick={() => {
+              setTab(key);
+              setSelected(null);
+            }}
+          >
+            {label}
+          </button>
+        ))}
       </div>
       {Boolean(error) && (
         <div className="data-banner compact-banner" role="status">
@@ -433,7 +591,7 @@ export function ProfileModule({
           </p>
         </div>
       )}
-      {tab === "focus" && (pending.length > 0 || focus?.recoveryText) && (
+      {tab !== "tokens" && (pending.length > 0 || focus?.recoveryText) && (
         <div className="data-banner compact-banner profile-note">
           <span>◷</span>
           <p>{focus?.recoveryText || t.profile.pending(pending.length)}</p>
@@ -442,7 +600,7 @@ export function ProfileModule({
           )}
         </div>
       )}
-      {tab === "focus" && recoveries.length > 0 && (
+      {tab !== "tokens" && recoveries.length > 0 && (
         <section className="profile-recovery-list card" aria-label={t.profile.interruptedAria}>
           <div className="section-heading">
             <div>
@@ -455,6 +613,9 @@ export function ProfileModule({
               <span>
                 {segmentTime(segment.startedAt)} – {segmentTime(segment.endedAt)}{" "}
                 <small>
+                  {operationsTab && segment.operationId
+                    ? `${operationTitle(segment.operationId)} · `
+                    : ""}
                   {duration((Date.parse(segment.endedAt) - Date.parse(segment.startedAt)) / 1000)} ·{" "}
                   {segment.status === "confirmed" ? t.profile.addedByYou : t.profile.notCounted}
                 </small>
@@ -488,25 +649,14 @@ export function ProfileModule({
       )}
       <div className="profile-overview card">
         <article className="profile-hero">
-          <span className="label">
-            {tab === "focus" ? t.profile.todayFocus : t.profile.lifetimeTokens}
-          </span>
-          <strong
-            title={
-              tab === "focus"
-                ? t.profile.seconds(Math.floor(todaySeconds))
-                : t.profile.tokens(String(profile?.ai.total ?? 0))
-            }
-          >
-            {tab === "focus"
-              ? known
-                ? duration(todaySeconds)
-                : "—"
-              : tokenValue(profile?.ai.total || 0)}
-          </strong>
-          {tab === "focus"
-            ? focus?.running && <p>{t.profile.recording}</p>
-            : unknownAI && <p>{t.profile.knownUsage}</p>}
+          <span className="label">{hero.label}</span>
+          <strong title={hero.title}>{hero.value}</strong>
+          {hero.note && <p>{hero.note}</p>}
+          {operationsTab && (
+            <button className="primary-button" onClick={() => openOperation()}>
+              {t.profile.openOperations}
+            </button>
+          )}
           {tab === "focus" && (
             <button
               className="primary-button"
@@ -516,11 +666,16 @@ export function ProfileModule({
             </button>
           )}
         </article>
-        <div className={`profile-metrics ${tab === "tokens" ? "ai-metrics" : ""}`}>
+        <div className={`profile-metrics ${tab === "focus" ? "" : "two-up"}`}>
           {cards.map((card) => (
             <article key={card.label}>
               <span>{card.label}</span>
-              <strong>{card.value}</strong>
+              <strong
+                className={card.text ? "is-text" : undefined}
+                title={card.text ? card.value : undefined}
+              >
+                {card.value}
+              </strong>
               {card.note && <small>{card.note}</small>}
             </article>
           ))}
@@ -530,7 +685,13 @@ export function ProfileModule({
         <div className="section-heading">
           <div>
             <span className="label">
-              {tab === "focus" ? t.profile.focusActivity : t.profile.tokenActivity}
+              {
+                {
+                  focus: t.profile.focusActivity,
+                  operations: t.profile.operationActivity,
+                  tokens: t.profile.tokenActivity,
+                }[tab]
+              }
             </span>
           </div>
           <div className="profile-chart-controls">
@@ -566,14 +727,24 @@ export function ProfileModule({
         </div>
         <div className="profile-chart-summary">
           <strong>{known ? format(series.total) : "—"}</strong>
-          <span>{tab === "focus" ? t.profile.inRangeFocus : t.profile.inRangeTokens}</span>
+          <span>
+            {
+              {
+                focus: t.profile.inRangeFocus,
+                operations: t.profile.inRangeOperations,
+                tokens: t.profile.inRangeTokens,
+              }[tab]
+            }
+          </span>
           <span className="profile-chart-readout" aria-live="polite">
             {selected
-              ? `${dateLabel(selected.start || selected.date)}${selected.end ? ` – ${dateLabel(selected.end)}${selected.start !== selected.date || selected.end !== nextDay(selected.date, 6) ? t.profile.partialWeek : ""}` : ""} · ${format(selected.value)} · ${tab === "focus" ? t.profile.segments(selected.count) : t.profile.requests(selected.count)}${selected.unknown ? ` · ${unknownLabel}` : ""}`
+              ? `${dateLabel(selected.start || selected.date)}${selected.end ? ` – ${dateLabel(selected.end)}${selected.start !== selected.date || selected.end !== nextDay(selected.date, 6) ? t.profile.partialWeek : ""}` : ""} · ${format(selected.value)} · ${tab === "tokens" ? t.profile.requests(selected.count) : t.profile.segments(selected.count)}${selected.unknown ? ` · ${unknownLabel}` : ""}`
               : allZero
-                ? tab === "focus"
-                  ? t.profile.noFocus
-                  : t.profile.noAi
+                ? {
+                    focus: t.profile.noFocus,
+                    operations: t.profile.noOperations,
+                    tokens: t.profile.noAi,
+                  }[tab]
                 : ""}
           </span>
         </div>
@@ -675,7 +846,7 @@ export function ProfileModule({
             {tab === "tokens" && profile
               ? t.profile.coverage(profile.ai.reported, profile.ai.requests)
               : t.profile.trackedDays(series.calendarDays)}
-            {pending.length > 0 && tab === "focus" ? t.profile.includesLocal : ""}
+            {pending.length > 0 && tab !== "tokens" ? t.profile.includesLocal : ""}
           </span>
           {view !== "cumulative" && (
             <span className="profile-heat-legend" aria-hidden="true">
@@ -688,10 +859,67 @@ export function ProfileModule({
           )}
         </footer>
       </section>
+      {operationsTab && ranked.length > 0 && (
+        <div className="profile-effort">
+          <section className="card" aria-label={t.profile.byType}>
+            <span className="label">{t.profile.byType}</span>
+            <ul className="profile-bars">
+              {byType.map(([type, value]) => (
+                <li
+                  key={type || "unclassified"}
+                  title={`${typeLabel(type)}: ${t.profile.seconds(Math.floor(value))}`}
+                >
+                  <span>{typeLabel(type)}</span>
+                  <i style={{ "--share": value / topType[1] } as React.CSSProperties} />
+                  <strong>
+                    {duration(value)}
+                    <small>{Math.round((value / rankedTotal) * 100)}%</small>
+                  </strong>
+                </li>
+              ))}
+            </ul>
+          </section>
+          <section className="card" aria-label={t.profile.topOperations}>
+            <span className="label">{t.profile.topOperations}</span>
+            <ul className="profile-bars long-names">
+              {ranked.slice(0, 8).map((item) => {
+                const record = records.get(item.operationId);
+                return (
+                  <li
+                    key={item.operationId}
+                    title={`${operationTitle(item.operationId)}: ${t.profile.seconds(Math.floor(item.value))}`}
+                  >
+                    <span>
+                      {record ? (
+                        <button className="profile-bar-link" onClick={() => openOperation(record)}>
+                          {operationTitle(item.operationId)}
+                        </button>
+                      ) : (
+                        operationTitle(item.operationId)
+                      )}
+                      <small>
+                        {[
+                          typeLabel(typeOf(item)),
+                          record?.status && valueLabel(t.values.status, record.status),
+                          t.profile.segments(item.count),
+                        ]
+                          .filter(Boolean)
+                          .join(" · ")}
+                      </small>
+                    </span>
+                    <i style={{ "--share": item.value / ranked[0].value } as React.CSSProperties} />
+                    <strong>{duration(item.value)}</strong>
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+        </div>
+      )}
       <section className="profile-details">
         <div className="section-heading">
           <div>
-            <p>{tab === "focus" ? t.profile.focusDetails : t.profile.aiDetails}</p>
+            <p>{tab === "tokens" ? t.profile.aiDetails : t.profile.focusDetails}</p>
           </div>
           <button
             className="quiet-button"
@@ -708,11 +936,12 @@ export function ProfileModule({
                 <tr>
                   <th scope="col">{t.profile.date}</th>
                   <th scope="col">
-                    {tab === "focus" ? t.profile.focusTime : t.profile.tokenColumn}
+                    {tab === "tokens" ? t.profile.tokenColumn : t.profile.focusTime}
                   </th>
                   <th scope="col">
-                    {tab === "focus" ? t.profile.segmentColumn : t.profile.requestColumn}
+                    {tab === "tokens" ? t.profile.requestColumn : t.profile.segmentColumn}
                   </th>
+                  {operationsTab && <th scope="col">{t.profile.operationColumn}</th>}
                   <th scope="col">{t.profile.status}</th>
                 </tr>
               </thead>
@@ -749,10 +978,19 @@ export function ProfileModule({
                         )}
                       </td>
                       <td>{row.count}</td>
+                      {operationsTab && (
+                        <td className="profile-day-operations">
+                          {(operationsByDay.get(row.date) || []).map((item) => (
+                            <p key={item.id} className="profile-day-operation">
+                              {operationTitle(item.id)} · {duration(item.value)}
+                            </p>
+                          ))}
+                        </td>
+                      )}
                       <td>
                         {row.unknown
                           ? unknownLabel
-                          : tab === "focus" &&
+                          : tab !== "tokens" &&
                               pending.some(
                                 (s) =>
                                   dayKey(s.startedAt, zone) <= row.date &&
@@ -771,7 +1009,13 @@ export function ProfileModule({
         )}
       </section>
       <p className="profile-footnote">
-        {tab === "focus" ? t.profile.footnoteFocus : t.profile.footnoteAi}
+        {
+          {
+            focus: t.profile.footnoteFocus,
+            operations: t.profile.footnoteOperations,
+            tokens: t.profile.footnoteAi,
+          }[tab]
+        }
       </p>
     </section>
   );

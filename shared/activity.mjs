@@ -1,11 +1,19 @@
 // Pure aggregation shared by the Bridge, local Focus overlay, and tests.
+// Building a formatter costs far more than using one, and splitting a session at
+// midnight asks for hundreds of day keys.
+const dayFormats = new Map();
 export function dayKey(time, timeZone = "UTC") {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(new Date(time));
+  if (!dayFormats.has(timeZone))
+    dayFormats.set(
+      timeZone,
+      new Intl.DateTimeFormat("en-CA", {
+        timeZone,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      }),
+    );
+  return dayFormats.get(timeZone).format(new Date(time));
 }
 export function nextDay(day, offset = 1) {
   return new Date(Date.parse(`${day}T12:00:00Z`) + offset * 86400000).toISOString().slice(0, 10);
@@ -61,6 +69,50 @@ export function focusDays(segments, timeZone) {
       count: ids.get(date).size,
       unknown: unknown.get(date) || 0,
     }));
+}
+// Focus time filed under an operation, one entry per operation carrying its own
+// day rows, so a range total or one day's breakdown is a filter, not a rescan.
+export function operationEffort(segments, timeZone) {
+  const groups = new Map();
+  for (const segment of segments) {
+    if (!segment.operationId) continue;
+    if (!groups.has(segment.operationId)) groups.set(segment.operationId, []);
+    groups.get(segment.operationId).push(segment);
+  }
+  return [...groups].map(([operationId, list]) => ({
+    operationId,
+    // The latest session says what the operation was last filed as.
+    operationType:
+      list
+        .filter((s) => s.operationType)
+        .sort((a, b) => a.startedAt.localeCompare(b.startedAt))
+        .at(-1)?.operationType || "",
+    days: focusDays(list, timeZone),
+    // First and last local day of each counted session; a session that ends on
+    // the stroke of midnight belongs to the day it ran in.
+    sessions: list
+      .filter(
+        (s) =>
+          !["gap", "dismissed"].includes(s.status) &&
+          Date.parse(s.endedAt) > Date.parse(s.startedAt),
+      )
+      .map((s) => [dayKey(s.startedAt, timeZone), dayKey(Date.parse(s.endedAt) - 1, timeZone)]),
+  }));
+}
+export function effortInRange(effort, start, end) {
+  return effort
+    .map(({ operationId, operationType, days, sessions }) => {
+      const inRange = days.filter((d) => d.date >= start && d.date <= end && d.value > 0);
+      return {
+        operationId,
+        operationType,
+        value: inRange.reduce((n, d) => n + d.value, 0),
+        count: sessions.filter(([first, last]) => first <= end && last >= start).length,
+        lastDate: inRange.at(-1)?.date || "",
+      };
+    })
+    .filter((item) => item.value > 0)
+    .sort((a, b) => b.value - a.value || b.lastDate.localeCompare(a.lastDate));
 }
 export function streaks(dates, today) {
   const sorted = [...new Set(dates)].sort();

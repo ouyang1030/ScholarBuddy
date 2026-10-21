@@ -183,9 +183,10 @@ Interface strings live in `app/i18n/en.ts` (the source of truth) and `app/i18n/z
 Open **Profile** in the sidebar or user avatar to review research habits and productivity:
 
 - **Focus**: Tracks daily and lifetime deep work sessions, daily averages, streaks, and trends across Daily, Weekly, and Cumulative views.
+- **Operations**: Shows the focus time spent on operations, started with **Focus** on an operation card, by type and by operation, and as a share of all focus.
 - **AI activity**: Monitors token volume, active streaks, session lengths, and provider coverage.
 
-Activity metrics are saved in the local ledger (`bridge/.activity/activity-v1.json`). AI conversation text and provider credentials are never stored.
+Activity metrics are saved in the local ledger (`bridge/.activity/activity-v1.json`). A focus session started from an operation keeps only the operation's id and type; titles are read from the vault. AI conversation text and provider credentials are never stored.
 
 ## Development
 

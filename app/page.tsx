@@ -85,6 +85,9 @@ function Workbench() {
   const [state, setState] = useState<WorkbenchState>(emptyState);
   const [invalidRecords, setInvalidRecords] = useState<InvalidRecord[]>([]);
   const [loading, setLoading] = useState(true);
+  // Whether the vault's records have been read at least once; until then an empty
+  // collection means "not known yet", not "none".
+  const [stateLoaded, setStateLoaded] = useState(false);
   const t = useT();
   // For the few handlers registered once at mount: they must speak the language
   // the page is in when they fire, not the one it was in when they were set up.
@@ -148,6 +151,7 @@ function Workbench() {
         submissionAlerts(nextState).map((alert) => submissionAlertKey(alert)),
       );
       setState(nextState);
+      setStateLoaded(true);
       setInvalidRecords(Array.isArray(invalid) ? invalid : []);
       setReadSubmissionAlertKeys((current) => {
         const next = current.filter((key) => activeAlertKeys.has(key));
@@ -256,6 +260,17 @@ function Workbench() {
       window.clearInterval(statusTimer);
     };
   }, []);
+  // The timer lives on Today, so starting focus from anywhere else goes there.
+  const openFocus = () => {
+    setActive("dashboard");
+    window.setTimeout(
+      () =>
+        document
+          .querySelector(".focus-session")
+          ?.scrollIntoView({ behavior: "smooth", block: "center" }),
+      0,
+    );
+  };
   // A thought that has to wait for navigation is a thought that gets lost, so
   // capture is reachable from every module: switch to Today, then let the panel
   // take focus once React has committed the module change.
@@ -784,7 +799,12 @@ function Workbench() {
             {active === "profile" && (
               <ProfileModule
                 openConnections={() => setConnectionsOpen(true)}
-                startFocus={() => setActive("dashboard")}
+                startFocus={openFocus}
+                operations={stateLoaded ? state.operations : null}
+                openOperation={(record) => {
+                  setActive("operations");
+                  if (record) openEditor("operations", record);
+                }}
               />
             )}
             {active === "dashboard" && (
@@ -818,7 +838,12 @@ function Workbench() {
               />
             )}
             {active === "operations" && (
-              <OperationsModule state={state} openEditor={openEditor} paper={activePaper} />
+              <OperationsModule
+                state={state}
+                openEditor={openEditor}
+                paper={activePaper}
+                openFocus={openFocus}
+              />
             )}
             {active === "about" && (
               <LandingModule

@@ -1,10 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useLocale, useT, valueLabel, type Messages } from "../../i18n";
 import { clampProgress, shortDate } from "../../lib/format";
 import { isOpen, statusDefault, type DataProps } from "../../lib/workbench";
 import type { RecordItem } from "../../types";
+import { useFocusElsewhere } from "../panels/FocusPanel";
 import { EmptyState, MetaPill, ModuleTabs, PageHeader } from "../primitives";
 import { RecordModule } from "./RecordModule";
 
@@ -56,9 +57,26 @@ function OperationsBoard({
   state,
   openEditor,
   paper,
-}: Pick<DataProps, "state" | "openEditor"> & { paper?: RecordItem }) {
+  openFocus,
+}: Pick<DataProps, "state" | "openEditor"> & { paper?: RecordItem; openFocus: () => void }) {
   const t = useT();
   const { locale } = useLocale();
+  // The timer reports its state as an event rather than through context, whose
+  // value changes every second; the board only needs to know which operation is
+  // running, so it re-renders only when that changes.
+  const [timerReady, setTimerReady] = useState(false);
+  const [focusingId, setFocusingId] = useState("");
+  const elsewhere = useFocusElsewhere();
+  useEffect(() => {
+    const listen = (event: Event) => {
+      const detail = (event as CustomEvent<{ running?: boolean; operationId?: string }>).detail;
+      setTimerReady(true);
+      setFocusingId(detail?.running ? detail.operationId || "" : "");
+    };
+    window.addEventListener("scholarbuddy-focus-state", listen);
+    window.dispatchEvent(new Event("scholarbuddy-request-focus-state"));
+    return () => window.removeEventListener("scholarbuddy-focus-state", listen);
+  }, []);
   const [typeFilter, setTypeFilter] = useState("");
   // Only the kinds of work actually on the board, so the filter never offers a
   // row that leads to an empty screen.
@@ -71,6 +89,22 @@ function OperationsBoard({
   const operations = sortOperations(
     active ? state.operations.filter((item) => item.type === active) : state.operations,
   );
+  // The session is filed under the operation, which is what Profile counts as
+  // its effort.
+  const startFocus = (item: RecordItem) => {
+    const accepted = window.dispatchEvent(
+      new CustomEvent("scholarbuddy-start-focus", {
+        cancelable: true,
+        // An untitled note still needs a target, or the timer ignores the start.
+        detail: {
+          target: item.title || item.id,
+          operationId: item.id,
+          operationType: item.type || "",
+        },
+      }),
+    );
+    if (accepted) openFocus();
+  };
 
   return (
     <>
@@ -124,6 +158,7 @@ function OperationsBoard({
             const isCompleted = isFinished(item);
             const hasProgress = !isCompleted && item.progress !== undefined;
             const deadline = deadlineState(t, item.dueDate);
+            const focusing = focusingId === item.id;
 
             return (
               <article
@@ -165,6 +200,18 @@ function OperationsBoard({
                 </div>
 
                 <div className="record-card-footer">
+                  {!isCompleted && (
+                    <button
+                      className="quiet-button"
+                      disabled={!timerReady}
+                      title={
+                        timerReady ? undefined : elsewhere ? t.focus.elsewhere : t.focus.preparing
+                      }
+                      onClick={() => (focusing ? openFocus() : startFocus(item))}
+                    >
+                      {focusing ? t.operations.focusing : t.operations.focus}
+                    </button>
+                  )}
                   <button className="quiet-button" onClick={() => openEditor("operations", item)}>
                     {t.operations.edit}
                   </button>
@@ -201,7 +248,8 @@ export function OperationsModule({
   state,
   openEditor,
   paper,
-}: Pick<DataProps, "state" | "openEditor"> & { paper?: RecordItem }) {
+  openFocus,
+}: Pick<DataProps, "state" | "openEditor"> & { paper?: RecordItem; openFocus: () => void }) {
   const t = useT();
   const [tab, setTab] = useState<"operations" | "journal">("operations");
   return (
@@ -217,7 +265,12 @@ export function OperationsModule({
       />
       <div role="tabpanel" id={`tabpanel-${tab}`} aria-labelledby={`tab-${tab}`}>
         {tab === "operations" ? (
-          <OperationsBoard state={state} openEditor={openEditor} paper={paper} />
+          <OperationsBoard
+            state={state}
+            openEditor={openEditor}
+            paper={paper}
+            openFocus={openFocus}
+          />
         ) : (
           <RecordModule
             collection="journal"

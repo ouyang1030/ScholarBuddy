@@ -3,7 +3,14 @@ import test from "node:test";
 import { mkdtemp, rm, writeFile, readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { dayKey, focusDays, activitySeries, streaks } from "../shared/activity.mjs";
+import {
+  dayKey,
+  effortInRange,
+  focusDays,
+  activitySeries,
+  operationEffort,
+  streaks,
+} from "../shared/activity.mjs";
 import { createActivityStore } from "../bridge/activity-store.mjs";
 import { normalizeUsage } from "../bridge/usage-normalizer.mjs";
 import { modelResponse, streamDelta } from "../bridge/providers.mjs";
@@ -52,6 +59,58 @@ test("focus counts actual seconds on 23 and 25 hour DST days", () => {
     focusDays([segment("fall", "2026-10-24T22:00:00Z", "2026-10-25T23:00:00Z")], "Europe/Vienna")[0]
       .value,
     25 * 3600,
+  );
+});
+test("operation effort splits by operation and day, and counts confirmed gaps", () => {
+  const filed = (id, start, end, operationId, operationType, status = "saved") => ({
+    ...segment(id, start, end),
+    status,
+    operationId,
+    operationType,
+  });
+  const effort = operationEffort(
+    [
+      filed("a", "2026-10-03T21:40:00Z", "2026-10-03T22:20:00Z", "OPS-1", "Teaching"),
+      filed("b", "2026-10-04T08:00:00Z", "2026-10-04T08:30:00Z", "OPS-1", "Admin"),
+      filed("c", "2026-10-04T09:00:00Z", "2026-10-04T09:10:00Z", "OPS-2", undefined, "confirmed"),
+      filed("d", "2026-10-04T10:00:00Z", "2026-10-04T11:00:00Z", "OPS-2", undefined, "gap"),
+      segment("unfiled", "2026-10-04T12:00:00Z", "2026-10-04T13:00:00Z"),
+    ],
+    "Europe/Vienna",
+  );
+  assert.deepEqual(
+    effort.map((item) => item.operationId),
+    ["OPS-1", "OPS-2"],
+  );
+  // 21:40Z is 23:40 in Vienna, so the first session crosses local midnight.
+  assert.deepEqual(
+    effort[0].days.map((d) => [d.date, d.value]),
+    [
+      ["2026-10-03", 1200],
+      ["2026-10-04", 3000],
+    ],
+  );
+  assert.equal(effort[0].operationType, "Admin");
+  assert.equal(effort[1].operationType, "");
+  assert.equal(effort[1].days[0].unknown, 1);
+  assert.deepEqual(
+    effortInRange(effort, "2026-10-04", "2026-10-04").map((item) => [
+      item.operationId,
+      item.value,
+      item.count,
+    ]),
+    [
+      ["OPS-1", 3000, 2],
+      ["OPS-2", 600, 1],
+    ],
+  );
+  assert.deepEqual(
+    effortInRange(effort, "2026-10-03", "2026-10-03").map((item) => [
+      item.operationId,
+      item.value,
+      item.count,
+    ]),
+    [["OPS-1", 1200, 1]],
   );
 });
 test("streaks preserve yesterday until today finishes and break on a missing day", () => {
@@ -241,6 +300,39 @@ test("profile routes require pairing and persist focus without a vault or Calend
   const result = await (await handle(request("/profile"), config)).json();
   assert.equal(result.focus.total, 3600);
   assert.equal(dayKey("2026-10-03T23:00:00Z", "Europe/Vienna"), "2026-10-04");
+});
+
+test("ledger keeps a session's operation link and drops a malformed one, not its time", async (t) => {
+  const { store, bridgeId } = await fixture(t);
+  await store.saveFocus({
+    bridgeId,
+    events: [
+      {
+        ...segment("filed", "2026-10-04T08:00:00Z", "2026-10-04T08:25:00Z"),
+        operationId: "OPS-001",
+        operationType: "Teaching",
+      },
+      {
+        ...segment("malformed", "2026-10-04T09:00:00Z", "2026-10-04T09:25:00Z"),
+        operationId: "../OPS-001",
+        operationType: "Line\nbreak",
+      },
+      {
+        ...segment("custom", "2026-10-04T10:00:00Z", "2026-10-04T10:10:00Z"),
+        operationId: "OPS-002",
+        operationType: "Mentoring",
+      },
+    ],
+  });
+  const { focus } = await store.profile();
+  const byId = Object.fromEntries(focus.segments.map((s) => [s.segmentId, s]));
+  assert.equal(byId.filed.operationId, "OPS-001");
+  assert.equal(byId.filed.operationType, "Teaching");
+  assert.equal("operationId" in byId.malformed, false);
+  assert.equal("operationType" in byId.malformed, false);
+  // A type typed by hand, outside the built-in list, survives for deleted records.
+  assert.equal(byId.custom.operationType, "Mentoring");
+  assert.equal(focus.total, 3600);
 });
 
 test("interruption gaps stay unknown until confirmed and can be undone", async (t) => {
