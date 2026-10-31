@@ -10,7 +10,6 @@ import type {
 import { daysSince, daysUntil, localDateKey } from "./format";
 import {
   AI_PROVIDER_DEFINITIONS,
-  CLOSED_RECORD_STATUSES,
   COLLECTION_LABELS,
   GENERIC_RECORD_STATUSES,
   MANUSCRIPT_SECTIONS,
@@ -20,6 +19,7 @@ import {
   RECORD_STATUS_OPTIONS,
   SUBMISSION_STAGES,
 } from "../../shared/constants.mjs";
+import { recordClosed } from "../../shared/records.mjs";
 
 // Completeness is enforced by `collectionLabels` below: if shared/constants.mjs
 // and CollectionKey ever disagree, that annotation fails to compile.
@@ -97,12 +97,7 @@ export function readingStatusClass(status: string) {
   return `is-${(known || "other").toLowerCase()}`;
 }
 
-// Matched without regard to case: a status is frontmatter a researcher can type
-// by hand in Obsidian, and "done" closes a record exactly as "Done" does.
-const closedStatuses = new Set(
-  CLOSED_RECORD_STATUSES.map((status: string) => status.toLowerCase()),
-);
-export const isOpen = (item: RecordItem) => !closedStatuses.has((item.status || "").toLowerCase());
+export const isOpen = (item: RecordItem) => !recordClosed(item);
 
 // Feedback and internal gaps are one user workflow even though older vaults store
 // them in two collections. The model receives the same combined issue view as the UI.
@@ -289,7 +284,11 @@ export type DataProps = {
   openEditor: (collection: CollectionKey, record?: Partial<RecordItem>) => void;
   // Returns the record the Bridge actually wrote: promoting an idea has to link
   // back to the id of the research question it just created.
-  saveRecord: (collection: CollectionKey, record: Partial<RecordItem>) => Promise<RecordItem>;
+  saveRecord: (
+    collection: CollectionKey,
+    record: Partial<RecordItem>,
+    options?: { quiet?: boolean },
+  ) => Promise<RecordItem>;
   runAction: (action: Action) => void;
 };
 // An alert carries what happened and how many days; the interface words it in

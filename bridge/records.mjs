@@ -329,7 +329,7 @@ export async function saveRecordUnlocked(config, collectionValue, incoming) {
     ).toISOString(),
   };
   candidate.title = requireText(candidate.title, "Record title", 1_000);
-  const record = decodeRecord(collection, candidate);
+  const record = decodeRecord(collection, candidate, previous);
   if (!record.createdAt) record.createdAt = record.updatedAt;
   if (exists) await archiveVersion(config, collection, id, file);
   const content = serializeRecord(record);

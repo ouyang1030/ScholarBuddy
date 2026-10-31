@@ -1,5 +1,17 @@
 import { CONSEQUENTIAL_SUBMISSION_STAGES, SUBMISSION_STAGES } from "../shared/constants.mjs";
 import { t } from "./i18n.mjs";
+import { operationQuadrant } from "../shared/operations.mjs";
+
+// Vocabularies checked only where a write changes the field, never while reading
+// a hand-edited note: an unknown value stays readable and survives unrelated
+// edits until the user replaces it. An empty string clears the field.
+const writeVocabularies = {
+  eisenhowerQuadrant: {
+    collections: ["operations"],
+    accepts: (value) => value === "" || Boolean(operationQuadrant(value)),
+    message: "records.operationQuadrant",
+  },
+};
 
 export const submissionStages = new Set(SUBMISSION_STAGES);
 export const consequentialSubmissionStages = new Set(CONSEQUENTIAL_SUBMISSION_STAGES);
@@ -155,9 +167,18 @@ export function coerceStoredRecord(value) {
 // Validate the fields ScholarBuddy actually depends on. Other frontmatter is
 // preserved so Obsidian plugins and future features can extend a record without
 // requiring a schema release first.
-export function decodeRecord(collection, value) {
+// A write passes the record it replaces ({} for a new one); reading passes none.
+export function decodeRecord(collection, value, previous) {
   if (!value || typeof value !== "object" || Array.isArray(value)) invalid(t("records.object"));
   const source = { ...value };
+  if (previous)
+    for (const [field, rule] of Object.entries(writeVocabularies))
+      if (
+        Object.hasOwn(source, field) &&
+        JSON.stringify(source[field]) !== JSON.stringify(previous[field]) &&
+        (!rule.collections.includes(collection) || !rule.accepts(source[field]))
+      )
+        invalid(t(rule.message));
   // These v0 transport fields are not part of the record model.
   delete source.zoteroUrl;
   delete source.revision;

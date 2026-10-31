@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { failureText, useT, valueLabel } from "../../i18n";
 import { clampProgress, localDateKey } from "../../lib/format";
 import { CLOSED_RECORD_STATUSES } from "../../../shared/constants.mjs";
+import { OPERATION_QUADRANTS, operationQuadrant } from "../../../shared/operations.mjs";
 import {
   manuscriptSections,
   operationTypes,
@@ -21,6 +22,7 @@ export function RecordEditor({
   onSave,
   onDelete,
   onUnsavedChange,
+  readOnly = false,
   ref,
 }: {
   editor: NonNullable<EditorState>;
@@ -32,6 +34,7 @@ export function RecordEditor({
     record: Pick<RecordItem, "id" | "version" | "contentHash">,
   ) => Promise<void>;
   onUnsavedChange?: (unsaved: boolean) => void;
+  readOnly?: boolean;
   ref?: React.Ref<HTMLElement>;
 }) {
   const t = useT();
@@ -604,6 +607,30 @@ export function RecordEditor({
           {editor.collection === "operations" && (
             <>
               <label>
+                <span>{t.operations.classification}</span>
+                <select
+                  value={
+                    form.eisenhowerQuadrant && !operationQuadrant(form.eisenhowerQuadrant)
+                      ? "unknown"
+                      : form.eisenhowerQuadrant || ""
+                  }
+                  onChange={(event) => set("eisenhowerQuadrant", event.target.value)}
+                >
+                  {Boolean(form.eisenhowerQuadrant) &&
+                    !operationQuadrant(form.eisenhowerQuadrant) && (
+                      <option value="unknown" disabled>
+                        {t.operations.keepUnknownQuadrant}
+                      </option>
+                    )}
+                  <option value="">{t.operations.unclassified}</option>
+                  {OPERATION_QUADRANTS.map((quadrant) => (
+                    <option key={quadrant} value={quadrant}>
+                      {t.operations.quadrants[quadrant]}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
                 <span>{t.editor.linkedProject}</span>
                 <select
                   value={form.projectId || ""}
@@ -782,7 +809,11 @@ export function RecordEditor({
                 <button onClick={() => setConfirmDelete(false)}>{t.common.keep}</button>
               </span>
             ) : (
-              <button className="delete-record" onClick={() => setConfirmDelete(true)}>
+              <button
+                className="delete-record"
+                disabled={readOnly}
+                onClick={() => setConfirmDelete(true)}
+              >
                 {t.common.delete}
               </button>
             )
@@ -790,11 +821,16 @@ export function RecordEditor({
             <span />
           )}
           <span>
+            {readOnly && <small className="record-editor-read-only">{t.errors.read_only}</small>}
             <SaveFeedback state={saving ? "saving" : saved ? "saved" : error ? "error" : "idle"} />
             <button className="quiet-button" onClick={onClose}>
               {t.common.cancel}
             </button>
-            <button className="primary-button" disabled={saving || saved} onClick={save}>
+            <button
+              className="primary-button"
+              disabled={readOnly || saving || saved}
+              onClick={save}
+            >
               {saving ? t.common.saving : t.editor.saveToObsidian}
             </button>
           </span>

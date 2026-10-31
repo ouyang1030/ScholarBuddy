@@ -60,6 +60,8 @@ export const en = {
     date: (field) => `${field} must be a valid date.`,
     portalUrl: "portalUrl must use http or https.",
     activeProjectsOnly: "active is only supported for projects.",
+    operationQuadrant:
+      "Choose a valid Eisenhower quadrant for an operation, or leave it unclassified.",
     submissionStatus: "Unsupported submission status.",
     rename: "Rename the file using only letters, digits, dots, dashes, and underscores.",
     unreadable: "The file could not be read.",
@@ -238,6 +240,7 @@ export const zh = {
     date: (field) => `${field} 不是有效日期。`,
     portalUrl: "portalUrl 必须使用 http 或 https。",
     activeProjectsOnly: "只有项目支持 active 字段。",
+    operationQuadrant: "请为事务选择有效的四象限分类，或设为待分类。",
     submissionStatus: "不支持的投稿状态。",
     rename: "请将文件重命名为只含字母、数字、点、短横线和下划线的名称。",
     unreadable: "无法读取该文件。",

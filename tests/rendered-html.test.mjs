@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readdir, readFile } from "node:fs/promises";
 import test from "node:test";
+import "./cloudflare-workers.mjs";
 
 // The workbench is split across app/ and shared/, so these assertions read
 // every client source rather than a single module. Moving a component or a
@@ -101,7 +102,10 @@ test("every rendered button declares an interaction handler", async () => {
   const buttons = source.match(/<button\b[\s\S]*?<\/button>/g) ?? [];
   assert.ok(buttons.length > 60, "expected the workbench interaction surface");
   const inertButtons = buttons.filter(
-    (button) => !button.includes("onClick=") && !/type="submit"/.test(button),
+    (button) =>
+      !button.includes("onClick=") &&
+      !/type="submit"/.test(button) &&
+      !button.includes("{...listeners}"),
   );
   assert.deepEqual(inertButtons, []);
   assert.match(source, /saveRecord/);

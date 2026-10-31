@@ -1,72 +1,111 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useLocale, useT, valueLabel, type Messages } from "../../i18n";
-import { clampProgress, shortDate } from "../../lib/format";
-import { isOpen, statusDefault, type DataProps } from "../../lib/workbench";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { BridgeFailure, failureText, useT, valueLabel } from "../../i18n";
+import { type DataProps } from "../../lib/workbench";
+import {
+  operationQuadrant,
+  operationFinished,
+  sortOperations,
+} from "../../../shared/operations.mjs";
 import type { RecordItem } from "../../types";
 import { useFocusElsewhere } from "../panels/FocusPanel";
-import { EmptyState, MetaPill, ModuleTabs, PageHeader } from "../primitives";
+import { EmptyState, ModuleTabs, PageHeader } from "../primitives";
 import { RecordModule } from "./RecordModule";
+import { OperationCard } from "./OperationCard";
+import { OperationsMatrix, type Quadrant } from "./OperationsMatrix";
 
-const OPEN_STATUS = statusDefault("operations");
-// A record written before operations had their own vocabulary still carries a
-// generic status, so what closes one is read from the shared list rather than
-// named here.
-const isFinished = (item: RecordItem) => !isOpen({ ...item, status: item.status || OPEN_STATUS });
+const VIEW_KEY = "scholarbuddy-operations-view-v1";
+type View = "list" | "matrix";
+type OperationsProps = Pick<DataProps, "state" | "openEditor" | "saveRecord"> & {
+  paper?: RecordItem;
+  openFocus: () => void;
+  writable: boolean;
+  readOnly: boolean;
+  reloadRecords: () => Promise<boolean>;
+};
 
-function sortOperations(operations: RecordItem[]): RecordItem[] {
-  return [...operations].sort((a, b) => {
-    const aDone = isFinished(a);
-    const bDone = isFinished(b);
-
-    // 1. Planned / In progress / Blocked come before Done / Archived
-    if (aDone !== bDone) return aDone ? 1 : -1;
-
-    // 2. Both incomplete: order by dueDate ascending (earlier deadlines first)
-    if (!aDone && !bDone) {
-      if (a.dueDate && b.dueDate) return a.dueDate.localeCompare(b.dueDate);
-      if (a.dueDate) return -1;
-      if (b.dueDate) return 1;
-    }
-
-    // 3. Fallback: newest first
-    return (b.updatedAt || b.createdAt || "").localeCompare(a.updatedAt || a.createdAt || "");
-  });
+// Moves in flight outlive the board: switching to the journal tab and back must
+// not forget them, or a card could be moved again with the version being replaced.
+let pendingMoves: Record<string, Quadrant> = {};
+const noPendingMoves: Record<string, Quadrant> = {};
+const pendingListeners = new Set<() => void>();
+function setPendingMove(id: string, quadrant?: Quadrant) {
+  const next = { ...pendingMoves };
+  if (quadrant === undefined) delete next[id];
+  else next[id] = quadrant;
+  pendingMoves = next;
+  pendingListeners.forEach((listener) => listener());
+}
+function subscribePendingMoves(listener: () => void) {
+  pendingListeners.add(listener);
+  return () => {
+    pendingListeners.delete(listener);
+  };
 }
 
-function deadlineState(t: Messages, dueDate?: string) {
-  if (!dueDate) return { label: t.operations.noDeadline, tone: "neutral", days: null };
-  const [year, month, day] = dueDate.split("-").map(Number);
-  const today = new Date();
-  const start = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate());
-  const target = Date.UTC(year, month - 1, day);
-  const days = Math.round((target - start) / 86_400_000);
-  // Records are hand-editable Markdown, so a malformed date reads as no deadline
-  // rather than "NaNd left" — the same call the bridge makes when it validates.
-  if (!Number.isFinite(days))
-    return { label: t.operations.noDeadline, tone: "neutral", days: null };
-  if (days < 0) return { label: t.operations.overdue(Math.abs(days)), tone: "overdue", days };
-  if (days === 0) return { label: t.operations.dueToday, tone: "overdue", days };
-  if (days <= 7) return { label: t.operations.left(days), tone: "urgent", days };
-  if (days <= 30) return { label: t.operations.left(days), tone: "soon", days };
-  return { label: t.operations.left(days), tone: "neutral", days };
+const CONFLICT_CODES = [
+  "version_conflict",
+  "content_conflict",
+  "version_required",
+  "content_hash_required",
+];
+
+function storedView(): View {
+  try {
+    return window.localStorage.getItem(VIEW_KEY) === "matrix" ? "matrix" : "list";
+  } catch {
+    return "list";
+  }
 }
 
 function OperationsBoard({
   state,
   openEditor,
+  saveRecord,
   paper,
   openFocus,
-}: Pick<DataProps, "state" | "openEditor"> & { paper?: RecordItem; openFocus: () => void }) {
+  writable,
+  readOnly,
+  reloadRecords,
+}: OperationsProps) {
   const t = useT();
-  const { locale } = useLocale();
-  // The timer reports its state as an event rather than through context, whose
-  // value changes every second; the board only needs to know which operation is
-  // running, so it re-renders only when that changes.
+  const [view, setView] = useState<View>(storedView);
+  const [typeFilter, setTypeFilter] = useState("");
+  const pending = useSyncExternalStore(
+    subscribePendingMoves,
+    () => pendingMoves,
+    () => noPendingMoves,
+  );
+  const restoreFocusId = useRef<string | null>(null);
+  const [undo, setUndo] = useState<{ saved: RecordItem; previous: string } | null>(null);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [denied, setDenied] = useState(false);
+  const [reloading, setReloading] = useState(false);
   const [timerReady, setTimerReady] = useState(false);
   const [focusingId, setFocusingId] = useState("");
+  useEffect(() => {
+    const id = restoreFocusId.current;
+    if (!id || Object.hasOwn(pending, id)) return;
+    restoreFocusId.current = null;
+    // Moving between regions remounts the handle. Restore keyboard focus only
+    // if the user has not already moved on to another control while saving.
+    if (document.activeElement === document.body)
+      document
+        .querySelector<HTMLButtonElement>(
+          `[data-operation-id="${CSS.escape(id)}"] .operation-drag-handle`,
+        )
+        ?.focus({ preventScroll: true });
+  }, [pending]);
   const elsewhere = useFocusElsewhere();
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
   useEffect(() => {
     const listen = (event: Event) => {
       const detail = (event as CustomEvent<{ running?: boolean; operationId?: string }>).detail;
@@ -77,25 +116,48 @@ function OperationsBoard({
     window.dispatchEvent(new Event("scholarbuddy-request-focus-state"));
     return () => window.removeEventListener("scholarbuddy-focus-state", listen);
   }, []);
-  const [typeFilter, setTypeFilter] = useState("");
-  // Only the kinds of work actually on the board, so the filter never offers a
-  // row that leads to an empty screen.
+  useEffect(() => {
+    if (!undo) return;
+    const timer = window.setTimeout(() => setUndo(null), 10_000);
+    return () => window.clearTimeout(timer);
+  }, [undo]);
+
+  const canClassify = writable && !readOnly && !denied;
   const types = [
-    ...new Set(state.operations.map((item) => item.type).filter((type) => Boolean(type))),
+    ...new Set(state.operations.map((item) => item.type).filter(Boolean)),
   ].sort() as string[];
-  // Retyping the last operation of a kind hides the filter bar; without this the
-  // dropped filter would keep hiding records with no control left to clear it.
   const active = typeFilter && types.includes(typeFilter) ? typeFilter : "";
   const operations = sortOperations(
-    active ? state.operations.filter((item) => item.type === active) : state.operations,
+    state.operations
+      .filter((item) => !active || item.type === active)
+      .map((item) =>
+        Object.hasOwn(pending, item.id) ? { ...item, eisenhowerQuadrant: pending[item.id] } : item,
+      ),
   );
-  // The session is filed under the operation, which is what Profile counts as
-  // its effort.
+  const chooseView = (next: View) => {
+    setView(next);
+    try {
+      window.localStorage.setItem(VIEW_KEY, next);
+    } catch {
+      /* memory preference still works */
+    }
+  };
+  const create = (quadrant?: Quadrant) =>
+    openEditor("operations", {
+      ...(paper
+        ? {
+            manuscriptId: paper.id,
+            manuscriptTitle: paper.title,
+            projectId: paper.projectId || "",
+            projectTitle: paper.projectTitle || "",
+          }
+        : {}),
+      ...(quadrant !== undefined ? { eisenhowerQuadrant: quadrant } : {}),
+    });
   const startFocus = (item: RecordItem) => {
     const accepted = window.dispatchEvent(
       new CustomEvent("scholarbuddy-start-focus", {
         cancelable: true,
-        // An untitled note still needs a target, or the timer ignores the start.
         detail: {
           target: item.title || item.id,
           operationId: item.id,
@@ -105,31 +167,103 @@ function OperationsBoard({
     );
     if (accepted) openFocus();
   };
+  // A failed load is reported by the page's own banner; this one stays until
+  // the records really are fresh.
+  const reload = async () => {
+    setReloading(true);
+    const loaded = await reloadRecords();
+    if (!mounted.current) return;
+    setReloading(false);
+    if (!loaded) return;
+    setError("");
+    setDenied(false);
+  };
+  const move = async (item: RecordItem, quadrant: string, undoing = false, keyboard = false) => {
+    if (!canClassify || Object.hasOwn(pendingMoves, item.id) || operationFinished(item)) return;
+    const from = operationQuadrant(item.eisenhowerQuadrant);
+    // An unrecognized value is shown as Unclassified, so a drop back there
+    // changes nothing and must not overwrite what the note holds.
+    if (!undoing && from === quadrant) return;
+    setPendingMove(item.id, operationQuadrant(quadrant));
+    setUndo(null);
+    setError("");
+    setNotice("");
+    try {
+      const saved = await saveRecord(
+        "operations",
+        {
+          id: item.id,
+          version: item.version,
+          contentHash: item.contentHash,
+          eisenhowerQuadrant: quadrant,
+        },
+        { quiet: true },
+      );
+      if (!mounted.current) return;
+      // Undo is a new conditional write using exactly the version just saved.
+      // Unknown hand-edited values cannot be reintroduced through strict writes.
+      if (!undoing && (from || !item.eisenhowerQuadrant))
+        setUndo({ saved, previous: item.eisenhowerQuadrant || "" });
+      const key = operationQuadrant(quadrant);
+      setNotice(
+        undoing
+          ? t.operations.undone
+          : t.operations.moved(key ? t.operations.quadrants[key] : t.operations.unclassified),
+      );
+    } catch (cause) {
+      // Without the Bridge's answer (a timeout, a dropped connection) the write
+      // may still have landed, so the vault decides where the card really is.
+      const answered = cause instanceof BridgeFailure;
+      if (!answered || CONFLICT_CODES.includes(cause.code || "")) void reloadRecords();
+      if (!mounted.current) return;
+      setError(
+        answered
+          ? `${t.operations.saveClassificationFailed} ${failureText(t, cause, "")}`
+          : t.operations.saveClassificationUnconfirmed,
+      );
+      if (answered && cause.code === "read_only") setDenied(true);
+    } finally {
+      if (keyboard && mounted.current) restoreFocusId.current = item.id;
+      setPendingMove(item.id);
+    }
+  };
+  const renderCard = (item: RecordItem) => (
+    <OperationCard
+      key={item.id}
+      item={item}
+      matrix={view === "matrix"}
+      writable={canClassify}
+      saving={Object.hasOwn(pending, item.id)}
+      timerReady={timerReady}
+      focusing={focusingId === item.id}
+      elsewhere={elsewhere}
+      onFocus={() => (focusingId === item.id ? openFocus() : startFocus(item))}
+      onEdit={() => openEditor("operations", item)}
+    />
+  );
 
   return (
     <>
       <PageHeader
-        eyebrow={t.operations.eyebrow}
+        eyebrow={
+          <span className="operations-view-switch" role="group" aria-label={t.operations.views}>
+            <button type="button" aria-pressed={view === "list"} onClick={() => chooseView("list")}>
+              {t.operations.listView}
+            </button>
+            <button
+              type="button"
+              aria-pressed={view === "matrix"}
+              onClick={() => chooseView("matrix")}
+            >
+              {t.operations.matrixView}
+            </button>
+          </span>
+        }
         title={t.nav.operations}
         hideTitle
         compact
         actions={
-          <button
-            className="primary-button"
-            onClick={() =>
-              openEditor(
-                "operations",
-                paper
-                  ? {
-                      manuscriptId: paper.id,
-                      manuscriptTitle: paper.title,
-                      projectId: paper.projectId || "",
-                      projectTitle: paper.projectTitle || "",
-                    }
-                  : undefined,
-              )
-            }
-          >
+          <button className="primary-button" onClick={() => create()}>
             {t.operations.new} <b>+</b>
           </button>
         }
@@ -150,106 +284,64 @@ function OperationsBoard({
           ))}
         </div>
       )}
-      <section className="record-board operations-board">
-        {!operations.length ? (
-          <EmptyState title={t.operations.none} />
-        ) : (
-          operations.map((item) => {
-            const isCompleted = isFinished(item);
-            const hasProgress = !isCompleted && item.progress !== undefined;
-            const deadline = deadlineState(t, item.dueDate);
-            const focusing = focusingId === item.id;
-
-            return (
-              <article
-                className={`record-card operation-card card ${isCompleted ? "is-completed" : ""}`}
-                key={item.id}
-              >
-                <div className="operation-main">
-                  <span className="object-id">
-                    {item.type ? valueLabel(t.values.operationType, item.type) : item.id}
-                  </span>
-                  <h2>{item.title}</h2>
-                  <div className="operation-status">
-                    <MetaPill
-                      tone={
-                        isCompleted
-                          ? item.status === "Archived"
-                            ? "neutral"
-                            : "lime"
-                          : item.status === "Blocked"
-                            ? "orange"
-                            : item.status === "Planned"
-                              ? "neutral"
-                              : "blue"
-                      }
-                    >
-                      {valueLabel(t.values.status, item.status || OPEN_STATUS)}
-                    </MetaPill>
-                    {hasProgress && (
-                      <span className="record-card-progress">{clampProgress(item.progress)}%</span>
-                    )}
-                  </div>
-                </div>
-
-                <div className={`operation-deadline ${isCompleted ? "complete" : deadline.tone}`}>
-                  <span>
-                    {item.dueDate ? shortDate(item.dueDate, locale) : t.operations.notScheduled}
-                  </span>
-                  <strong>{isCompleted ? t.operations.completed : deadline.label}</strong>
-                </div>
-
-                <div className="record-card-footer">
-                  {!isCompleted && (
-                    <button
-                      className="quiet-button"
-                      disabled={!timerReady}
-                      title={
-                        timerReady ? undefined : elsewhere ? t.focus.elsewhere : t.focus.preparing
-                      }
-                      onClick={() => (focusing ? openFocus() : startFocus(item))}
-                    >
-                      {focusing ? t.operations.focusing : t.operations.focus}
-                    </button>
-                  )}
-                  <button className="quiet-button" onClick={() => openEditor("operations", item)}>
-                    {t.operations.edit}
-                  </button>
-                </div>
-
-                {(item.description || item.manuscriptTitle || item.projectTitle) && (
-                  <details className="operation-details">
-                    <summary>{t.operations.details}</summary>
-                    {item.description && <p>{item.description}</p>}
-                    {item.manuscriptTitle && (
-                      <div className="record-meta-item">
-                        <span className="meta-tag">{t.operations.paper}</span>
-                        <strong title={item.manuscriptTitle}>{item.manuscriptTitle}</strong>
-                      </div>
-                    )}
-                    {item.projectTitle && (
-                      <div className="record-meta-item">
-                        <span className="meta-tag">{t.operations.project}</span>
-                        <strong title={item.projectTitle}>{item.projectTitle}</strong>
-                      </div>
-                    )}
-                  </details>
-                )}
-              </article>
-            );
-          })
+      {view === "matrix" && (
+        <p className="operations-drag-hint">
+          {canClassify
+            ? t.operations.dragHint
+            : readOnly || denied
+              ? t.operations.readOnly
+              : t.operations.connectToClassify}
+        </p>
+      )}
+      {error && (
+        <div className="operations-move-error" role="alert">
+          <span>{error}</span>
+          <button
+            className="quiet-button"
+            disabled={reloading || Object.keys(pending).length > 0}
+            onClick={() => void reload()}
+          >
+            {t.operations.reload}
+          </button>
+        </div>
+      )}
+      <div className="operations-move-feedback" role="status" aria-live="polite">
+        {notice}
+        {undo && (
+          <button
+            className="quiet-button"
+            disabled={!canClassify}
+            onClick={() => void move(undo.saved, undo.previous, true, true)}
+          >
+            {t.operations.undoMove}
+          </button>
         )}
-      </section>
+      </div>
+      {view === "matrix" ? (
+        <OperationsMatrix
+          operations={operations}
+          writable={canClassify}
+          onMove={(id, quadrant, keyboard) => {
+            const item = state.operations.find((record) => record.id === id);
+            if (item) void move(item, quadrant, false, keyboard);
+          }}
+          onCreate={create}
+          renderCard={renderCard}
+        />
+      ) : (
+        <section className="record-board operations-board">
+          {operations.length ? (
+            operations.map(renderCard)
+          ) : (
+            <EmptyState title={t.operations.none} />
+          )}
+        </section>
+      )}
     </>
   );
 }
 
-export function OperationsModule({
-  state,
-  openEditor,
-  paper,
-  openFocus,
-}: Pick<DataProps, "state" | "openEditor"> & { paper?: RecordItem; openFocus: () => void }) {
+export function OperationsModule(props: OperationsProps) {
   const t = useT();
   const [tab, setTab] = useState<"operations" | "journal">("operations");
   return (
@@ -265,12 +357,7 @@ export function OperationsModule({
       />
       <div role="tabpanel" id={`tabpanel-${tab}`} aria-labelledby={`tab-${tab}`}>
         {tab === "operations" ? (
-          <OperationsBoard
-            state={state}
-            openEditor={openEditor}
-            paper={paper}
-            openFocus={openFocus}
-          />
+          <OperationsBoard {...props} />
         ) : (
           <RecordModule
             collection="journal"
@@ -281,8 +368,8 @@ export function OperationsModule({
               </>
             }
             eyebrow={t.operations.logEyebrow}
-            state={state}
-            openEditor={openEditor}
+            state={props.state}
+            openEditor={props.openEditor}
             showProgress={false}
           />
         )}

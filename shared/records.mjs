@@ -1,4 +1,16 @@
-import { RECORD_STATUS_OPTIONS, RECORD_STATUS_ORDER } from "./constants.mjs";
+import {
+  CLOSED_RECORD_STATUSES,
+  RECORD_STATUS_OPTIONS,
+  RECORD_STATUS_ORDER,
+} from "./constants.mjs";
+
+// Matched without regard to case: a status is frontmatter a researcher can type
+// by hand in Obsidian, and "done" closes a record exactly as "Done" does.
+const closedStatuses = new Set(CLOSED_RECORD_STATUSES.map((status) => status.toLowerCase()));
+/** @param {{status?: string}} item */
+export function recordClosed(item) {
+  return closedStatuses.has((item.status || "").toLowerCase());
+}
 
 // The Bridge sorts what it reads from the vault and the browser sorts what it
 // has just saved. When only one of them knew the order, a record moved on the

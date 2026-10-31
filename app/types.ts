@@ -38,6 +38,8 @@ export type RecordItem = {
   linkedObject?: string;
   linkedProject?: string;
   dueDate?: string;
+  /** Unknown hand-edited values remain readable until explicitly reclassified. */
+  eisenhowerQuadrant?: string;
   method?: string;
   zoteroKey?: string;
   creators?: string[];
@@ -146,6 +148,7 @@ export type ZoteroPassage = {
 export type BridgeStatus = {
   bridge: boolean;
   paired: boolean;
+  readOnly?: boolean;
   deepseek: { configured: boolean; model: string };
   kimi: { configured: boolean; model: string };
   openai: { configured: boolean; model: string };

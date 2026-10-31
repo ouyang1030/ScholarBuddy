@@ -151,7 +151,7 @@ export function PageHeader({
   actions,
   compact = false,
 }: {
-  eyebrow: string;
+  eyebrow: React.ReactNode;
   title: React.ReactNode;
   /** The eyebrow already names the page; the heading stays for screen readers. */
   hideTitle?: boolean;

@@ -262,7 +262,11 @@ async function route(request, providedConfig) {
   if (url.pathname === "/health" && request.method === "GET")
     return json(origin, { bridge: true, paired: true });
   if (url.pathname === "/status" && request.method === "GET")
-    return json(origin, await bridgeStatus(config, url.searchParams.get("fresh") === "1"));
+    return json(origin, {
+      ...(await bridgeStatus(config, url.searchParams.get("fresh") === "1")),
+      // This is a property of this caller, never of the shared status cache.
+      readOnly: auth.grant?.access === "read",
+    });
   if (url.pathname === "/zotero/search" && request.method === "GET")
     return json(origin, {
       items: await searchZotero(config, url.searchParams.get("q") || "", 12, request.signal),

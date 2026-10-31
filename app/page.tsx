@@ -121,6 +121,9 @@ function Workbench() {
   const paperCelebrationTimerRef = useRef<number | null>(null);
   const stateRequestRef = useRef<AbortController | null>(null);
   const recordMutationsRef = useRef(0);
+  // A reload asked for while records are being written would replace them with
+  // an older snapshot, so it waits for the last write to settle instead of being lost.
+  const deferredLoadsRef = useRef<((loaded: boolean) => void)[]>([]);
   // Esc is handled here for every overlay at once, so the two drawers that can
   // hold unsaved work report it and the handler knows which one Esc was aimed at.
   const unsavedRef = useRef({ editor: false, action: false });
@@ -131,8 +134,10 @@ function Workbench() {
   const reportActionUnsaved = useCallback((unsaved: boolean) => {
     unsavedRef.current.action = unsaved;
   }, []);
-  const loadState = async () => {
-    if (recordMutationsRef.current > 0) return;
+  // Resolves true once the records on screen are the ones the Bridge just read.
+  const loadState = async (): Promise<boolean> => {
+    if (recordMutationsRef.current > 0)
+      return new Promise((resolve) => deferredLoadsRef.current.push(resolve));
     stateRequestRef.current?.abort();
     const controller = new AbortController();
     stateRequestRef.current = controller;
@@ -159,15 +164,23 @@ function Workbench() {
         storeReadSubmissionAlertKeys(next);
         return next;
       });
+      return true;
     } catch (e) {
-      if (controller.signal.aborted) return;
+      if (controller.signal.aborted) return false;
       setDataError(e);
+      return false;
     } finally {
       if (stateRequestRef.current === controller) {
         stateRequestRef.current = null;
         setLoading(false);
       }
     }
+  };
+  const endMutation = () => {
+    recordMutationsRef.current -= 1;
+    if (recordMutationsRef.current > 0 || !deferredLoadsRef.current.length) return;
+    const waiting = deferredLoadsRef.current.splice(0);
+    void loadState().then((loaded) => waiting.forEach((resolve) => resolve(loaded)));
   };
   const loadStatus = async (fresh = false): Promise<BridgeStatus | null> => {
     try {
@@ -432,7 +445,11 @@ function Workbench() {
     setPaperCelebration({ id, title, milestone, journal: journal || undefined });
     paperCelebrationTimerRef.current = window.setTimeout(() => setPaperCelebration(null), 10000);
   };
-  const saveRecord = async (collection: CollectionKey, record: Partial<RecordItem>) => {
+  const saveRecord = async (
+    collection: CollectionKey,
+    record: Partial<RecordItem>,
+    options?: { quiet?: boolean },
+  ) => {
     recordMutationsRef.current += 1;
     stateRequestRef.current?.abort();
     const previous = record.id
@@ -463,7 +480,7 @@ function Workbench() {
               : records,
         };
       });
-      setToast(t.shell.savedRecord(t.collections[collection]));
+      if (!options?.quiet) setToast(t.shell.savedRecord(t.collections[collection]));
       if (
         collection === "manuscripts" &&
         (saved.stage === "Accepted" || saved.stage === "Published") &&
@@ -487,7 +504,7 @@ function Workbench() {
       }
       return saved;
     } finally {
-      recordMutationsRef.current -= 1;
+      endMutation();
     }
   };
   const deleteRecord = async (
@@ -515,7 +532,7 @@ function Workbench() {
       }));
       setToast(t.shell.deletedRecord(t.collections[collection]));
     } finally {
-      recordMutationsRef.current -= 1;
+      endMutation();
     }
   };
   const addSubmissionEvent = async (record: Partial<RecordItem>) => {
@@ -532,7 +549,7 @@ function Workbench() {
       if (!response.ok) throw bridgeFailure(body, t.errors.saveFailed);
       event = body.event as RecordItem & { verificationOnly?: boolean };
     } finally {
-      recordMutationsRef.current -= 1;
+      endMutation();
     }
     await loadState();
     setToast(event.verificationOnly ? t.shell.checkSaved : t.shell.timelineUpdated);
@@ -559,7 +576,7 @@ function Workbench() {
       const body = await response.json();
       if (!response.ok) throw bridgeFailure(body, t.errors.saveFailed);
     } finally {
-      recordMutationsRef.current -= 1;
+      endMutation();
     }
     await loadState();
     setToast(t.shell.checkSaved);
@@ -579,7 +596,7 @@ function Workbench() {
       if (!response.ok) throw bridgeFailure(body, t.manuscript.mailFailed);
       result = body as SubmissionSyncResult;
     } finally {
-      recordMutationsRef.current -= 1;
+      endMutation();
     }
     await loadState();
     for (const event of result.updated || []) {
@@ -595,6 +612,8 @@ function Workbench() {
   const openEditor = (collection: CollectionKey, record?: Partial<RecordItem>) =>
     setEditor({ collection, record });
   const activeLabel = t.nav[active];
+  // A read-only pairing can browse everything, and the Bridge refuses every write.
+  const readOnly = Boolean(status?.readOnly);
   const activePaper =
     state.manuscripts.find((item) => item.id === paperContextId) || state.manuscripts[0];
   const openPaper = (
@@ -775,6 +794,12 @@ function Workbench() {
                 <button onClick={loadState}>{t.common.retry}</button>
               </div>
             )}
+            {active !== "about" && readOnly && (
+              <div className="data-banner compact-banner">
+                <span>i</span>
+                <p>{t.shell.readOnlyPairing}</p>
+              </div>
+            )}
             {active !== "profile" && invalidRecords.length > 0 && (
               <details className="data-banner compact-banner invalid-records">
                 <summary>{t.shell.invalidNotes(invalidRecords.length)}</summary>
@@ -840,6 +865,17 @@ function Workbench() {
             {active === "operations" && (
               <OperationsModule
                 state={state}
+                saveRecord={saveRecord}
+                // Only a known obstacle locks the matrix. /status is slow and briefly
+                // unknown; a write that fails anyway is restored and explained there.
+                writable={
+                  status?.obsidian.connected !== false &&
+                  bridgeIssue !== "unreachable" &&
+                  bridgeIssue !== "pairing" &&
+                  bridgeIssue !== "origin"
+                }
+                readOnly={readOnly}
+                reloadRecords={loadState}
                 openEditor={openEditor}
                 paper={activePaper}
                 openFocus={openFocus}
@@ -866,6 +902,7 @@ function Workbench() {
           onSave={saveRecord}
           onDelete={deleteRecord}
           onUnsavedChange={reportEditorUnsaved}
+          readOnly={readOnly}
         />
       )}
       {action && (
